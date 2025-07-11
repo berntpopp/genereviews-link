@@ -1,0 +1,46 @@
+[project]
+name = "genereview-link"
+version = "1.0.0"
+description = "A unified server providing REST API and MCP interfaces for NCBI GeneReviews data."
+requires-python = ">=3.9"
+dependencies = [
+    "fastmcp>=2.2.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "async-lru>=2.0.4",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.1.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+    "black>=24.0.0",
+    "mypy>=1.9.0",
+    "coverage>=7.4.0"
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.black]
+line-length = 88
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+disallow_untyped_defs = true
+ignore_missing_imports = true

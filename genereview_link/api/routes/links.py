@@ -1,0 +1,37 @@
+import logging
+from fastapi import APIRouter, Depends, HTTPException
+
+from genereview_link.models.genereview_models import LinkData
+from genereview_link.api.eutils_client import EutilsClient
+
+router = APIRouter(prefix="/links", tags=["Links"])
+
+async def get_client() -> EutilsClient:
+    """Dependency to get EutilsClient instance."""
+    client = EutilsClient()
+    try:
+        yield client
+    finally:
+        await client.close()
+
+@router.get(
+    "/{pubmed_id}",
+    response_model=LinkData,
+    summary="Get all available links for a PubMed ID",
+    operation_id="get_links"
+)
+async def get_links(
+    pubmed_id: str,
+    client: EutilsClient = Depends(get_client),
+) -> LinkData:
+    """
+    Get all available links from a PubMed ID using NCBI E-utils elink.
+    
+    Returns categorized links including NCBI Bookshelf, PMC full text, and external links.
+    """
+    try:
+        result = await client.get_all_links(pubmed_id)
+        return LinkData(**result)
+    except Exception as e:
+        logging.error(f"Error fetching links for PMID {pubmed_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="An error occurred while fetching links.")
