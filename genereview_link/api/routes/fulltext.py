@@ -57,7 +57,10 @@ async def get_fulltext(
         metadata_dict = result.get("metadata", {})
         metadata = FullTextMetadata(
             authors=metadata_dict.get("authors"),
-            update_info=metadata_dict.get("update_info")
+            update_info=metadata_dict.get("update_info"),
+            publication_info=metadata_dict.get("publication_info"),
+            last_updated=metadata_dict.get("last_updated"),
+            references=metadata_dict.get("references", [])
         )
         
         return FullTextData(

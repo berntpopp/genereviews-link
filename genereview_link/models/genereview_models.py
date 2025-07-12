@@ -1,10 +1,15 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 
 class GeneReviewSection(BaseModel):
     """Represents a single scraped section of a GeneReview."""
     title: str = Field(description="The original title of the section.")
     content: str = Field(description="The full text content of the section.")
+    level: int = Field(default=1, description="Heading level (1-6) indicating hierarchy.")
+    subsections: Dict[str, 'GeneReviewSection'] = Field(default_factory=dict, description="Nested subsections.")
+
+# Enable forward references for recursive model
+GeneReviewSection.model_rebuild()
 
 class SearchResult(BaseModel):
     """Represents search results from NCBI E-utils esearch."""
@@ -28,10 +33,22 @@ class LinkData(BaseModel):
     """Represents links from PubMed elink."""
     urls: List[str] = Field(default_factory=list, description="All available URLs for the publication.")
 
+class Reference(BaseModel):
+    """Represents a single reference."""
+    text: str = Field(description="Full reference text.")
+    authors: Optional[str] = Field(None, description="Extracted author names.")
+    title: Optional[str] = Field(None, description="Extracted article/book title.")
+    journal: Optional[str] = Field(None, description="Extracted journal name.")
+    year: Optional[str] = Field(None, description="Extracted publication year.")
+    pmid: Optional[str] = Field(None, description="Extracted PubMed ID if present.")
+
 class FullTextMetadata(BaseModel):
     """Metadata extracted from full text."""
     authors: Optional[str] = Field(None, description="Author information from the full text.")
     update_info: Optional[str] = Field(None, description="Update and posting information.")
+    publication_info: Optional[str] = Field(None, description="Publication and copyright information.")
+    last_updated: Optional[str] = Field(None, description="Last updated date.")
+    references: List[str] = Field(default_factory=list, description="List of reference strings.")
 
 class FullTextData(BaseModel):
     """Represents comprehensive scraped content from NCBI Bookshelf."""
