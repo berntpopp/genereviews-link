@@ -14,13 +14,18 @@ from structlog.types import EventDict, Processor
 from genereview_link.config import settings
 
 
-def add_timestamp(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
+def add_timestamp(
+    logger: Any, method_name: str, event_dict: EventDict
+) -> EventDict:
     """Add ISO timestamp to log entries."""
-    event_dict["timestamp"] = time.time_ns() // 1_000_000  # milliseconds since epoch
+    event_dict["timestamp"] = time.time_ns() // 1_000_000  # milliseconds
+    # since epoch
     return event_dict
 
 
-def add_log_level(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
+def add_log_level(
+    logger: Any, method_name: str, event_dict: EventDict
+) -> EventDict:
     """Add log level to event dict."""
     event_dict["level"] = method_name.upper()
     return event_dict
@@ -48,9 +53,12 @@ def json_serializer(obj: Any, **kwargs: Any) -> bytes:
 def configure_structlog() -> None:
     """Configure structlog for the application."""
 
-    # Determine if we should use JSON logging (production) or console (development)
+    # Determine if we should use JSON logging (production) or console
+    # (development)
     use_json = getattr(
-        settings, "LOG_JSON", settings.LOG_LEVEL.upper() in ["INFO", "WARNING", "ERROR"]
+        settings,
+        "LOG_JSON",
+        settings.LOG_LEVEL.upper() in ["INFO", "WARNING", "ERROR"],
     )
 
     # Common processors for all configurations
@@ -87,7 +95,8 @@ def configure_structlog() -> None:
     )
 
     # Configure standard library logging
-    handler = logging.StreamHandler(sys.stdout)
+    # Use stderr for MCP compatibility (stdout reserved for JSON protocol)
+    handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(message)s"))
 
     # Set up root logger
@@ -137,17 +146,22 @@ def log_function_call(logger: structlog.stdlib.BoundLogger):
     def decorator(func):
         async def async_wrapper(*args, **kwargs):
             start_time = time.time()
-            func_logger = logger.bind(function=func.__name__, module=func.__module__)
+            func_logger = logger.bind(
+                function=func.__name__, module=func.__module__
+            )
 
             func_logger.debug(
-                "Function called", args_count=len(args), kwargs_keys=list(kwargs.keys())
+                "Function called",
+                args_count=len(args),
+                kwargs_keys=list(kwargs.keys()),
             )
 
             try:
                 result = await func(*args, **kwargs)
                 duration_ms = (time.time() - start_time) * 1000
                 func_logger.info(
-                    "Function completed successfully", duration_ms=round(duration_ms, 2)
+                    "Function completed successfully",
+                    duration_ms=round(duration_ms, 2),
                 )
                 return result
             except Exception as e:
@@ -162,17 +176,22 @@ def log_function_call(logger: structlog.stdlib.BoundLogger):
 
         def sync_wrapper(*args, **kwargs):
             start_time = time.time()
-            func_logger = logger.bind(function=func.__name__, module=func.__module__)
+            func_logger = logger.bind(
+                function=func.__name__, module=func.__module__
+            )
 
             func_logger.debug(
-                "Function called", args_count=len(args), kwargs_keys=list(kwargs.keys())
+                "Function called",
+                args_count=len(args),
+                kwargs_keys=list(kwargs.keys()),
             )
 
             try:
                 result = func(*args, **kwargs)
                 duration_ms = (time.time() - start_time) * 1000
                 func_logger.info(
-                    "Function completed successfully", duration_ms=round(duration_ms, 2)
+                    "Function completed successfully",
+                    duration_ms=round(duration_ms, 2),
                 )
                 return result
             except Exception as e:
@@ -203,7 +222,10 @@ class PerformanceLogger:
     """Context manager for performance monitoring."""
 
     def __init__(
-        self, logger: structlog.stdlib.BoundLogger, operation: str, **context: Any
+        self,
+        logger: structlog.stdlib.BoundLogger,
+        operation: str,
+        **context: Any
     ):
         self.logger = logger.bind(operation=operation, **context)
         self.operation = operation
@@ -225,7 +247,9 @@ class PerformanceLogger:
                 error_message=str(exc_val),
             )
         else:
-            self.logger.info("Operation completed", duration_ms=round(duration_ms, 2))
+            self.logger.info(
+                "Operation completed", duration_ms=round(duration_ms, 2)
+            )
 
     def add_context(self, **context: Any) -> None:
         """Add additional context during operation."""
@@ -250,7 +274,9 @@ def create_request_logger(
 ) -> structlog.stdlib.BoundLogger:
     """Create a logger bound with request context."""
     base_logger = get_logger("api.request")
-    return base_logger.bind(request_id=request_id, method=method, path=path, **context)
+    return base_logger.bind(
+        request_id=request_id, method=method, path=path, **context
+    )
 
 
 def log_api_metrics(
