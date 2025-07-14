@@ -7,11 +7,12 @@ from genereview_link.api.client_manager import get_managed_client
 
 router = APIRouter(prefix="/abstract", tags=["Abstract"])
 
+
 @router.get(
     "/{pubmed_id}",
     response_model=AbstractData,
     summary="Get abstract and metadata for a PubMed ID",
-    operation_id="get_abstract"
+    operation_id="get_abstract",
 )
 async def get_abstract(
     pubmed_id: str,
@@ -19,14 +20,16 @@ async def get_abstract(
 ) -> AbstractData:
     """
     Fetch abstract and metadata from PubMed using NCBI E-utils efetch.
-    
+
     Returns detailed information including title, abstract, authors, journal, and publication date.
     """
     try:
         result = await client.fetch_abstract(pubmed_id)
         if not result:
-            raise HTTPException(status_code=404, detail=f"Abstract not found for PubMed ID: {pubmed_id}")
-        
+            raise HTTPException(
+                status_code=404, detail=f"Abstract not found for PubMed ID: {pubmed_id}"
+            )
+
         # Ensure all required fields have default values
         return AbstractData(
             pmid=result.get("pmid", pubmed_id),
@@ -34,10 +37,14 @@ async def get_abstract(
             abstract=result.get("abstract", ""),
             authors=result.get("authors", []),
             journal=result.get("journal", ""),
-            publication_date=result.get("publication_date", "")
+            publication_date=result.get("publication_date", ""),
         )
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error fetching abstract for PMID {pubmed_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="An error occurred while fetching the abstract.")
+        logging.error(
+            f"Error fetching abstract for PMID {pubmed_id}: {e}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=500, detail="An error occurred while fetching the abstract."
+        )

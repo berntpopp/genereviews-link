@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import re
 from typing import Any, List, Dict, Optional
 from xml.etree import ElementTree as ET
@@ -8,8 +7,9 @@ import httpx
 from bs4 import BeautifulSoup
 
 from genereview_link.config import settings
+from genereview_link.logging_config import get_logger, PerformanceLogger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class EutilsClient:
     """A client for interacting with NCBI E-utils and scraping GeneReviews."""
@@ -55,20 +55,41 @@ class EutilsClient:
             response.raise_for_status()
             return response.json()
         except httpx.ConnectError as e:
-            logger.error(f"Connection failed to {self.base_url}/{endpoint}: {e}")
-            raise ConnectionError(f"Unable to connect to NCBI E-utilities. Please check your internet connection.")
+            logger.error(
+                "Connection failed to NCBI E-utils",
+                endpoint=endpoint,
+                base_url=self.base_url,
+                error=str(e)
+            )
+            raise ConnectionError("Unable to connect to NCBI E-utilities. Please check your internet connection.")
         except httpx.TimeoutException as e:
-            logger.error(f"Timeout for {self.base_url}/{endpoint}: {e}")
-            raise TimeoutError(f"Request to NCBI E-utilities timed out. Please try again.")
+            logger.error(
+                "Request timeout to NCBI E-utils",
+                endpoint=endpoint,
+                base_url=self.base_url,
+                error=str(e)
+            )
+            raise TimeoutError("Request to NCBI E-utilities timed out. Please try again.")
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error for {e.request.url}: {e}")
+            logger.error(
+                "HTTP error from NCBI E-utils",
+                endpoint=endpoint,
+                url=str(e.request.url),
+                status_code=e.response.status_code,
+                error=str(e)
+            )
             if e.response.status_code == 429:
                 raise Exception("Rate limit exceeded. Please wait before making more requests.")
             elif e.response.status_code == 403:
                 raise Exception("Access forbidden. Please check your API key or request parameters.")
             raise
         except Exception as e:
-            logger.error(f"Request failed: {e}")
+            logger.error(
+                "Request failed to NCBI E-utils",
+                endpoint=endpoint,
+                error_type=type(e).__name__,
+                error=str(e)
+            )
             raise
 
     async def _make_web_request(self, url: str, max_retries: int = 3) -> httpx.Response:
@@ -120,20 +141,41 @@ class EutilsClient:
             response.raise_for_status()
             return ET.fromstring(response.text)
         except httpx.ConnectError as e:
-            logger.error(f"Connection failed to {self.base_url}/{endpoint}: {e}")
-            raise ConnectionError(f"Unable to connect to NCBI E-utilities. Please check your internet connection.")
+            logger.error(
+                "Connection failed to NCBI E-utils XML endpoint",
+                endpoint=endpoint,
+                base_url=self.base_url,
+                error=str(e)
+            )
+            raise ConnectionError("Unable to connect to NCBI E-utilities. Please check your internet connection.")
         except httpx.TimeoutException as e:
-            logger.error(f"Timeout for {self.base_url}/{endpoint}: {e}")
-            raise TimeoutError(f"Request to NCBI E-utilities timed out. Please try again.")
+            logger.error(
+                "Request timeout to NCBI E-utils XML endpoint",
+                endpoint=endpoint,
+                base_url=self.base_url,
+                error=str(e)
+            )
+            raise TimeoutError("Request to NCBI E-utilities timed out. Please try again.")
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error for {e.request.url}: {e}")
+            logger.error(
+                "HTTP error from NCBI E-utils XML endpoint",
+                endpoint=endpoint,
+                url=str(e.request.url),
+                status_code=e.response.status_code,
+                error=str(e)
+            )
             if e.response.status_code == 429:
                 raise Exception("Rate limit exceeded. Please wait before making more requests.")
             elif e.response.status_code == 403:
                 raise Exception("Access forbidden. Please check your API key or request parameters.")
             raise
         except Exception as e:
-            logger.error(f"Request failed: {e}")
+            logger.error(
+                "Request failed to NCBI E-utils XML endpoint",
+                endpoint=endpoint,
+                error_type=type(e).__name__,
+                error=str(e)
+            )
             raise
 
     async def search_genereview_pmid(self, gene_symbol: str) -> str | None:
@@ -169,23 +211,32 @@ class EutilsClient:
 
     async def scrape_genereview_book(self, book_url: str) -> dict[str, dict[str, str]]:
         """Scrape the main sections of a GeneReview book page."""
-        try:
-            response = await self._make_web_request(book_url)
-            soup = BeautifulSoup(response.text, "lxml")
+        scrape_logger = logger.bind(url=book_url, operation="basic_scrape")
+        
+        with PerformanceLogger(scrape_logger, "book_scraping") as perf:
+            try:
+                scrape_logger.debug("Starting basic book scraping")
+                response = await self._make_web_request(book_url)
+                perf.log_milestone("response_received", response_size=len(response.text))
+                
+                soup = BeautifulSoup(response.text, "lxml")
             
-            results = {}
-            # The main content is within a div with id='NBK1116' or similar
-            content_div = soup.find("div", {"id": lambda x: x and x.startswith('NBK')})
-            if not content_div:
-                return {}
+                results = {}
+                # The main content is within a div with id='NBK1116' or similar
+                content_div = soup.find("div", {"id": lambda x: x and x.startswith('NBK')})
+                if not content_div:
+                    scrape_logger.warning("No NBK content div found")
+                    return {}
 
-            # Extract title
-            title_tag = content_div.find('h1')
-            if title_tag:
-                 results['title'] = {'title': 'Title', 'content': title_tag.text.strip()}
+                # Extract title
+                title_tag = content_div.find('h1')
+                if title_tag:
+                     results['title'] = {'title': 'Title', 'content': title_tag.text.strip()}
 
-            # Scrape sections based on h2 tags with an id
-            for h2 in content_div.find_all('h2', id=True):
+                # Scrape sections based on h2 tags with an id
+                sections_found = 0
+                for h2 in content_div.find_all('h2', id=True):
+                    sections_found += 1
                 section_title = h2.text.strip()
                 # Find the content for this section, which is everything until the next h2
                 content_html = ""
@@ -194,18 +245,30 @@ class EutilsClient:
                         break
                     content_html += str(sibling)
                 
-                # Use a new soup object to parse the section content cleanly
-                section_soup = BeautifulSoup(content_html, 'lxml')
-                section_text = section_soup.get_text(separator=' ', strip=True)
+                    # Use a new soup object to parse the section content cleanly
+                    section_soup = BeautifulSoup(content_html, 'lxml')
+                    section_text = section_soup.get_text(separator=' ', strip=True)
 
-                # Map common titles to standardized keys
-                key = section_title.lower().replace(" ", "_")
-                results[key] = {'title': section_title, 'content': section_text}
-            
-            return results
-        except Exception as e:
-            logger.error(f"Failed to scrape {book_url}: {e}")
-            return {}
+                    # Map common titles to standardized keys
+                    key = section_title.lower().replace(" ", "_")
+                    results[key] = {'title': section_title, 'content': section_text}
+                
+                perf.add_context(sections_found=sections_found, total_sections=len(results))
+                scrape_logger.info(
+                    "Basic scraping completed successfully",
+                    sections_found=sections_found,
+                    total_sections=len(results)
+                )
+                
+                return results
+            except Exception as e:
+                scrape_logger.error(
+                    "Scraping failed",
+                    error_type=type(e).__name__,
+                    error_message=str(e),
+                    exc_info=True
+                )
+                return {}
 
     async def search_genereviews(self, gene_symbol: str, retmax: int = 20) -> List[Dict[str, Any]]:
         """Enhanced search for GeneReviews returning multiple results with metadata."""
