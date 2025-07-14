@@ -1,3 +1,8 @@
+"""
+Links endpoint for fetching related URLs.
+Provides REST API endpoint for retrieving all available links for PubMed articles.
+"""
+
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -21,7 +26,8 @@ async def get_links(
     """
     Get all available links from a PubMed ID using NCBI E-utils elink.
 
-    Returns categorized links including NCBI Bookshelf, PMC full text, and external links.
+    Returns categorized links including NCBI Bookshelf, PMC full text,
+    and external links.
     """
     try:
         result = await client.get_all_links(pubmed_id)

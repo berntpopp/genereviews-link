@@ -1,3 +1,8 @@
+"""
+Fulltext endpoint for scraping complete GeneReview documents.
+Provides REST API endpoint for retrieving comprehensive content from NCBI Bookshelf.
+"""
+
 import logging
 import re
 from fastapi import APIRouter, Depends, HTTPException

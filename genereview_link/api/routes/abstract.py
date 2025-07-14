@@ -1,3 +1,9 @@
+"""Abstract endpoint for fetching PubMed article abstracts.
+
+Provides REST API endpoint for retrieving abstract and metadata
+for PubMed articles by ID.
+"""
+
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -21,7 +27,8 @@ async def get_abstract(
     """
     Fetch abstract and metadata from PubMed using NCBI E-utils efetch.
 
-    Returns detailed information including title, abstract, authors, journal, and publication date.
+    Returns detailed information including title, abstract, authors, journal,
+    and publication date.
     """
     try:
         result = await client.fetch_abstract(pubmed_id)

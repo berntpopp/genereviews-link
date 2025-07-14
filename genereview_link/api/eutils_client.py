@@ -1,7 +1,8 @@
 """NCBI E-utils client for GeneReviews data retrieval and web scraping.
 
-This module provides the EutilsClient class for interacting with NCBI E-utilities
-and scraping GeneReviews content with enhanced hierarchical section extraction.
+This module provides the EutilsClient class for interacting with NCBI
+E-utilities and scraping GeneReviews content with enhanced hierarchical
+section extraction.
 """
 
 import asyncio
@@ -59,11 +60,13 @@ class EutilsClient:
         if settings.NCBI_API_KEY:
             params["api_key"] = settings.NCBI_API_KEY
 
-        # Use distributed rate limiting if available, otherwise fall back to local
+        # Use distributed rate limiting if available, otherwise fall back to
+        # local
         if hasattr(self, "_distributed_wait"):
             await self._distributed_wait()
         else:
-            await asyncio.sleep(self.rate_limit_delay)  # Respect NCBI rate limits
+            await asyncio.sleep(self.rate_limit_delay)  # Respect NCBI rate
+            # limits
 
         try:
             response = await self.client.get(
@@ -119,7 +122,8 @@ class EutilsClient:
             raise
 
     async def _make_web_request(self, url: str, max_retries: int = 3) -> httpx.Response:
-        """Make a web request with retries and proper rate limiting for scraping."""
+        """Make a web request with retries and proper rate limiting for
+        scraping."""
         for attempt in range(max_retries):
             try:
                 # Longer delay for web scraping to be respectful
@@ -149,7 +153,8 @@ class EutilsClient:
                 if attempt < max_retries - 1:
                     wait_time = (2**attempt) * self.rate_limit_delay * 2
                     logger.warning(
-                        f"Request failed on attempt {attempt + 1}, retrying in {wait_time:.2f}s: {e}"
+                        f"Request failed on attempt {attempt + 1}, "
+                        f"retrying in {wait_time:.2f}s: {e}"
                     )
                     await asyncio.sleep(wait_time)
                     continue
@@ -161,11 +166,13 @@ class EutilsClient:
         if settings.NCBI_API_KEY:
             params["api_key"] = settings.NCBI_API_KEY
 
-        # Use distributed rate limiting if available, otherwise fall back to local
+        # Use distributed rate limiting if available, otherwise fall back to
+        # local
         if hasattr(self, "_distributed_wait"):
             await self._distributed_wait()
         else:
-            await asyncio.sleep(self.rate_limit_delay)  # Respect NCBI rate limits
+            await asyncio.sleep(self.rate_limit_delay)  # Respect NCBI rate
+            # limits
 
         try:
             response = await self.client.get(
@@ -256,7 +263,8 @@ class EutilsClient:
         return None
 
     async def scrape_genereview_book(self, book_url: str) -> Dict[str, Any]:
-        """Scrape the main sections of a GeneReview book page using enhanced parsing."""
+        """Scrape the main sections of a GeneReview book page using enhanced
+        parsing."""
         scrape_logger = logger.bind(url=book_url, operation="enhanced_scrape")
 
         with PerformanceLogger(scrape_logger, "book_scraping") as perf:
@@ -330,7 +338,8 @@ class EutilsClient:
     async def search_genereviews(
         self, gene_symbol: str, retmax: int = 20
     ) -> List[Dict[str, Any]]:
-        """Enhanced search for GeneReviews returning multiple results with metadata."""
+        """Enhanced search for GeneReviews returning multiple results with
+        metadata."""
         params = {
             "db": "pubmed",
             "term": f"{gene_symbol}[All Fields] AND GeneReviews[book]",

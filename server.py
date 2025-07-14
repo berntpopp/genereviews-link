@@ -1,4 +1,10 @@
 #!/usr/bin/env python
+"""FastAPI REST server for GeneReview Link.
+
+Provides REST API endpoints for searching, fetching, and scraping
+NCBI GeneReviews data with comprehensive error handling and CORS support.
+"""
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,10 +15,15 @@ from genereview_link.api.routes.abstract import router as abstract_router
 from genereview_link.api.routes.links import router as links_router
 from genereview_link.api.routes.fulltext import router as fulltext_router
 from genereview_link.config import settings
-from genereview_link.api.client_manager import shutdown_clients, get_client_manager
+from genereview_link.api.client_manager import (
+    shutdown_clients,
+    get_client_manager,
+)
 from genereview_link.services.service_manager import shutdown_services
 from genereview_link.logging_config import configure_structlog, get_logger
-from genereview_link.middleware.logging_middleware import RequestLoggingMiddleware
+from genereview_link.middleware.logging_middleware import (
+    RequestLoggingMiddleware,
+)
 
 # Configure structured logging
 configure_structlog()
@@ -32,7 +43,9 @@ async def lifespan(app: FastAPI):
     client_manager = await get_client_manager()
     health = await client_manager.health_check(test_connection=False)
     logger.info(
-        "Client manager initialized", status=health["status"], client_health=health
+        "Client manager initialized",
+        status=health["status"],
+        client_health=health,
     )
 
     try:
@@ -47,7 +60,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="GeneReview Link Server",
-    description="A comprehensive API for searching, fetching, and scraping NCBI GeneReviews data.",
+    description=(
+        "A comprehensive API for searching, fetching, and scraping "
+        "NCBI GeneReviews data."
+    ),
     version="2.0.0",
     lifespan=lifespan,
 )
@@ -77,13 +93,24 @@ async def root():
         "message": "Welcome to the GeneReview Link Server!",
         "version": "2.0.0",
         "endpoints": {
-            "search": "GET /search/{gene_symbol} - Search for GeneReviews by gene symbol",
-            "abstract": "GET /abstract/{pubmed_id} - Get abstract and metadata for a PubMed ID",
-            "links": "GET /links/{pubmed_id} - Get all available links for a PubMed ID",
-            "fulltext": "GET /fulltext/{nbk_id} - Get comprehensive scraped content from NCBI Bookshelf",
-            "genereview": "GET /genereview/{gene_symbol} - Complete workflow with all data",
+            "search": (
+                "GET /search/{gene_symbol} - Search for GeneReviews by gene symbol"
+            ),
+            "abstract": (
+                "GET /abstract/{pubmed_id} - Get abstract and metadata for a PubMed ID"
+            ),
+            "links": (
+                "GET /links/{pubmed_id} - Get all available links for a PubMed ID"
+            ),
+            "fulltext": (
+                "GET /fulltext/{nbk_id} - Get comprehensive scraped "
+                "content from NCBI Bookshelf"
+            ),
+            "genereview": (
+                "GET /genereview/{gene_symbol} - Complete workflow with all data"
+            ),
             "docs": "GET /docs - Interactive API documentation",
-            "health": "GET /health?test_connection=false - System health check",
+            "health": ("GET /health?test_connection=false - System health check"),
         },
     }
 

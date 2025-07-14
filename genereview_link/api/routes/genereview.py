@@ -1,3 +1,9 @@
+"""
+Comprehensive GeneReview endpoint.
+Provides REST API endpoint for complete GeneReview workflow from gene symbol
+to full data.
+"""
+
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -32,7 +38,8 @@ async def get_genereview(
     Complete workflow: Searches for a GeneReview by gene symbol, fetches abstract,
     gets all links, scrapes full text, and returns comprehensive structured data.
 
-    This endpoint combines all the individual endpoints into a single comprehensive result.
+    This endpoint combines all the individual endpoints into a single
+    comprehensive result.
     You can control which additional data to include using the query parameters.
     """
     try:

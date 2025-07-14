@@ -1,3 +1,8 @@
+"""Configuration settings for GeneReview Link.
+
+Manages environment variables and application settings using Pydantic.
+"""
+
 from pydantic_settings import BaseSettings
 
 
@@ -11,7 +16,8 @@ class Settings(BaseSettings):
 
     # Distributed rate limiting (for multi-worker deployments)
     RATE_LIMIT_STATE_FILE: str = (
-        ""  # Optional: path to shared state file for multi-worker rate limiting
+        ""  # Optional: path to shared state file for multi-worker rate
+        # limiting
     )
 
     # Logging configuration

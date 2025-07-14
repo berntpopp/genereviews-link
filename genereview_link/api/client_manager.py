@@ -1,5 +1,6 @@
 """
-Client lifecycle management for EutilsClient with singleton pattern and distributed rate limiting.
+Client lifecycle management for EutilsClient with singleton pattern and distributed
+rate limiting.
 """
 
 import asyncio

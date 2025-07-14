@@ -4,6 +4,7 @@
 Wraps the FastAPI application to provide MCP protocol compatibility
 for integration with Claude and other MCP-compatible clients.
 """
+
 import os
 import logging
 import sys
@@ -48,6 +49,6 @@ with redirect_stdout(StringIO()):
     )
 
 if __name__ == "__main__":
-    # Note: FastMCP banner is sent to stderr, not stdout, so it shouldn't 
+    # Note: FastMCP banner is sent to stderr, not stdout, so it shouldn't
     # interfere with JSON protocol on stdout
     mcp.run()

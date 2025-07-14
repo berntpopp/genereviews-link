@@ -90,9 +90,10 @@ class TestCompleteWorkflow:
 
                 # Content should be substantial
                 content_length = len(section_data.content)
-                assert (
-                    content_length > 100
-                ), f"Section {section_key} should have substantial content, got {content_length} chars"
+                assert content_length > 100, (
+                    f"Section {section_key} should have substantial content, "
+                    f"got {content_length} chars"
+                )
 
     @pytest.mark.asyncio
     async def test_tp53_complete_workflow(self, service):

@@ -1,3 +1,8 @@
+"""
+Pydantic data models for GeneReview Link.
+Defines structured data models for validation and serialization.
+"""
+
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
 

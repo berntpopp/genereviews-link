@@ -1,3 +1,8 @@
+"""
+Service layer for GeneReview business logic.
+Orchestrates data retrieval and processing workflows.
+"""
+
 import logging
 from datetime import timedelta
 
@@ -82,7 +87,8 @@ class GeneReviewService:
         include_fulltext: bool = True,
     ) -> GeneReview:
         """
-        Enhanced comprehensive workflow that fetches all available data for a GeneReview.
+        Enhanced comprehensive workflow that fetches all available data for a
+        GeneReview.
         """
         # 1. Search for GeneReviews
         search_results = await self.client.search_genereviews(gene_symbol, retmax=1)
@@ -155,7 +161,8 @@ class GeneReviewService:
                         "sections", {}
                     ).items():
                         sections_data[key] = GeneReviewSection(
-                            title=section_data["title"], content=section_data["content"]
+                            title=section_data["title"],
+                            content=section_data["content"],
                         )
 
                     # Convert metadata

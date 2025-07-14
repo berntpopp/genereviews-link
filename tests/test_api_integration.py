@@ -90,9 +90,10 @@ class TestAPIEndpoints:
 
             # Content should be substantial
             content_length = len(section_data["content"])
-            assert (
-                content_length > 100
-            ), f"Section {section_key} should have substantial content: {content_length}"
+            assert content_length > 100, (
+                f"Section {section_key} should have substantial content: "
+                f"{content_length}"
+            )
 
     def test_genereview_comprehensive_endpoint(self, client):
         """Test the comprehensive GeneReview endpoint."""

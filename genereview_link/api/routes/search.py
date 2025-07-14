@@ -1,3 +1,8 @@
+"""
+Search endpoint for finding GeneReviews by gene symbol.
+Provides REST API endpoint for searching NCBI database.
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from genereview_link.models.genereview_models import SearchResult
@@ -24,7 +29,8 @@ async def search_genereviews(
     client: EutilsClient = Depends(get_managed_client),
 ) -> SearchResult:
     """
-    Search for GeneReviews associated with the given gene symbol using NCBI E-utils esearch.
+    Search for GeneReviews associated with the given gene symbol using
+    NCBI E-utils esearch.
 
     Returns a list of PubMed IDs along with search metadata.
     """
