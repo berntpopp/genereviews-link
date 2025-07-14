@@ -3,16 +3,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from genereview_link.models.genereview_models import GeneReview
 from genereview_link.services.genereview_service import GeneReviewService, DataNotFoundError
+from genereview_link.services.service_manager import get_managed_service
 
 router = APIRouter(prefix="/genereview", tags=["GeneReviews"])
-
-async def get_service() -> GeneReviewService:
-    """Dependency to get GeneReviewService instance."""
-    service = GeneReviewService()
-    try:
-        yield service
-    finally:
-        await service.close()
 
 @router.get(
     "/{gene_symbol}",
@@ -25,7 +18,7 @@ async def get_genereview(
     include_abstract: bool = Query(True, description="Include PubMed abstract and metadata"),
     include_links: bool = Query(True, description="Include all available links"),
     include_fulltext: bool = Query(True, description="Include comprehensive scraped content"),
-    service: GeneReviewService = Depends(get_service),
+    service: GeneReviewService = Depends(get_managed_service),
 ) -> GeneReview:
     """
     Complete workflow: Searches for a GeneReview by gene symbol, fetches abstract,

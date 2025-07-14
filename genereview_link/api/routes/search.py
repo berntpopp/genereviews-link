@@ -3,16 +3,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from genereview_link.models.genereview_models import SearchResult
 from genereview_link.api.eutils_client import EutilsClient
+from genereview_link.api.client_manager import get_managed_client
 
 router = APIRouter(prefix="/search", tags=["Search"])
-
-async def get_client() -> EutilsClient:
-    """Dependency to get EutilsClient instance."""
-    client = EutilsClient()
-    try:
-        yield client
-    finally:
-        await client.close()
 
 @router.get(
     "/{gene_symbol}",
@@ -23,7 +16,7 @@ async def get_client() -> EutilsClient:
 async def search_genereviews(
     gene_symbol: str,
     retmax: int = Query(20, description="Maximum number of results to return", ge=1, le=100),
-    client: EutilsClient = Depends(get_client),
+    client: EutilsClient = Depends(get_managed_client),
 ) -> SearchResult:
     """
     Search for GeneReviews associated with the given gene symbol using NCBI E-utils esearch.

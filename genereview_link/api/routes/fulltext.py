@@ -4,16 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from genereview_link.models.genereview_models import FullTextData, GeneReviewSection, FullTextMetadata
 from genereview_link.api.eutils_client import EutilsClient
+from genereview_link.api.client_manager import get_managed_client
 
 router = APIRouter(prefix="/fulltext", tags=["Full Text"])
-
-async def get_client() -> EutilsClient:
-    """Dependency to get EutilsClient instance."""
-    client = EutilsClient()
-    try:
-        yield client
-    finally:
-        await client.close()
 
 @router.get(
     "/{nbk_id}",
@@ -23,7 +16,7 @@ async def get_client() -> EutilsClient:
 )
 async def get_fulltext(
     nbk_id: str,
-    client: EutilsClient = Depends(get_client),
+    client: EutilsClient = Depends(get_managed_client),
 ) -> FullTextData:
     """
     Scrape comprehensive content from an NCBI Bookshelf page.

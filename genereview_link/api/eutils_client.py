@@ -44,14 +44,28 @@ class EutilsClient:
         if settings.NCBI_API_KEY:
             params["api_key"] = settings.NCBI_API_KEY
         
-        await asyncio.sleep(self.rate_limit_delay) # Respect NCBI rate limits
+        # Use distributed rate limiting if available, otherwise fall back to local
+        if hasattr(self, '_distributed_wait'):
+            await self._distributed_wait()
+        else:
+            await asyncio.sleep(self.rate_limit_delay) # Respect NCBI rate limits
         
         try:
             response = await self.client.get(f"{self.base_url}/{endpoint}", params=params)
             response.raise_for_status()
             return response.json()
+        except httpx.ConnectError as e:
+            logger.error(f"Connection failed to {self.base_url}/{endpoint}: {e}")
+            raise ConnectionError(f"Unable to connect to NCBI E-utilities. Please check your internet connection.")
+        except httpx.TimeoutException as e:
+            logger.error(f"Timeout for {self.base_url}/{endpoint}: {e}")
+            raise TimeoutError(f"Request to NCBI E-utilities timed out. Please try again.")
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error for {e.request.url}: {e}")
+            if e.response.status_code == 429:
+                raise Exception("Rate limit exceeded. Please wait before making more requests.")
+            elif e.response.status_code == 403:
+                raise Exception("Access forbidden. Please check your API key or request parameters.")
             raise
         except Exception as e:
             logger.error(f"Request failed: {e}")
@@ -62,7 +76,11 @@ class EutilsClient:
         for attempt in range(max_retries):
             try:
                 # Longer delay for web scraping to be respectful
-                await asyncio.sleep(self.rate_limit_delay * 3)
+                if hasattr(self, '_distributed_wait'):
+                    await self._distributed_wait()
+                    await asyncio.sleep(self.rate_limit_delay * 2)  # Additional delay for scraping
+                else:
+                    await asyncio.sleep(self.rate_limit_delay * 3)
                 
                 response = await self.client.get(url)
                 response.raise_for_status()
@@ -91,14 +109,28 @@ class EutilsClient:
         if settings.NCBI_API_KEY:
             params["api_key"] = settings.NCBI_API_KEY
         
-        await asyncio.sleep(self.rate_limit_delay) # Respect NCBI rate limits
+        # Use distributed rate limiting if available, otherwise fall back to local
+        if hasattr(self, '_distributed_wait'):
+            await self._distributed_wait()
+        else:
+            await asyncio.sleep(self.rate_limit_delay) # Respect NCBI rate limits
         
         try:
             response = await self.client.get(f"{self.base_url}/{endpoint}", params=params)
             response.raise_for_status()
             return ET.fromstring(response.text)
+        except httpx.ConnectError as e:
+            logger.error(f"Connection failed to {self.base_url}/{endpoint}: {e}")
+            raise ConnectionError(f"Unable to connect to NCBI E-utilities. Please check your internet connection.")
+        except httpx.TimeoutException as e:
+            logger.error(f"Timeout for {self.base_url}/{endpoint}: {e}")
+            raise TimeoutError(f"Request to NCBI E-utilities timed out. Please try again.")
         except httpx.HTTPStatusError as e:
             logger.error(f"HTTP error for {e.request.url}: {e}")
+            if e.response.status_code == 429:
+                raise Exception("Rate limit exceeded. Please wait before making more requests.")
+            elif e.response.status_code == 403:
+                raise Exception("Access forbidden. Please check your API key or request parameters.")
             raise
         except Exception as e:
             logger.error(f"Request failed: {e}")

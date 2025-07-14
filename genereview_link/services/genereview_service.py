@@ -22,8 +22,9 @@ class GeneReviewService:
         self.client = client or EutilsClient()
         self.cache_ttl = timedelta(hours=settings.CACHE_TTL_HOURS)
 
-        # Apply the cache decorator to the implementation method
+        # Apply the cache decorator to both implementation methods
         self.get_genereview = alru_cache(maxsize=settings.CACHE_SIZE)(self._get_genereview_impl)
+        self.get_genereview_comprehensive = alru_cache(maxsize=settings.CACHE_SIZE)(self._get_genereview_comprehensive_impl)
 
     async def _get_genereview_impl(self, gene_symbol: str) -> GeneReview:
         """Implementation of the GeneReview fetching logic."""
@@ -59,7 +60,7 @@ class GeneReviewService:
             other_sections={k: GeneReviewSection(**v) for k, v in scraped_data.items()}
         )
 
-    async def get_genereview_comprehensive(
+    async def _get_genereview_comprehensive_impl(
         self,
         gene_symbol: str,
         include_abstract: bool = True,

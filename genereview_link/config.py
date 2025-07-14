@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     CACHE_TTL_HOURS: int = 24
     LOG_LEVEL: str = "INFO"
     CORS_ORIGINS: str = "*"
+    
+    # Distributed rate limiting (for multi-worker deployments)
+    RATE_LIMIT_STATE_FILE: str = ""  # Optional: path to shared state file for multi-worker rate limiting
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

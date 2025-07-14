@@ -3,16 +3,9 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from genereview_link.models.genereview_models import LinkData
 from genereview_link.api.eutils_client import EutilsClient
+from genereview_link.api.client_manager import get_managed_client
 
 router = APIRouter(prefix="/links", tags=["Links"])
-
-async def get_client() -> EutilsClient:
-    """Dependency to get EutilsClient instance."""
-    client = EutilsClient()
-    try:
-        yield client
-    finally:
-        await client.close()
 
 @router.get(
     "/{pubmed_id}",
@@ -22,7 +15,7 @@ async def get_client() -> EutilsClient:
 )
 async def get_links(
     pubmed_id: str,
-    client: EutilsClient = Depends(get_client),
+    client: EutilsClient = Depends(get_managed_client),
 ) -> LinkData:
     """
     Get all available links from a PubMed ID using NCBI E-utils elink.
