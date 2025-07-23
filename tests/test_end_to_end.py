@@ -62,9 +62,9 @@ class TestCompleteWorkflow:
             # Validate section structure
             sections = full_text.sections
             assert isinstance(sections, dict), "Sections should be a dictionary"
-            assert len(sections) >= 5, (
-                f"Should have multiple sections, got {len(sections)}"
-            )
+            assert (
+                len(sections) >= 5
+            ), f"Should have multiple sections, got {len(sections)}"
 
             # Check for key sections
             section_keys = [key.lower() for key in sections.keys()]
@@ -74,20 +74,20 @@ class TestCompleteWorkflow:
                 for exp in expected_sections
                 if any(exp in key for key in section_keys)
             ]
-            assert len(found_sections) >= 2, (
-                f"Should find key sections, found {found_sections} in {section_keys}"
-            )
+            assert (
+                len(found_sections) >= 2
+            ), f"Should find key sections, found {found_sections} in {section_keys}"
 
             # Validate individual sections
             for section_key, section_data in sections.items():
                 assert section_data.title, f"Section {section_key} should have title"
-                assert section_data.content, (
-                    f"Section {section_key} should have content"
-                )
+                assert (
+                    section_data.content
+                ), f"Section {section_key} should have content"
                 assert section_data.level, f"Section {section_key} should have level"
-                assert isinstance(section_data.subsections, dict), (
-                    f"Section {section_key} should have subsections dict"
-                )
+                assert isinstance(
+                    section_data.subsections, dict
+                ), f"Section {section_key} should have subsections dict"
 
                 # Content should be substantial
                 content_length = len(section_data.content)
@@ -113,9 +113,9 @@ class TestCompleteWorkflow:
         # Should find Li-Fraumeni syndrome related content
         if result.title:
             title = result.title.lower()
-            assert any(term in title for term in ["li-fraumeni", "tp53", "syndrome"]), (
-                f"Title should be relevant to TP53/Li-Fraumeni: {result.title}"
-            )
+            assert any(
+                term in title for term in ["li-fraumeni", "tp53", "syndrome"]
+            ), f"Title should be relevant to TP53/Li-Fraumeni: {result.title}"
 
 
 class TestScrapingRobustness:
@@ -171,9 +171,9 @@ class TestScrapingRobustness:
                     )
 
                     # Should have substantial content (at least 10KB)
-                    assert total_content_length >= 10000, (
-                        f"Total content should be substantial: {total_content_length}"
-                    )
+                    assert (
+                        total_content_length >= 10000
+                    ), f"Total content should be substantial: {total_content_length}"
 
                     # Should not have too many very short sections
                     short_sections = sum(
@@ -181,9 +181,9 @@ class TestScrapingRobustness:
                         for section in sections.values()
                         if len(section.get("content", "")) < 100
                     )
-                    assert short_sections <= len(sections) * 0.3, (
-                        f"Too many short sections: {short_sections}/{len(sections)}"
-                    )
+                    assert (
+                        short_sections <= len(sections) * 0.3
+                    ), f"Too many short sections: {short_sections}/{len(sections)}"
 
                     # Should have meaningful section titles
                     for section_key, section_data in sections.items():
@@ -216,9 +216,9 @@ class TestErrorRecovery:
                 # Should return a valid structure even for invalid genes
                 from genereview_link.models.genereview_models import GeneReview
 
-                assert isinstance(result, GeneReview), (
-                    f"Should return GeneReview for {gene}"
-                )
+                assert isinstance(
+                    result, GeneReview
+                ), f"Should return GeneReview for {gene}"
 
                 # Should indicate no results found
                 if result and gene:  # If not empty and gene is not empty
@@ -260,9 +260,9 @@ class TestErrorRecovery:
             for section_key, section_data in sections.items():
                 required_fields = ["title", "content", "level", "subsections"]
                 for field in required_fields:
-                    assert field in section_data, (
-                        f"Section {section_key} missing required field: {field}"
-                    )
+                    assert (
+                        field in section_data
+                    ), f"Section {section_key} missing required field: {field}"
 
 
 class TestPerformanceValidation:
@@ -290,9 +290,9 @@ class TestPerformanceValidation:
 
         # Should return meaningful results within time limit
         if "content" in result:
-            assert len(result["content"]) > 0, (
-                "Should extract content within time limit"
-            )
+            assert (
+                len(result["content"]) > 0
+            ), "Should extract content within time limit"
 
     @pytest.mark.asyncio
     async def test_memory_efficiency(self, client):
@@ -319,6 +319,6 @@ class TestPerformanceValidation:
         memory_increase = final_memory - initial_memory
 
         # Should not increase memory by more than 100MB
-        assert memory_increase < 100 * 1024 * 1024, (
-            f"Memory increase too large: {memory_increase / 1024 / 1024:.1f} MB"
-        )
+        assert (
+            memory_increase < 100 * 1024 * 1024
+        ), f"Memory increase too large: {memory_increase / 1024 / 1024:.1f} MB"
