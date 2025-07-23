@@ -1,7 +1,4 @@
-"""
-Client lifecycle management for EutilsClient with singleton pattern and distributed
-rate limiting.
-"""
+"""Client lifecycle management for EutilsClient with singleton pattern and distributed rate limiting."""
 
 import asyncio
 import time
@@ -17,14 +14,22 @@ logger = get_logger(__name__)
 
 
 class DistributedRateLimiter:
-    """
-    Rate limiter that can work across multiple workers/processes.
+    """Rate limiter that can work across multiple workers/processes.
+
     Uses file-based coordination for multi-worker environments.
     """
 
     def __init__(
-        self, requests_per_second: float, shared_state_file: Optional[str] = None
+        self,
+        requests_per_second: float,
+        shared_state_file: Optional[str] = None,
     ):
+        """Initialize the distributed rate limiter.
+
+        Args:
+            requests_per_second: Maximum requests allowed per second.
+            shared_state_file: Optional file path for multi-worker coordination.
+        """
         self.delay = 1.0 / requests_per_second
         self.shared_state_file = shared_state_file
         self._local_last_request = 0.0
@@ -90,14 +95,13 @@ class DistributedRateLimiter:
 
 
 class ClientManager:
-    """
-    Singleton manager for EutilsClient instances with proper lifecycle management.
-    """
+    """Singleton manager for EutilsClient instances with proper lifecycle management."""
 
     _instance: Optional["ClientManager"] = None
     _lock = threading.Lock()
 
     def __new__(cls) -> "ClientManager":
+        """Create or return the singleton instance."""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -105,6 +109,7 @@ class ClientManager:
         return cls._instance
 
     def __init__(self):
+        """Initialize the ClientManager instance."""
         if hasattr(self, "_initialized"):
             return
 
@@ -121,7 +126,8 @@ class ClientManager:
         # Calculate rate limit based on API key
         requests_per_second = 10.0 if settings.NCBI_API_KEY else 3.0
         self._rate_limiter = DistributedRateLimiter(
-            requests_per_second=requests_per_second, shared_state_file=shared_state_file
+            requests_per_second=requests_per_second,
+            shared_state_file=shared_state_file,
         )
 
         logger.info(
@@ -203,7 +209,9 @@ class ClientManager:
 
         except Exception as e:
             logger.warning(
-                "Health check failed", error_type=type(e).__name__, error=str(e)
+                "Health check failed",
+                error_type=type(e).__name__,
+                error=str(e),
             )
             return {
                 "status": "degraded",
@@ -212,21 +220,26 @@ class ClientManager:
             }
 
 
-# Global instance
-_client_manager = ClientManager()
+# Global instance (lazily initialized)
+_client_manager: ClientManager | None = None
 
 
 async def get_managed_client() -> EutilsClient:
-    """FastAPI dependency for getting managed client."""
-    async with _client_manager.get_client_context() as client:
+    """Get managed client dependency for FastAPI."""
+    client_manager = await get_client_manager()
+    async with client_manager.get_client_context() as client:
         yield client
 
 
 async def get_client_manager() -> ClientManager:
     """Get the global client manager instance."""
+    global _client_manager
+    if _client_manager is None:
+        _client_manager = ClientManager()
     return _client_manager
 
 
 async def shutdown_clients():
     """Shutdown all managed clients (call from app shutdown)."""
-    await _client_manager.close()
+    if _client_manager is not None:
+        await _client_manager.close()

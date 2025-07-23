@@ -1,6 +1,4 @@
-"""
-Logging middleware for request correlation IDs and structured request logging.
-"""
+"""Logging middleware for request correlation IDs and structured request logging."""
 
 import time
 import uuid
@@ -16,11 +14,22 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Middleware for request logging with correlation IDs and performance metrics."""
 
     def __init__(self, app, exclude_paths: list[str] = None):
+        """Initialize the logging middleware.
+
+        Args:
+            app: The FastAPI application instance.
+            exclude_paths: List of paths to exclude from logging.
+        """
         super().__init__(app)
         self.logger = get_logger("api.middleware")
-        self.exclude_paths = exclude_paths or ["/health", "/docs", "/openapi.json"]
+        self.exclude_paths = exclude_paths or [
+            "/health",
+            "/docs",
+            "/openapi.json",
+        ]
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """Process requests with correlation IDs and logging."""
         # Generate correlation ID
         correlation_id = str(uuid.uuid4())
         request.state.correlation_id = correlation_id
@@ -34,7 +43,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             correlation_id=correlation_id,
             method=request.method,
             path=request.url.path,
-            query_params=str(request.query_params) if request.query_params else None,
+            query_params=(str(request.query_params) if request.query_params else None),
             user_agent=request.headers.get("user-agent"),
             client_ip=self._get_client_ip(request),
         )

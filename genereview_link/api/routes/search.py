@@ -1,5 +1,5 @@
-"""
-Search endpoint for finding GeneReviews by gene symbol.
+"""Search endpoint for finding GeneReviews by gene symbol.
+
 Provides REST API endpoint for searching NCBI database.
 """
 
@@ -28,10 +28,9 @@ async def search_genereviews(
     ),
     client: EutilsClient = Depends(get_managed_client),
 ) -> SearchResult:
-    """
-    Search for GeneReviews associated with the given gene symbol using
-    NCBI E-utils esearch.
+    """Search for GeneReviews associated with the given gene symbol.
 
+    Uses NCBI E-utils esearch to find relevant GeneReviews.
     Returns a list of PubMed IDs along with search metadata.
     """
     # Create request-scoped logger

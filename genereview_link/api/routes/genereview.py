@@ -1,5 +1,5 @@
-"""
-Comprehensive GeneReview endpoint.
+"""Comprehensive GeneReview endpoint.
+
 Provides REST API endpoint for complete GeneReview workflow from gene symbol
 to full data.
 """
@@ -34,8 +34,9 @@ async def get_genereview(
     ),
     service: GeneReviewService = Depends(get_managed_service),
 ) -> GeneReview:
-    """
-    Complete workflow: Searches for a GeneReview by gene symbol, fetches abstract,
+    """Get complete workflow for GeneReview by gene symbol.
+
+    Searches for a GeneReview by gene symbol, fetches abstract,
     gets all links, scrapes full text, and returns comprehensive structured data.
 
     This endpoint combines all the individual endpoints into a single

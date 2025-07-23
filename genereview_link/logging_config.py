@@ -1,6 +1,4 @@
-"""
-Structured logging configuration using structlog for enhanced observability.
-"""
+"""Structured logging configuration using structlog for enhanced observability."""
 
 import logging
 import sys
@@ -48,7 +46,6 @@ def json_serializer(obj: Any, **kwargs: Any) -> bytes:
 
 def configure_structlog() -> None:
     """Configure structlog for the application."""
-
     # Determine if we should use JSON logging (production) or console
     # (development)
     use_json = getattr(
@@ -119,15 +116,23 @@ class LogContext:
     """Context manager for adding structured context to logs."""
 
     def __init__(self, logger: structlog.stdlib.BoundLogger, **context: Any):
+        """Initialize the log context.
+
+        Args:
+            logger: The structured logger instance.
+            **context: Additional context to bind to the logger.
+        """
         self.logger = logger
         self.context = context
         self.bound_logger = None
 
     def __enter__(self) -> structlog.stdlib.BoundLogger:
+        """Enter the context and return bound logger."""
         self.bound_logger = self.logger.bind(**self.context)
         return self.bound_logger
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit the context and log any exceptions."""
         if exc_type is not None:
             self.bound_logger.error(
                 "Exception in log context",
@@ -137,7 +142,7 @@ class LogContext:
 
 
 def log_function_call(logger: structlog.stdlib.BoundLogger):
-    """Decorator to log function calls with parameters and timing."""
+    """Decorate functions to log function calls with parameters and timing."""
 
     def decorator(func):
         async def async_wrapper(*args, **kwargs):
@@ -214,18 +219,30 @@ class PerformanceLogger:
     """Context manager for performance monitoring."""
 
     def __init__(
-        self, logger: structlog.stdlib.BoundLogger, operation: str, **context: Any
+        self,
+        logger: structlog.stdlib.BoundLogger,
+        operation: str,
+        **context: Any,
     ):
+        """Initialize the performance logger.
+
+        Args:
+            logger: The structured logger instance.
+            operation: Name of the operation being monitored.
+            **context: Additional context for the operation.
+        """
         self.logger = logger.bind(operation=operation, **context)
         self.operation = operation
         self.start_time = None
 
     def __enter__(self) -> "PerformanceLogger":
+        """Enter the context and start timing."""
         self.start_time = time.time()
         self.logger.debug("Operation started")
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit the context and log performance metrics."""
         duration_ms = (time.time() - self.start_time) * 1000
 
         if exc_type is not None:

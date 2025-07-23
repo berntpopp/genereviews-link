@@ -1,28 +1,25 @@
-"""
-Service lifecycle management with singleton pattern and proper client integration.
-"""
+"""Service lifecycle management with singleton pattern and proper client integration."""
 
 import asyncio
-import logging
 import threading
 from typing import Optional
 from contextlib import asynccontextmanager
 
 from genereview_link.services.genereview_service import GeneReviewService
 from genereview_link.api.client_manager import get_client_manager
+from genereview_link.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ServiceManager:
-    """
-    Singleton manager for GeneReviewService instances with proper lifecycle management.
-    """
+    """Singleton manager for GeneReviewService instances with proper lifecycle management."""
 
     _instance: Optional["ServiceManager"] = None
     _lock = threading.Lock()
 
     def __new__(cls) -> "ServiceManager":
+        """Create or return the singleton instance."""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -30,6 +27,7 @@ class ServiceManager:
         return cls._instance
 
     def __init__(self):
+        """Initialize the ServiceManager instance."""
         if hasattr(self, "_initialized"):
             return
 
@@ -71,21 +69,26 @@ class ServiceManager:
                 self._service = None
 
 
-# Global instance
-_service_manager = ServiceManager()
+# Global instance (lazily initialized)
+_service_manager: ServiceManager | None = None
 
 
 async def get_managed_service() -> GeneReviewService:
-    """FastAPI dependency for getting managed service."""
-    async with _service_manager.get_service_context() as service:
+    """Get managed service dependency for FastAPI."""
+    service_manager = await get_service_manager()
+    async with service_manager.get_service_context() as service:
         yield service
 
 
 async def get_service_manager() -> ServiceManager:
     """Get the global service manager instance."""
+    global _service_manager
+    if _service_manager is None:
+        _service_manager = ServiceManager()
     return _service_manager
 
 
 async def shutdown_services():
     """Shutdown all managed services (call from app shutdown)."""
-    await _service_manager.close()
+    if _service_manager is not None:
+        await _service_manager.close()

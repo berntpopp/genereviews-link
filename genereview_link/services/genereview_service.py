@@ -1,15 +1,16 @@
 """
 Service layer for GeneReview business logic.
+
 Orchestrates data retrieval and processing workflows.
 """
 
-import logging
 from datetime import timedelta
 
 from async_lru import alru_cache
 
 from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.config import settings
+from genereview_link.logging_config import get_logger
 from genereview_link.models.genereview_models import (
     GeneReview,
     GeneReviewSection,
@@ -19,7 +20,7 @@ from genereview_link.models.genereview_models import (
     FullTextMetadata,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class DataNotFoundError(Exception):
@@ -32,6 +33,11 @@ class GeneReviewService:
     """Service layer for fetching and processing GeneReviews data."""
 
     def __init__(self, client: EutilsClient | None = None):
+        """Initialize the GeneReview service.
+
+        Args:
+            client: Optional EutilsClient instance, creates new one if None.
+        """
         self.client = client or EutilsClient()
         self.cache_ttl = timedelta(hours=settings.CACHE_TTL_HOURS)
 
@@ -44,7 +50,7 @@ class GeneReviewService:
         )
 
     async def _get_genereview_impl(self, gene_symbol: str) -> GeneReview:
-        """Implementation of the GeneReview fetching logic."""
+        """Implement the GeneReview fetching logic."""
         # 1. Search for the PubMed ID
         pubmed_id = await self.client.search_genereview_pmid(gene_symbol)
         if not pubmed_id:
@@ -86,10 +92,7 @@ class GeneReviewService:
         include_links: bool = True,
         include_fulltext: bool = True,
     ) -> GeneReview:
-        """
-        Enhanced comprehensive workflow that fetches all available data for a
-        GeneReview.
-        """
+        """Fetch all available data for a GeneReview."""
         # 1. Search for GeneReviews
         search_results = await self.client.search_genereviews(gene_symbol, retmax=1)
         if not search_results["ids"]:
@@ -224,5 +227,5 @@ class GeneReviewService:
         )
 
     async def close(self):
-        """Closes the underlying HTTPX client."""
+        """Close the underlying HTTPX client."""
         await self.client.close()

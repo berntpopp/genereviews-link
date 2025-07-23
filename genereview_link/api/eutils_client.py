@@ -105,11 +105,12 @@ class EutilsClient:
             )
             if e.response.status_code == 429:
                 raise Exception(
-                    "Rate limit exceeded. Please wait before making more requests."
+                    "Rate limit exceeded. Please wait before making more " "requests."
                 )
             elif e.response.status_code == 403:
                 raise Exception(
-                    "Access forbidden. Please check your API key or request parameters."
+                    "Access forbidden. Please check your API key or request "
+                    "parameters."
                 )
             raise
         except Exception as e:
@@ -122,8 +123,7 @@ class EutilsClient:
             raise
 
     async def _make_web_request(self, url: str, max_retries: int = 3) -> httpx.Response:
-        """Make a web request with retries and proper rate limiting for
-        scraping."""
+        """Make a web request with retries and proper rate limiting for scraping."""
         for attempt in range(max_retries):
             try:
                 # Longer delay for web scraping to be respectful
@@ -211,11 +211,12 @@ class EutilsClient:
             )
             if e.response.status_code == 429:
                 raise Exception(
-                    "Rate limit exceeded. Please wait before making more requests."
+                    "Rate limit exceeded. Please wait before making more " "requests."
                 )
             elif e.response.status_code == 403:
                 raise Exception(
-                    "Access forbidden. Please check your API key or request parameters."
+                    "Access forbidden. Please check your API key or request "
+                    "parameters."
                 )
             raise
         except Exception as e:
@@ -263,8 +264,7 @@ class EutilsClient:
         return None
 
     async def scrape_genereview_book(self, book_url: str) -> Dict[str, Any]:
-        """Scrape the main sections of a GeneReview book page using enhanced
-        parsing."""
+        """Scrape the main sections of a GeneReview book page using enhanced parsing."""
         scrape_logger = logger.bind(url=book_url, operation="enhanced_scrape")
 
         with PerformanceLogger(scrape_logger, "book_scraping") as perf:
@@ -338,8 +338,7 @@ class EutilsClient:
     async def search_genereviews(
         self, gene_symbol: str, retmax: int = 20
     ) -> List[Dict[str, Any]]:
-        """Enhanced search for GeneReviews returning multiple results with
-        metadata."""
+        """Enhanced search for GeneReviews returning multiple results with metadata."""
         params = {
             "db": "pubmed",
             "term": f"{gene_symbol}[All Fields] AND GeneReviews[book]",
@@ -666,7 +665,10 @@ class EutilsClient:
             title_span = h1.find("span", {"class": "title"})
             if title_span:
                 title = title_span.get_text().strip()
-                if title and title.lower() not in ["bookshelf", "ncbi bookshelf"]:
+                if title and title.lower() not in [
+                    "bookshelf",
+                    "ncbi bookshelf",
+                ]:
                     return title
 
             # Fallback to h1 text if no title span found
@@ -703,7 +705,10 @@ class EutilsClient:
             elem = content_div.find(attrs=selector)
             if elem:
                 title = elem.get_text().strip()
-                if title and title.lower() not in ["bookshelf", "ncbi bookshelf"]:
+                if title and title.lower() not in [
+                    "bookshelf",
+                    "ncbi bookshelf",
+                ]:
                     return title
 
         # Strategy 5: Look for meta tags
@@ -812,7 +817,8 @@ class EutilsClient:
         """Extract last updated date."""
         # Look for date patterns
         date_pattern = re.compile(
-            r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b",
+            r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|"
+            r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b",
             re.I,
         )
 
@@ -1002,7 +1008,8 @@ class EutilsClient:
 
         # Strategy 1: Look for GeneReviews-specific section divs (preferred method)
         section_divs = content_div.find_all(
-            "div", {"id": lambda x: x and "." in str(x) and not x.startswith("_")}
+            "div",
+            {"id": lambda x: x and "." in str(x) and not x.startswith("_")},
         )
 
         if section_divs:
@@ -1235,4 +1242,5 @@ class EutilsClient:
         return key[:50]  # Limit length
 
     async def close(self):
+        """Close the HTTP client and cleanup resources."""
         await self.client.aclose()

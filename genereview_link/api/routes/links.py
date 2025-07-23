@@ -1,5 +1,5 @@
-"""
-Links endpoint for fetching related URLs.
+"""Links endpoint for fetching related URLs.
+
 Provides REST API endpoint for retrieving all available links for PubMed articles.
 """
 

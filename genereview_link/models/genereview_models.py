@@ -1,5 +1,5 @@
-"""
-Pydantic data models for GeneReview Link.
+"""Pydantic data models for GeneReview Link.
+
 Defines structured data models for validation and serialization.
 """
 
@@ -52,7 +52,8 @@ class LinkData(BaseModel):
     """Represents links from PubMed elink."""
 
     urls: List[str] = Field(
-        default_factory=list, description="All available URLs for the publication."
+        default_factory=list,
+        description="All available URLs for the publication.",
     )
 
 
@@ -120,7 +121,8 @@ class GeneReview(BaseModel):
     )
     # This field will hold all other scraped sections dynamically
     other_sections: dict[str, GeneReviewSection] = Field(
-        default_factory=dict, description="A dictionary of all other scraped sections."
+        default_factory=dict,
+        description="A dictionary of all other scraped sections.",
     )
     # Enhanced fields
     abstract_data: Optional[AbstractData] = Field(

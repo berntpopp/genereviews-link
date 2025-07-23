@@ -1,5 +1,5 @@
-"""
-Fulltext endpoint for scraping complete GeneReview documents.
+"""Fulltext endpoint for scraping complete GeneReview documents.
+
 Provides REST API endpoint for retrieving comprehensive content from NCBI Bookshelf.
 """
 
@@ -49,7 +49,8 @@ async def get_fulltext(
 
         if result.get("error"):
             raise HTTPException(
-                status_code=404, detail=f"Could not scrape content: {result['error']}"
+                status_code=404,
+                detail=f"Could not scrape content: {result['error']}",
             )
 
         # Convert sections to GeneReviewSection objects
@@ -81,5 +82,6 @@ async def get_fulltext(
     except Exception as e:
         logging.error(f"Error scraping NBK{nbk_id}: {e}", exc_info=True)
         raise HTTPException(
-            status_code=500, detail="An error occurred while scraping the full text."
+            status_code=500,
+            detail="An error occurred while scraping the full text.",
         )
