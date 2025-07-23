@@ -436,7 +436,7 @@ class EutilsClient:
                         if first_name is not None and first_name.text:
                             name = f"{first_name.text} {name}"
                         authors.append(name)
-            article_data["authors"] = ", ".join(authors)
+            article_data["authors"] = authors  # type: ignore[assignment]
 
             # Journal
             journal = article_elem.find(".//Journal/Title")
@@ -511,7 +511,7 @@ class EutilsClient:
                             name = f"{first_name.text} {name}"
                         authors.append(name)
                 break  # Use first authors list found
-        article_data["authors"] = ", ".join(authors)
+        article_data["authors"] = authors  # type: ignore[assignment]
 
         # Extract journal/book information
         book_title = book_document.find(".//Book/BookTitle")

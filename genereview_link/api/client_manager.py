@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Union, Any, AsyncGenerator
 import threading
 from contextlib import asynccontextmanager
 
@@ -150,13 +150,13 @@ class ClientManager:
                     # Create client with rate limiter injection
                     self._client = EutilsClient()
                     # Replace the client's rate limiting with our distributed version
-                    self._client._rate_limiter = self._rate_limiter
-                    self._client._distributed_wait = self._rate_limiter.wait_if_needed
+                    setattr(self._client, "_rate_limiter", self._rate_limiter)
+                    setattr(self._client, "_distributed_wait", self._rate_limiter.wait_if_needed)
 
         return self._client
 
     @asynccontextmanager
-    async def get_client_context(self):
+    async def get_client_context(self) -> AsyncGenerator[EutilsClient, None]:
         """Context manager for getting client (for dependency injection)."""
         client = await self.get_client()
         try:
@@ -165,7 +165,7 @@ class ClientManager:
             # Don't close here - let the manager handle lifecycle
             pass
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the client and cleanup resources."""
         async with self._client_lock:
             if self._client is not None:
@@ -175,7 +175,7 @@ class ClientManager:
 
         self._shutdown_event.set()
 
-    async def health_check(self, test_connection: bool = False) -> Dict[str, any]:
+    async def health_check(self, test_connection: bool = False) -> Dict[str, Any]:
         """Check the health of the client connection."""
         try:
             client = await self.get_client()
@@ -228,7 +228,7 @@ class ClientManager:
 _client_manager: Optional[ClientManager] = None
 
 
-async def get_managed_client() -> EutilsClient:
+async def get_managed_client() -> AsyncGenerator[EutilsClient, None]:
     """Get managed client dependency for FastAPI."""
     client_manager = await get_client_manager()
     async with client_manager.get_client_context() as client:
@@ -243,7 +243,7 @@ async def get_client_manager() -> ClientManager:
     return _client_manager
 
 
-async def shutdown_clients():
+async def shutdown_clients() -> None:
     """Shutdown all managed clients (call from app shutdown)."""
     if _client_manager is not None:
         await _client_manager.close()
