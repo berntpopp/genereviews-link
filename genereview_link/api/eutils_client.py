@@ -401,7 +401,7 @@ class EutilsClient:
         if medline_citation is not None:
             pmid = medline_citation.find(".//PMID")
             if pmid is not None:
-                article_data["pmid"] = pmid.text
+                article_data["pmid"] = pmid.text or ""
 
         # Extract article details
         article_elem = article.find(".//Article")
@@ -436,7 +436,7 @@ class EutilsClient:
                         if first_name is not None and first_name.text:
                             name = f"{first_name.text} {name}"
                         authors.append(name)
-            article_data["authors"] = authors
+            article_data["authors"] = ", ".join(authors)
 
             # Journal
             journal = article_elem.find(".//Journal/Title")
@@ -451,11 +451,11 @@ class EutilsClient:
                 day = pub_date.find(".//Day")
 
                 date_parts = []
-                if year is not None:
+                if year is not None and year.text:
                     date_parts.append(year.text)
-                if month is not None:
+                if month is not None and month.text:
                     date_parts.append(month.text)
-                if day is not None:
+                if day is not None and day.text:
                     date_parts.append(day.text)
 
                 article_data["publication_date"] = (
@@ -477,7 +477,7 @@ class EutilsClient:
         # Extract PMID
         pmid = book_document.find(".//PMID")
         if pmid is not None:
-            article_data["pmid"] = pmid.text
+            article_data["pmid"] = pmid.text or ""
 
         # Extract title - ArticleTitle for the specific chapter
         title = book_document.find(".//ArticleTitle")
@@ -511,7 +511,7 @@ class EutilsClient:
                             name = f"{first_name.text} {name}"
                         authors.append(name)
                 break  # Use first authors list found
-        article_data["authors"] = authors
+        article_data["authors"] = ", ".join(authors)
 
         # Extract journal/book information
         book_title = book_document.find(".//Book/BookTitle")
@@ -528,11 +528,11 @@ class EutilsClient:
             day = contrib_date.find(".//Day")
 
             date_parts = []
-            if year is not None:
+            if year is not None and year.text:
                 date_parts.append(year.text)
-            if month is not None:
+            if month is not None and month.text:
                 date_parts.append(month.text)
-            if day is not None:
+            if day is not None and day.text:
                 date_parts.append(day.text)
 
             article_data["publication_date"] = (
@@ -544,7 +544,7 @@ class EutilsClient:
             if book_pub_date is not None:
                 year = book_pub_date.find(".//Year")
                 if year is not None:
-                    article_data["publication_date"] = year.text
+                    article_data["publication_date"] = year.text or ""
 
         return article_data
 
@@ -573,7 +573,7 @@ class EutilsClient:
             nbk_match = re.search(r"NBK(\d+)", book_url)
             nbk_id = nbk_match.group(1) if nbk_match else None
 
-            results = {
+            results: Dict[str, Any] = {
                 "nbk_id": nbk_id,
                 "url": book_url,
                 "title": "",
