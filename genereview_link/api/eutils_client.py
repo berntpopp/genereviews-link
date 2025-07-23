@@ -7,14 +7,18 @@ section extraction.
 
 import asyncio
 import re
+import warnings
 from typing import Any, List, Dict, Optional
 from xml.etree import ElementTree as ET
 
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 from genereview_link.config import settings
 from genereview_link.logging_config import get_logger, PerformanceLogger
+
+# Suppress XML parsing warnings when using BeautifulSoup on HTML content
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 logger = get_logger(__name__)
 

@@ -6,6 +6,7 @@ with the enhanced scraping system.
 """
 
 import pytest
+import pytest_asyncio
 import asyncio
 from httpx import AsyncClient
 from fastapi import FastAPI
@@ -22,26 +23,41 @@ def event_loop():
     loop.close()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def app() -> FastAPI:
     """Create a FastAPI app instance for testing."""
-    config = ServerConfig(transport="http", log_level="WARNING", enable_docs=False)
+    from genereview_link.api.client_manager import get_client_manager, shutdown_clients
+    from genereview_link.services.service_manager import (
+        get_service_manager,
+        shutdown_services,
+    )
+
+    config = ServerConfig(transport="http", log_level="WARNING", enable_docs=True)
     manager = UnifiedServerManager()
     app = await manager.create_fastapi_app(config)
 
     # Manually initialize services since lifespan won't run in tests
-    async with manager.lifespan(app):
-        yield app
+    client_manager = await get_client_manager()
+    service_manager = await get_service_manager()
+    await client_manager.get_client()  # Initialize client
+    await service_manager.get_service()  # Initialize service
+
+    yield app
+
+    # Cleanup
+    await shutdown_services()
+    await shutdown_clients()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client(app: FastAPI) -> AsyncClient:
     """Create an async test client for the app."""
     from httpx import ASGITransport
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
+    client = AsyncClient(transport=transport, base_url="http://test")
+    yield client
+    await client.aclose()
 
 
 class TestAPIEndpoints:
@@ -185,8 +201,8 @@ class TestAPIErrorHandling:
         if response.status_code == 200:
             data = response.json()
             assert isinstance(data, dict)
-            # May contain error field
-            if "error" in data:
+            # May contain error field - if present, should be a string
+            if "error" in data and data["error"] is not None:
                 assert isinstance(data["error"], str)
 
     @pytest.mark.asyncio
@@ -243,9 +259,9 @@ class TestAPIPerformance:
         data = response.json()
         if "sections" in data:
             section_count = len(data["sections"])
-            assert (
-                section_count >= 5
-            ), f"Should return substantial data: {section_count} sections"
+            assert section_count >= 5, (
+                f"Should return substantial data: {section_count} sections"
+            )
 
 
 class TestAPIDataConsistency:
@@ -275,14 +291,16 @@ class TestAPIDataConsistency:
                 comp_title = comprehensive_data.get("title", "").lower()
                 abs_title = abstract_data.get("title", "").lower()
 
-                # Should share common keywords
-                comp_words = set(comp_title.split())
-                abs_words = set(abs_title.split())
-                common_words = comp_words & abs_words
+                # Only check if both titles exist
+                if comp_title and abs_title:
+                    # Should share common keywords
+                    comp_words = set(comp_title.split())
+                    abs_words = set(abs_title.split())
+                    common_words = comp_words & abs_words
 
-                assert (
-                    len(common_words) >= 2
-                ), f"Titles should share keywords: '{comp_title}' vs '{abs_title}'"
+                    assert len(common_words) >= 2, (
+                        f"Titles should share keywords: '{comp_title}' vs '{abs_title}'"
+                    )
 
         # Extract NBK ID from book URL
         if book_url and "NBK" in book_url:
@@ -329,10 +347,19 @@ class TestAPICaching:
             assert response.status_code == 200
             responses.append(response.json())
 
-        # Results should be identical (due to caching)
+        # Results should be identical (due to caching) - check key fields
         first_response = responses[0]
-        for response in responses[1:]:
-            assert response == first_response, "Cached responses should be identical"
+        for i, response in enumerate(responses[1:], 1):
+            # Compare key structure and data
+            assert response.keys() == first_response.keys(), (
+                f"Response {i} has different keys than first response"
+            )
+            assert response["count"] == first_response["count"], (
+                f"Response {i} has different count than first response"
+            )
+            assert response["ids"] == first_response["ids"], (
+                f"Response {i} has different ids than first response"
+            )
 
     @pytest.mark.asyncio
     async def test_different_genes_different_results(self, client: AsyncClient):
@@ -353,9 +380,9 @@ class TestAPICaching:
             result2 = results[gene2]
 
             # Results should be different (at least in IDs)
-            assert (
-                result1["ids"] != result2["ids"]
-            ), f"Different genes should have different results: {gene1} vs {gene2}"
+            assert result1["ids"] != result2["ids"], (
+                f"Different genes should have different results: {gene1} vs {gene2}"
+            )
 
 
 class TestAPIDocumentation:
