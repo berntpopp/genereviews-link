@@ -3,7 +3,7 @@
 import logging
 import sys
 import time
-from typing import Any
+from typing import Any, Optional
 
 import structlog
 import orjson
@@ -41,7 +41,7 @@ def add_service_context(
 
 def json_serializer(obj: Any, **kwargs: Any) -> bytes:
     """Fast JSON serializer using orjson."""
-    return orjson.dumps(obj, option=orjson.OPT_APPEND_NEWLINE)
+    return orjson.dumps(obj, option=orjson.OPT_APPEND_NEWLINE)  # type: ignore[no-any-return]
 
 
 def configure_structlog() -> None:
@@ -124,7 +124,7 @@ class LogContext:
         """
         self.logger = logger
         self.context = context
-        self.bound_logger = None
+        self.bound_logger: Optional[structlog.stdlib.BoundLogger] = None
 
     def __enter__(self) -> structlog.stdlib.BoundLogger:
         """Enter the context and return bound logger."""
@@ -133,7 +133,7 @@ class LogContext:
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the context and log any exceptions."""
-        if exc_type is not None:
+        if exc_type is not None and self.bound_logger is not None:
             self.bound_logger.error(
                 "Exception in log context",
                 exception_type=exc_type.__name__,
@@ -141,11 +141,11 @@ class LogContext:
             )
 
 
-def log_function_call(logger: structlog.stdlib.BoundLogger):
+def log_function_call(logger: structlog.stdlib.BoundLogger) -> Any:
     """Decorate functions to log function calls with parameters and timing."""
 
-    def decorator(func):
-        async def async_wrapper(*args, **kwargs):
+    def decorator(func: Any) -> Any:
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             start_time = time.time()
             func_logger = logger.bind(function=func.__name__, module=func.__module__)
 
@@ -173,7 +173,7 @@ def log_function_call(logger: structlog.stdlib.BoundLogger):
                 )
                 raise
 
-        def sync_wrapper(*args, **kwargs):
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             start_time = time.time()
             func_logger = logger.bind(function=func.__name__, module=func.__module__)
 
@@ -233,7 +233,7 @@ class PerformanceLogger:
         """
         self.logger = logger.bind(operation=operation, **context)
         self.operation = operation
-        self.start_time = None
+        self.start_time: Optional[float] = None
 
     def __enter__(self) -> "PerformanceLogger":
         """Enter the context and start timing."""
@@ -243,7 +243,7 @@ class PerformanceLogger:
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the context and log performance metrics."""
-        duration_ms = (time.time() - self.start_time) * 1000
+        duration_ms = (time.time() - (self.start_time or 0)) * 1000
 
         if exc_type is not None:
             self.logger.error(
@@ -261,7 +261,7 @@ class PerformanceLogger:
 
     def log_milestone(self, milestone: str, **context: Any) -> None:
         """Log a milestone during the operation."""
-        elapsed_ms = (time.time() - self.start_time) * 1000
+        elapsed_ms = (time.time() - (self.start_time or 0)) * 1000
         self.logger.info(
             "Operation milestone",
             milestone=milestone,

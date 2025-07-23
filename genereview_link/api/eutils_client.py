@@ -673,19 +673,19 @@ class EutilsClient:
                     "bookshelf",
                     "ncbi bookshelf",
                 ]:
-                    return title
+                    return str(title)
 
             # Fallback to h1 text if no title span found
             title = h1.get_text().strip()
             if title and title.lower() not in ["bookshelf", "ncbi bookshelf"]:
-                return title
+                return str(title)
 
         # Strategy 2: Look for itemprop="name" attribute (common in GeneReviews)
         name_elem = content_div.find(attrs={"itemprop": "name"})
         if name_elem:
             title = name_elem.get_text().strip()
             if title and title.lower() not in ["bookshelf", "ncbi bookshelf"]:
-                return title
+                return str(title)
 
         # Strategy 3: Page title tag, cleaned up
         title_tag = soup.find("title")
@@ -696,7 +696,7 @@ class EutilsClient:
             title = re.sub(r"\s*-\s*GeneReviews.*$", "", title, flags=re.I)
             title = re.sub(r"\s*-\s*PubMed.*$", "", title, flags=re.I)
             if title and title.lower() not in ["bookshelf", "ncbi bookshelf"]:
-                return title
+                return str(title)
 
         # Strategy 4: Look for specific title classes or attributes
         title_selectors = [
@@ -713,16 +713,16 @@ class EutilsClient:
                     "bookshelf",
                     "ncbi bookshelf",
                 ]:
-                    return title
+                    return str(title)
 
         # Strategy 5: Look for meta tags
         meta_title = soup.find("meta", {"property": "og:title"})
         if meta_title and meta_title.get("content"):
-            return meta_title["content"].strip()
+            return str(meta_title["content"]).strip()
 
         meta_title = soup.find("meta", {"name": "dc.title"})
         if meta_title and meta_title.get("content"):
-            return meta_title["content"].strip()
+            return str(meta_title["content"]).strip()
 
         return "Unknown Document"
 
