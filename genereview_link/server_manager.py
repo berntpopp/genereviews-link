@@ -1,0 +1,195 @@
+"""Unified server manager for GeneReview Link with multiple transports."""
+
+import asyncio
+from contextlib import asynccontextmanager
+from typing import Optional
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastmcp import FastMCP
+
+from genereview_link.api.client_manager import (
+    get_client_manager,
+    shutdown_clients,
+)
+from genereview_link.api.routes import (
+    abstract,
+    fulltext,
+    genereview,
+    links,
+    search,
+)
+from genereview_link.config import ServerConfig, settings
+from genereview_link.logging_config import get_logger
+from genereview_link.middleware.logging_middleware import (
+    RequestLoggingMiddleware,
+)
+from genereview_link.services.service_manager import (
+    get_service_manager,
+    shutdown_services,
+)
+
+logger = get_logger("server.manager")
+
+
+class UnifiedServerManager:
+    """Manages multiple transport protocols for the GeneReview Link server."""
+
+    def __init__(self):
+        """Initialize the unified server manager."""
+        self.app: Optional[FastAPI] = None
+        self.mcp: Optional[FastMCP] = None
+        self.shutdown_event = asyncio.Event()
+        self._current_transport = "unknown"
+
+    @asynccontextmanager
+    async def lifespan(self, app: FastAPI):
+        """Manage application lifecycle for startup and shutdown."""
+        logger.info(
+            "Starting GeneReview Link Server",
+            version="2.0.0",
+            environment=settings.ENVIRONMENT,
+        )
+        client_manager = await get_client_manager()
+        service_manager = await get_service_manager()
+        await client_manager.get_client()  # Initialize client
+        await service_manager.get_service()  # Initialize service
+        logger.info("Client and Service managers initialized.")
+        yield
+        logger.info("Shutting down GeneReview Link Server...")
+        await shutdown_services()
+        await shutdown_clients()
+        logger.info("Shutdown complete.")
+
+    async def create_fastapi_app(self, config: ServerConfig) -> FastAPI:
+        """Create the core FastAPI application."""
+        app = FastAPI(
+            title="GeneReview Link Server",
+            description=(
+                "A comprehensive API for searching, fetching, and "
+                "scraping NCBI GeneReviews data."
+            ),
+            version="2.0.0",
+            lifespan=self.lifespan,
+            docs_url="/docs" if config.enable_docs else None,
+            redoc_url=None,
+        )
+
+        app.add_middleware(RequestLoggingMiddleware)
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=[
+                origin.strip() for origin in settings.CORS_ORIGINS.split(",")
+            ],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+        app.include_router(search.router)
+        app.include_router(abstract.router)
+        app.include_router(links.router)
+        app.include_router(fulltext.router)
+        app.include_router(genereview.router)
+        self._add_utility_endpoints(app)
+
+        return app
+
+    def _add_utility_endpoints(self, app: FastAPI) -> None:
+        """Add utility endpoints like health checks."""
+
+        @app.get("/", tags=["Root"])
+        async def root():
+            return {"message": "Welcome to the GeneReview Link Server!"}
+
+        @app.get("/health", tags=["Health"])
+        async def health_check(test_connection: bool = False):
+            client_manager = await get_client_manager()
+            health = await client_manager.health_check(test_connection=test_connection)
+            return {"status": "healthy", "client_health": health}
+
+    async def create_mcp_server(self, app: FastAPI, config: ServerConfig) -> FastMCP:
+        """Create a FastMCP server instance from the FastAPI app."""
+        from fastmcp.server.openapi import MCPType, RouteMap
+
+        mcp_custom_names = {
+            "get_genereview_summary": "get_genereview_summary",
+            "search_genereviews": "search_genereviews",
+            "get_abstract": "get_abstract",
+            "get_links": "get_links",
+            "get_fulltext": "get_fulltext",
+        }
+
+        mcp_route_maps = [
+            RouteMap(pattern=r"^/health$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(pattern=r"^/$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(pattern=r"^/docs$", mcp_type=MCPType.EXCLUDE),
+            RouteMap(pattern=r"^/openapi.json$", mcp_type=MCPType.EXCLUDE),
+        ]
+
+        mcp = FastMCP.from_fastapi(
+            app=app,
+            name="GeneReview Link Tool",
+            mcp_names=mcp_custom_names,
+            route_maps=mcp_route_maps,
+        )
+        return mcp
+
+    async def start_unified_server(self, config: ServerConfig):
+        """Start the server in unified mode (REST API + MCP over HTTP)."""
+        self._current_transport = "unified"
+        logger.info(f"Starting unified server on {config.host}:{config.port}")
+        self.app = await self.create_fastapi_app(config)
+        self.mcp = await self.create_mcp_server(self.app, config)
+        self.app.mount(config.mcp_path, self.mcp.http_app())
+        logger.info(f"MCP HTTP interface mounted at {config.mcp_path}")
+
+        uvicorn_config = uvicorn.Config(
+            app=self.app,
+            host=config.host,
+            port=config.port,
+            log_config=None,
+        )
+        server = uvicorn.Server(uvicorn_config)
+        await server.serve()
+
+    async def start_stdio_server(self, config: ServerConfig):
+        """Start the server in STDIO mode for MCP."""
+        self._current_transport = "stdio"
+        logger.info("Starting STDIO MCP server...")
+        self.app = await self.create_fastapi_app(config)
+        # Manually initialize services since lifespan won't run
+        client_manager = await get_client_manager()
+        await client_manager.get_client()
+        service_manager = await get_service_manager()
+        await service_manager.get_service()
+
+        self.mcp = await self.create_mcp_server(self.app, config)
+        await self.mcp.run_async(transport="stdio")
+
+    async def start_http_only_server(self, config: ServerConfig):
+        """Start the server in HTTP-only mode (REST API only)."""
+        self._current_transport = "http"
+        logger.info(f"Starting HTTP-only server on {config.host}:{config.port}")
+        self.app = await self.create_fastapi_app(config)
+
+        uvicorn_config = uvicorn.Config(
+            app=self.app,
+            host=config.host,
+            port=config.port,
+            log_config=None,
+        )
+        server = uvicorn.Server(uvicorn_config)
+        await server.serve()
+
+    async def start_server(self, config: ServerConfig):
+        """Start the server based on the transport configuration."""
+        if config.transport == "unified":
+            await self.start_unified_server(config)
+        elif config.transport == "stdio":
+            await self.start_stdio_server(config)
+        elif config.transport == "http":
+            await self.start_http_only_server(config)
+        else:
+            raise ValueError(f"Unknown transport: {config.transport}")

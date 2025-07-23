@@ -27,18 +27,35 @@ cp .env.example .env
 
 ### Running the Server
 
+The server can be run in different modes depending on your needs.
+
+#### Unified Mode (REST API + MCP over HTTP) - Recommended for Web Deployments
 ```bash
-# REST API server (development with auto-reload)
-python server.py
-
-# REST API server (production)
+python server.py --transport unified
+# Or in production:
 uvicorn server:app --host 0.0.0.0 --port 8000
+```
+- REST API available at `http://localhost:8000`  
+- MCP tools available at `http://localhost:8000/mcp`
 
-# MCP server for AI integration (Claude, etc.)
+#### STDIO Mode (MCP only) - For Local AI Assistants
+```bash
+python server.py --transport stdio
+# Or for backwards compatibility:
 python mcp_server.py
 ```
 
-The REST API will be available at `http://localhost:8000` with:
+#### HTTP-Only Mode (REST API only)
+```bash
+python server.py --transport http
+```
+
+#### Development Mode
+```bash
+python server.py --dev --transport unified
+```
+
+The REST API provides:
 - Interactive docs at `/docs`
 - OpenAPI schema at `/openapi.json`
 - Health check at `/health`

@@ -6,28 +6,57 @@ with the enhanced scraping system.
 """
 
 import pytest
-from fastapi.testclient import TestClient
+import asyncio
+from httpx import AsyncClient
+from fastapi import FastAPI
 
-from server import app  # Import the FastAPI app
+from genereview_link.server_manager import UnifiedServerManager
+from genereview_link.config import ServerConfig
+
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create a new event loop for the test session."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
 
 
 @pytest.fixture
-def client():
-    """Provide a test client for the FastAPI app."""
-    return TestClient(app)
+async def app() -> FastAPI:
+    """Create a FastAPI app instance for testing."""
+    config = ServerConfig(transport="http", log_level="WARNING", enable_docs=False)
+    manager = UnifiedServerManager()
+    app = await manager.create_fastapi_app(config)
+
+    # Manually initialize services since lifespan won't run in tests
+    async with manager.lifespan(app):
+        yield app
+
+
+@pytest.fixture
+async def client(app: FastAPI) -> AsyncClient:
+    """Create an async test client for the app."""
+    from httpx import ASGITransport
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
 
 
 class TestAPIEndpoints:
     """Test all API endpoints with various inputs."""
 
-    def test_health_check(self, client):
+    @pytest.mark.asyncio
+    async def test_health_check(self, client: AsyncClient):
         """Test basic health check endpoint."""
-        response = client.get("/")
+        response = await client.get("/")
         assert response.status_code == 200
 
-    def test_search_endpoint(self, client):
+    @pytest.mark.asyncio
+    async def test_search_endpoint(self, client: AsyncClient):
         """Test the search endpoint."""
-        response = client.get("/search/BRCA1")
+        response = await client.get("/search/BRCA1")
         assert response.status_code == 200
 
         data = response.json()
@@ -36,12 +65,13 @@ class TestAPIEndpoints:
         assert "ids" in data
         assert isinstance(data["ids"], list)
 
-    def test_abstract_endpoint(self, client):
+    @pytest.mark.asyncio
+    async def test_abstract_endpoint(self, client: AsyncClient):
         """Test the abstract endpoint with a known PubMed ID."""
         # Use a known BRCA1 GeneReview PubMed ID
         pubmed_id = "20301425"  # BRCA1 GeneReview
 
-        response = client.get(f"/abstract/{pubmed_id}")
+        response = await client.get(f"/abstract/{pubmed_id}")
         assert response.status_code == 200
 
         data = response.json()
@@ -50,11 +80,12 @@ class TestAPIEndpoints:
         assert "title" in data
         assert data["pmid"] == pubmed_id
 
-    def test_links_endpoint(self, client):
+    @pytest.mark.asyncio
+    async def test_links_endpoint(self, client: AsyncClient):
         """Test the links endpoint."""
         pubmed_id = "20301425"  # BRCA1 GeneReview
 
-        response = client.get(f"/links/{pubmed_id}")
+        response = await client.get(f"/links/{pubmed_id}")
         assert response.status_code == 200
 
         data = response.json()
@@ -62,11 +93,12 @@ class TestAPIEndpoints:
         assert "urls" in data
         assert isinstance(data["urls"], list)
 
-    def test_fulltext_endpoint(self, client):
+    @pytest.mark.asyncio
+    async def test_fulltext_endpoint(self, client: AsyncClient):
         """Test the fulltext endpoint with enhanced scraping."""
         nbk_id = "NBK1247"  # BRCA1 GeneReview
 
-        response = client.get(f"/fulltext/{nbk_id}")
+        response = await client.get(f"/fulltext/{nbk_id}")
         assert response.status_code == 200
 
         data = response.json()
@@ -95,11 +127,12 @@ class TestAPIEndpoints:
                 f"{content_length}"
             )
 
-    def test_genereview_comprehensive_endpoint(self, client):
+    @pytest.mark.asyncio
+    async def test_genereview_comprehensive_endpoint(self, client: AsyncClient):
         """Test the comprehensive GeneReview endpoint."""
         gene_symbol = "BRCA1"
 
-        response = client.get(f"/genereview/{gene_symbol}")
+        response = await client.get(f"/genereview/{gene_symbol}")
         assert response.status_code == 200
 
         data = response.json()
@@ -120,18 +153,20 @@ class TestAPIEndpoints:
 class TestAPIErrorHandling:
     """Test API error handling and edge cases."""
 
-    def test_invalid_gene_search(self, client):
+    @pytest.mark.asyncio
+    async def test_invalid_gene_search(self, client: AsyncClient):
         """Test search with invalid gene symbol."""
-        response = client.get("/search/INVALIDGENE123")
+        response = await client.get("/search/INVALIDGENE123")
         assert response.status_code == 200  # Should not error, but return empty results
 
         data = response.json()
         assert data["count"] == 0
         assert len(data["ids"]) == 0
 
-    def test_invalid_pubmed_id(self, client):
+    @pytest.mark.asyncio
+    async def test_invalid_pubmed_id(self, client: AsyncClient):
         """Test abstract endpoint with invalid PubMed ID."""
-        response = client.get("/abstract/99999999")
+        response = await client.get("/abstract/99999999")
         # Should return 404 or handle gracefully
         assert response.status_code in [200, 404]
 
@@ -140,9 +175,10 @@ class TestAPIErrorHandling:
             # Should return empty or error structure
             assert isinstance(data, dict)
 
-    def test_invalid_nbk_id(self, client):
+    @pytest.mark.asyncio
+    async def test_invalid_nbk_id(self, client: AsyncClient):
         """Test fulltext endpoint with invalid NBK ID."""
-        response = client.get("/fulltext/NBK99999")
+        response = await client.get("/fulltext/NBK99999")
         # Should handle gracefully
         assert response.status_code in [200, 404]
 
@@ -153,19 +189,21 @@ class TestAPIErrorHandling:
             if "error" in data:
                 assert isinstance(data["error"], str)
 
-    def test_empty_gene_symbol(self, client):
+    @pytest.mark.asyncio
+    async def test_empty_gene_symbol(self, client: AsyncClient):
         """Test endpoints with empty gene symbol."""
-        response = client.get("/search/")
+        response = await client.get("/search/")
         assert response.status_code == 404  # Should be not found
 
-        response = client.get("/genereview/")
+        response = await client.get("/genereview/")
         assert response.status_code == 404  # Should be not found
 
 
 class TestAPIPerformance:
     """Test API performance characteristics."""
 
-    def test_response_times(self, client):
+    @pytest.mark.asyncio
+    async def test_response_times(self, client: AsyncClient):
         """Test that API responses are within acceptable time limits."""
         import time
 
@@ -177,7 +215,7 @@ class TestAPIPerformance:
 
         for endpoint in endpoints:
             start_time = time.time()
-            response = client.get(endpoint)
+            response = await client.get(endpoint)
             end_time = time.time()
 
             duration = end_time - start_time
@@ -186,12 +224,13 @@ class TestAPIPerformance:
             assert duration < 5.0, f"Endpoint {endpoint} too slow: {duration:.2f}s"
             assert response.status_code == 200, f"Endpoint {endpoint} failed"
 
-    def test_fulltext_performance(self, client):
+    @pytest.mark.asyncio
+    async def test_fulltext_performance(self, client: AsyncClient):
         """Test fulltext endpoint performance."""
         import time
 
         start_time = time.time()
-        response = client.get("/fulltext/NBK1247")
+        response = await client.get("/fulltext/NBK1247")
         end_time = time.time()
 
         duration = end_time - start_time
@@ -212,12 +251,13 @@ class TestAPIPerformance:
 class TestAPIDataConsistency:
     """Test data consistency across different API endpoints."""
 
-    def test_cross_endpoint_consistency(self, client):
+    @pytest.mark.asyncio
+    async def test_cross_endpoint_consistency(self, client: AsyncClient):
         """Test that data is consistent across related endpoints."""
         gene_symbol = "BRCA1"
 
         # Get data from comprehensive endpoint
-        comprehensive_response = client.get(f"/genereview/{gene_symbol}")
+        comprehensive_response = await client.get(f"/genereview/{gene_symbol}")
         assert comprehensive_response.status_code == 200
         comprehensive_data = comprehensive_response.json()
 
@@ -227,7 +267,7 @@ class TestAPIDataConsistency:
 
         if pubmed_id:
             # Test abstract endpoint
-            abstract_response = client.get(f"/abstract/{pubmed_id}")
+            abstract_response = await client.get(f"/abstract/{pubmed_id}")
             if abstract_response.status_code == 200:
                 abstract_data = abstract_response.json()
 
@@ -253,7 +293,7 @@ class TestAPIDataConsistency:
                 nbk_id = nbk_match.group()
 
                 # Test fulltext endpoint
-                fulltext_response = client.get(f"/fulltext/{nbk_id}")
+                fulltext_response = await client.get(f"/fulltext/{nbk_id}")
                 if fulltext_response.status_code == 200:
                     fulltext_data = fulltext_response.json()
 
@@ -277,14 +317,15 @@ class TestAPIDataConsistency:
 class TestAPICaching:
     """Test API caching behavior."""
 
-    def test_repeated_requests_consistency(self, client):
+    @pytest.mark.asyncio
+    async def test_repeated_requests_consistency(self, client: AsyncClient):
         """Test that repeated requests return consistent results."""
         endpoint = "/search/BRCA1"
 
         # Make multiple requests
         responses = []
         for _ in range(3):
-            response = client.get(endpoint)
+            response = await client.get(endpoint)
             assert response.status_code == 200
             responses.append(response.json())
 
@@ -293,13 +334,14 @@ class TestAPICaching:
         for response in responses[1:]:
             assert response == first_response, "Cached responses should be identical"
 
-    def test_different_genes_different_results(self, client):
+    @pytest.mark.asyncio
+    async def test_different_genes_different_results(self, client: AsyncClient):
         """Test that different genes return different results."""
         genes = ["BRCA1", "BRCA2", "TP53"]
         results = {}
 
         for gene in genes:
-            response = client.get(f"/search/{gene}")
+            response = await client.get(f"/search/{gene}")
             if response.status_code == 200:
                 results[gene] = response.json()
 
@@ -319,15 +361,17 @@ class TestAPICaching:
 class TestAPIDocumentation:
     """Test API documentation and OpenAPI schema."""
 
-    def test_docs_endpoint(self, client):
+    @pytest.mark.asyncio
+    async def test_docs_endpoint(self, client: AsyncClient):
         """Test that API documentation is accessible."""
-        response = client.get("/docs")
+        response = await client.get("/docs")
         assert response.status_code == 200
         assert "text/html" in response.headers.get("content-type", "")
 
-    def test_openapi_schema(self, client):
+    @pytest.mark.asyncio
+    async def test_openapi_schema(self, client: AsyncClient):
         """Test that OpenAPI schema is valid."""
-        response = client.get("/openapi.json")
+        response = await client.get("/openapi.json")
         assert response.status_code == 200
 
         schema = response.json()

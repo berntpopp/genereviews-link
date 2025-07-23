@@ -178,7 +178,12 @@ class TestHierarchicalSectionExtraction:
 
         # Look for common GeneReview sections
         section_keys = [key.lower() for key in sections.keys()]
-        expected_sections = ["summary", "diagnosis", "management", "genetic_counseling"]
+        expected_sections = [
+            "summary",
+            "diagnosis",
+            "management",
+            "genetic_counseling",
+        ]
 
         found_expected = sum(
             1

@@ -245,7 +245,10 @@ class TestContentCompleteness:
         """Test that important GeneReview sections are present."""
         fixtures_and_expected = [
             ("NBK1247_BRCA1.html", ["summary", "diagnosis", "management"]),
-            ("NBK1311_Huntington.html", ["summary", "diagnosis", "management"]),
+            (
+                "NBK1311_Huntington.html",
+                ["summary", "diagnosis", "management"],
+            ),
         ]
 
         for fixture, expected_sections in fixtures_and_expected:
@@ -380,7 +383,12 @@ class TestRegressionPrevention:
         sections = client._extract_hierarchical_sections(content_div)
 
         # Check that footer elements are excluded
-        footer_keywords = ["copyright", "contact ncbi", "privacy policy", "disclaimer"]
+        footer_keywords = [
+            "copyright",
+            "contact ncbi",
+            "privacy policy",
+            "disclaimer",
+        ]
 
         all_content = " ".join(
             section.get("content", "") for section in sections.values()

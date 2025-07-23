@@ -34,7 +34,8 @@ async def get_abstract(
         result = await client.fetch_abstract(pubmed_id)
         if not result:
             raise HTTPException(
-                status_code=404, detail=f"Abstract not found for PubMed ID: {pubmed_id}"
+                status_code=404,
+                detail=f"Abstract not found for PubMed ID: {pubmed_id}",
             )
 
         # Ensure all required fields have default values
@@ -53,5 +54,6 @@ async def get_abstract(
             f"Error fetching abstract for PMID {pubmed_id}: {e}", exc_info=True
         )
         raise HTTPException(
-            status_code=500, detail="An error occurred while fetching the abstract."
+            status_code=500,
+            detail="An error occurred while fetching the abstract.",
         )
