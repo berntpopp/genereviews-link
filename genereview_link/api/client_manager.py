@@ -79,6 +79,8 @@ class DistributedRateLimiter:
 
     def _read_shared_state(self) -> float:
         """Read last request time from shared state file."""
+        if not self.shared_state_file:
+            return 0.0
         try:
             with open(self.shared_state_file, "r") as f:
                 return float(f.read().strip())
@@ -87,6 +89,8 @@ class DistributedRateLimiter:
 
     def _write_shared_state(self, timestamp: float) -> None:
         """Write current timestamp to shared state file."""
+        if not self.shared_state_file:
+            return
         try:
             with open(self.shared_state_file, "w") as f:
                 f.write(str(timestamp))
@@ -108,7 +112,7 @@ class ClientManager:
                     cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the ClientManager instance."""
         if hasattr(self, "_initialized"):
             return

@@ -227,6 +227,6 @@ class GeneReviewService:
             full_text_data=full_text_data,
         )
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the underlying HTTPX client."""
         await self.client.close()

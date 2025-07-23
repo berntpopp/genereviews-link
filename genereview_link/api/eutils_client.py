@@ -755,7 +755,7 @@ class EutilsClient:
         # Extract and parse references
         references = self._extract_references(content_div)
         if references:
-            metadata["references"] = references
+            metadata["references"] = "\n".join(references)
 
         return metadata
 
@@ -778,7 +778,7 @@ class EutilsClient:
                     if match:
                         author_text = text[match.end() :].strip()
                         if author_text:
-                            return author_text
+                            return str(author_text)
 
         return None
 
@@ -796,7 +796,7 @@ class EutilsClient:
             for elem in elements:
                 parent = elem.parent
                 if parent:
-                    return parent.get_text().strip()
+                    return str(parent.get_text().strip())
 
         return None
 
@@ -813,7 +813,7 @@ class EutilsClient:
             for elem in elements:
                 parent = elem.parent
                 if parent:
-                    return parent.get_text().strip()
+                    return str(parent.get_text().strip())
 
         return None
 
@@ -841,7 +841,7 @@ class EutilsClient:
 
     def _extract_references(self, content_div: BeautifulSoup) -> List[str]:
         """Extract and parse references section as a list of strings."""
-        references = []
+        references: List[str] = []
 
         # Find references section
         ref_headings = content_div.find_all(
@@ -1245,6 +1245,6 @@ class EutilsClient:
         key = re.sub(r"(_section|_chapter)$", "", key)
         return key[:50]  # Limit length
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the HTTP client and cleanup resources."""
         await self.client.aclose()
