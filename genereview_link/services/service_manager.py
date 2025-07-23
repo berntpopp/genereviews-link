@@ -2,7 +2,7 @@
 
 import asyncio
 import threading
-from typing import Optional, Union
+from typing import Optional, Union, AsyncGenerator
 from contextlib import asynccontextmanager
 
 from genereview_link.services.genereview_service import GeneReviewService
@@ -51,7 +51,7 @@ class ServiceManager:
         return self._service
 
     @asynccontextmanager
-    async def get_service_context(self):
+    async def get_service_context(self) -> AsyncGenerator[GeneReviewService, None]:
         """Context manager for getting service (for dependency injection)."""
         service = await self.get_service()
         try:
@@ -73,7 +73,7 @@ class ServiceManager:
 _service_manager: Optional[ServiceManager] = None
 
 
-async def get_managed_service() -> GeneReviewService:
+async def get_managed_service() -> AsyncGenerator[GeneReviewService, None]:
     """Get managed service dependency for FastAPI."""
     service_manager = await get_service_manager()
     async with service_manager.get_service_context() as service:

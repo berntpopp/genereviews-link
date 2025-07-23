@@ -2,7 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, AsyncGenerator, Any
 
 import uvicorn
 from fastapi import FastAPI
@@ -36,7 +36,7 @@ logger = get_logger("server.manager")
 class UnifiedServerManager:
     """Manages multiple transport protocols for the GeneReview Link server."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the unified server manager."""
         self.app: Optional[FastAPI] = None
         self.mcp: Optional[FastMCP] = None
@@ -44,7 +44,7 @@ class UnifiedServerManager:
         self._current_transport = "unknown"
 
     @asynccontextmanager
-    async def lifespan(self, app: FastAPI):
+    async def lifespan(self, app: FastAPI) -> AsyncGenerator[None, None]:
         """Manage application lifecycle for startup and shutdown."""
         logger.info(
             "Starting GeneReview Link Server",
@@ -100,11 +100,11 @@ class UnifiedServerManager:
         """Add utility endpoints like health checks."""
 
         @app.get("/", tags=["Root"])
-        async def root():
+        async def root() -> dict[str, str]:
             return {"message": "Welcome to the GeneReview Link Server!"}
 
         @app.get("/health", tags=["Health"])
-        async def health_check(test_connection: bool = False):
+        async def health_check(test_connection: bool = False) -> dict[str, Any]:
             client_manager = await get_client_manager()
             health = await client_manager.health_check(test_connection=test_connection)
             return {"status": "healthy", "client_health": health}
@@ -136,7 +136,7 @@ class UnifiedServerManager:
         )
         return mcp
 
-    async def start_unified_server(self, config: ServerConfig):
+    async def start_unified_server(self, config: ServerConfig) -> None:
         """Start the server in unified mode (REST API + MCP over HTTP)."""
         self._current_transport = "unified"
         logger.info(f"Starting unified server on {config.host}:{config.port}")
@@ -154,7 +154,7 @@ class UnifiedServerManager:
         server = uvicorn.Server(uvicorn_config)
         await server.serve()
 
-    async def start_stdio_server(self, config: ServerConfig):
+    async def start_stdio_server(self, config: ServerConfig) -> None:
         """Start the server in STDIO mode for MCP."""
         self._current_transport = "stdio"
         logger.info("Starting STDIO MCP server...")
@@ -168,7 +168,7 @@ class UnifiedServerManager:
         self.mcp = await self.create_mcp_server(self.app, config)
         await self.mcp.run_async(transport="stdio")
 
-    async def start_http_only_server(self, config: ServerConfig):
+    async def start_http_only_server(self, config: ServerConfig) -> None:
         """Start the server in HTTP-only mode (REST API only)."""
         self._current_transport = "http"
         logger.info(f"Starting HTTP-only server on {config.host}:{config.port}")
@@ -183,7 +183,7 @@ class UnifiedServerManager:
         server = uvicorn.Server(uvicorn_config)
         await server.serve()
 
-    async def start_server(self, config: ServerConfig):
+    async def start_server(self, config: ServerConfig) -> None:
         """Start the server based on the transport configuration."""
         if config.transport == "unified":
             await self.start_unified_server(config)
