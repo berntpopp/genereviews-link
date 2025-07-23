@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Optional, Dict
+from typing import Optional, Dict, Union
 import threading
 from contextlib import asynccontextmanager
 
@@ -221,7 +221,7 @@ class ClientManager:
 
 
 # Global instance (lazily initialized)
-_client_manager: ClientManager | None = None
+_client_manager: Optional[ClientManager] = None
 
 
 async def get_managed_client() -> EutilsClient:

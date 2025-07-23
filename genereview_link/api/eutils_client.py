@@ -8,7 +8,7 @@ section extraction.
 import asyncio
 import re
 import warnings
-from typing import Any, List, Dict, Optional
+from typing import Any, List, Dict, Optional, Union
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 class EutilsClient:
     """A client for interacting with NCBI E-utils and scraping GeneReviews."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the EutilsClient with HTTP client and rate limiting."""
         self.base_url = settings.EUTILS_BASE_URL
 
@@ -77,7 +77,7 @@ class EutilsClient:
                 f"{self.base_url}/{endpoint}", params=params
             )
             response.raise_for_status()
-            return response.json()
+            return response.json()  # type: ignore[no-any-return]
         except httpx.ConnectError as e:
             logger.error(
                 "Connection failed to NCBI E-utils",
@@ -232,7 +232,7 @@ class EutilsClient:
             )
             raise
 
-    async def search_genereview_pmid(self, gene_symbol: str) -> str | None:
+    async def search_genereview_pmid(self, gene_symbol: str) -> Optional[str]:
         """Search for a GeneReview PubMed ID using a gene symbol."""
         params = {
             "db": "pubmed",
@@ -243,7 +243,7 @@ class EutilsClient:
         id_list = data.get("esearchresult", {}).get("idlist", [])
         return id_list[0] if id_list else None
 
-    async def get_book_url_from_pmid(self, pubmed_id: str) -> str | None:
+    async def get_book_url_from_pmid(self, pubmed_id: str) -> Optional[str]:
         """Get the NCBI Bookshelf URL from a PubMed ID."""
         params = {
             "dbfrom": "pubmed",
@@ -289,7 +289,7 @@ class EutilsClient:
                     )
                     return {}
 
-                results = {}
+                results: Dict[str, Any] = {}
 
                 # Extract title using enhanced strategy
                 title = self._extract_title(soup, content_div)
@@ -341,7 +341,7 @@ class EutilsClient:
 
     async def search_genereviews(
         self, gene_symbol: str, retmax: int = 20
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """Enhanced search for GeneReviews returning multiple results with metadata."""
         params = {
             "db": "pubmed",

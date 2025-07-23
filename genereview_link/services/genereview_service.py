@@ -5,6 +5,7 @@ Orchestrates data retrieval and processing workflows.
 """
 
 from datetime import timedelta
+from typing import Optional
 
 from async_lru import alru_cache
 
@@ -32,7 +33,7 @@ class DataNotFoundError(Exception):
 class GeneReviewService:
     """Service layer for fetching and processing GeneReviews data."""
 
-    def __init__(self, client: EutilsClient | None = None):
+    def __init__(self, client: Optional[EutilsClient] = None):
         """Initialize the GeneReview service.
 
         Args:

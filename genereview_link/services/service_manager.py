@@ -2,7 +2,7 @@
 
 import asyncio
 import threading
-from typing import Optional
+from typing import Optional, Union
 from contextlib import asynccontextmanager
 
 from genereview_link.services.genereview_service import GeneReviewService
@@ -26,7 +26,7 @@ class ServiceManager:
                     cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the ServiceManager instance."""
         if hasattr(self, "_initialized"):
             return
@@ -60,7 +60,7 @@ class ServiceManager:
             # Don't close here - let the manager handle lifecycle
             pass
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the service and cleanup resources."""
         async with self._service_lock:
             if self._service is not None:
@@ -70,7 +70,7 @@ class ServiceManager:
 
 
 # Global instance (lazily initialized)
-_service_manager: ServiceManager | None = None
+_service_manager: Optional[ServiceManager] = None
 
 
 async def get_managed_service() -> GeneReviewService:
@@ -88,7 +88,7 @@ async def get_service_manager() -> ServiceManager:
     return _service_manager
 
 
-async def shutdown_services():
+async def shutdown_services() -> None:
     """Shutdown all managed services (call from app shutdown)."""
     if _service_manager is not None:
         await _service_manager.close()
