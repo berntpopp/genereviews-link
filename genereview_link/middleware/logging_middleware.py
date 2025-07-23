@@ -2,7 +2,7 @@
 
 import time
 import uuid
-from typing import Callable
+from typing import Callable, Optional, List, Any
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -13,7 +13,7 @@ from genereview_link.logging_config import get_logger, log_api_metrics
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Middleware for request logging with correlation IDs and performance metrics."""
 
-    def __init__(self, app, exclude_paths: list[str] = None):
+    def __init__(self, app: Any, exclude_paths: Optional[List[str]] = None) -> None:
         """Initialize the logging middleware.
 
         Args:
@@ -93,14 +93,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Check for forwarded headers (common in production)
         forwarded_for = request.headers.get("x-forwarded-for")
         if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
+            return str(forwarded_for.split(",")[0].strip())
 
         real_ip = request.headers.get("x-real-ip")
         if real_ip:
-            return real_ip
+            return str(real_ip)
 
         # Fallback to client host
         if hasattr(request.client, "host"):
-            return request.client.host
+            return str(request.client.host)
 
         return "unknown"
