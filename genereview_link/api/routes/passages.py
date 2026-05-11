@@ -40,7 +40,12 @@ async def get_embedding_provider(request: Request) -> EmbeddingProvider:
     return embedder
 
 
-@router.get("/passages/search", response_model=list[RankedPassage])
+@router.get(
+    "/passages/search",
+    response_model=list[RankedPassage],
+    operation_id="search_passages",
+    summary="Hybrid lexical + dense RAG search across GeneReviews passages",
+)
 async def search_passages(
     q: Annotated[str, Query(min_length=1, max_length=500)],
     gene: Annotated[str | None, Query()] = None,

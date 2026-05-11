@@ -12,7 +12,11 @@ from genereview_link.retrieval.repository import GeneReviewRepository
 router = APIRouter(tags=["Chapters"])
 
 
-@router.get("/chapters/{nbk}/sections/{section}")
+@router.get(
+    "/chapters/{nbk}/sections/{section}",
+    operation_id="get_chapter_section",
+    summary="Fetch all passages for a section of a GeneReview chapter",
+)
 async def get_chapter_section(
     nbk: str,
     section: str,

@@ -189,15 +189,13 @@ class UnifiedServerManager:
         pool = None
         if settings.DATABASE_URL:
             try:
-                import asyncpg
-
+                from genereview_link.db.pool import create_pool
                 from genereview_link.retrieval.repository import GeneReviewRepository
 
-                pool = await asyncpg.create_pool(
-                    settings.DATABASE_URL,
-                    min_size=settings.DATABASE_POOL_MIN_SIZE,
-                    max_size=settings.DATABASE_POOL_MAX_SIZE,
-                )
+                # Use the shared pool factory so the pgvector codec gets
+                # registered on every connection — required for dense vector
+                # queries (e.g. /passages/search?rerank=rrf).
+                pool = await create_pool()
                 app.state.pool = pool
                 app.state.repository = GeneReviewRepository(pool)
                 logger.info("Postgres pool and repository initialised.")
@@ -369,12 +367,43 @@ class UnifiedServerManager:
         return mcp
 
     async def start_unified_server(self, config: ServerConfig) -> None:
-        """Start the server in unified mode (REST API + MCP over HTTP)."""
+        """Start the server in unified mode (REST API + MCP over HTTP).
+
+        FastMCP's streamable-HTTP transport requires its session manager to be
+        started by the parent ASGI app's lifespan. We therefore build the MCP
+        app first, then attach its lifespan to the FastAPI app by chaining it
+        with the FastAPI lifespan we already use for the Postgres pool, the
+        embedder, and the release watcher scheduler.
+
+        We also use ``path="/"`` on ``http_app`` so the resulting mount lives
+        at ``{config.mcp_path}`` (e.g. ``/mcp``) rather than the double-prefix
+        ``{config.mcp_path}/mcp``.
+        """
         self._current_transport = "unified"
         logger.info(f"Starting unified server on {config.host}:{config.port}")
-        self.app = self.create_fastapi_app(config)
-        self.mcp = await self.create_mcp_server(self.app, config)
-        self.app.mount(config.mcp_path, self.mcp.http_app())
+
+        # Stage 1: build a discovery-only FastAPI app so FastMCP can scan it.
+        discovery_app = self.create_fastapi_app(config)
+        self.mcp = await self.create_mcp_server(discovery_app, config)
+        mcp_app = self.mcp.http_app(path="/")
+
+        # Stage 2: rebuild the FastAPI app with a combined lifespan and mount
+        # the MCP app onto it. We swap out self.lifespan for a wrapper that
+        # runs both the MCP session manager and our existing lifespan.
+        original_lifespan = self.lifespan
+
+        @asynccontextmanager
+        async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+            async with mcp_app.lifespan(app), original_lifespan(app):
+                yield
+
+        self.lifespan = combined_lifespan  # type: ignore[assignment]
+        try:
+            self.app = self.create_fastapi_app(config)
+        finally:
+            self.lifespan = original_lifespan  # type: ignore[assignment]
+
+        self.app.mount(config.mcp_path, mcp_app)
         logger.info(f"MCP HTTP interface mounted at {config.mcp_path}")
 
         uvicorn_config = uvicorn.Config(
