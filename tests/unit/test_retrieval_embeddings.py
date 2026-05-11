@@ -16,7 +16,9 @@ def test_bge_query_prefix() -> None:
 
 
 def test_bge_passage_text_is_identity() -> None:
+    # Default (narrative) passage type: text returned unchanged.
     assert bge_passage_text("hello") == "hello"
+    assert bge_passage_text("hello", passage_type="narrative") == "hello"
 
 
 @pytest.mark.asyncio

@@ -25,8 +25,8 @@ async def iter_passages_missing_embedding(
     model_name: str,
     schema: str,
     batch_size: int,
-) -> AsyncIterator[list[tuple[str, str, str]]]:
-    """Yield batches of (nbk_id, passage_id, text) lacking an embedding row.
+) -> AsyncIterator[list[tuple[str, str, str, str]]]:
+    """Yield batches of (nbk_id, passage_id, text, passage_type) lacking an embedding row.
 
     Uses a keyset (>(nbk_id, passage_id)) cursor instead of OFFSET so newly
     inserted embedding rows do not shift the result window — every passage
@@ -39,7 +39,7 @@ async def iter_passages_missing_embedding(
             await conn.execute(f'set search_path to "{schema}", public')
             rows = await conn.fetch(
                 """
-                select p.nbk_id, p.passage_id, p.text
+                select p.nbk_id, p.passage_id, p.text, p.passage_type
                   from genereview_passages p
                   left join genereview_embeddings_bge384 e
                     on e.nbk_id = p.nbk_id
@@ -57,7 +57,9 @@ async def iter_passages_missing_embedding(
             )
         if not rows:
             return
-        yield [(r["nbk_id"], r["passage_id"], r["text"]) for r in rows]
+        yield [
+            (r["nbk_id"], r["passage_id"], r["text"], r["passage_type"]) for r in rows
+        ]
         last_nbk = rows[-1]["nbk_id"]
         last_pid = rows[-1]["passage_id"]
 
@@ -81,7 +83,10 @@ async def backfill_embeddings(
         async for batch in iter_passages_missing_embedding(
             pool, model_name=provider.model_name, schema=schema, batch_size=batch_size
         ):
-            texts = [bge_passage_text(text) for _nbk, _pid, text in batch]
+            texts = [
+                bge_passage_text(text, passage_type=ptype)
+                for _nbk, _pid, text, ptype in batch
+            ]
             vectors = await provider.embed_passages(texts)
             records = [
                 (
@@ -92,7 +97,7 @@ async def backfill_embeddings(
                     text_hash(text),
                     vec,
                 )
-                for (nbk, pid, text), vec in zip(batch, vectors, strict=True)
+                for (nbk, pid, text, _ptype), vec in zip(batch, vectors, strict=True)
             ]
             await encoded_q.put(records)
         for _ in range(db_writers):
