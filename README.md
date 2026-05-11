@@ -31,7 +31,7 @@ The server can be run in different modes depending on your needs.
 
 #### Unified Mode (REST API + MCP over HTTP) - Recommended for Web Deployments
 ```bash
-python server.py --transport unified
+python server.py serve --transport unified
 # Or in production:
 uvicorn server:app --host 0.0.0.0 --port 8000
 ```
@@ -40,19 +40,19 @@ uvicorn server:app --host 0.0.0.0 --port 8000
 
 #### STDIO Mode (MCP only) - For Local AI Assistants
 ```bash
-python server.py --transport stdio
+python server.py serve --transport stdio
 # Or for backwards compatibility:
 python mcp_server.py
 ```
 
 #### HTTP-Only Mode (REST API only)
 ```bash
-python server.py --transport http
+python server.py serve --transport http
 ```
 
 #### Development Mode
 ```bash
-python server.py --dev --transport unified
+python server.py serve --dev --transport unified
 ```
 
 The REST API provides:
@@ -167,8 +167,6 @@ genereview_link/
 ├── services/
 │   ├── genereview_service.py    # Business logic with caching
 │   └── service_manager.py       # Service lifecycle management
-├── middleware/
-│   └── logging_middleware.py    # Request logging with correlation IDs
 ├── config.py                # Configuration management with Pydantic
 └── logging_config.py        # Structured logging with observability
 
