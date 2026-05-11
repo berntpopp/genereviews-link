@@ -143,6 +143,10 @@ module = [
     "prometheus_client.*",
     "asyncpg.*",
     "pgvector.*",
+    "lxml.*",
+    "defusedxml.*",
+    "transformers.*",
+    "tokenizers.*",
 ]
 ignore_missing_imports = true
 

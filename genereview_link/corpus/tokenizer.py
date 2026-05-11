@@ -11,8 +11,8 @@ from functools import lru_cache
 from typing import Any
 
 BGE_MODEL_NAME = "BAAI/bge-small-en-v1.5"
-BGE_MAX_TOKENS = 512                  # model context
-BGE_RESERVED_SPECIAL_TOKENS = 2       # [CLS], [SEP]
+BGE_MAX_TOKENS = 512  # model context
+BGE_RESERVED_SPECIAL_TOKENS = 2  # [CLS], [SEP]
 BGE_NET_CHUNK_TOKENS = BGE_MAX_TOKENS - BGE_RESERVED_SPECIAL_TOKENS  # 510
 
 
@@ -39,4 +39,4 @@ def encode_to_token_ids(text: str) -> list[int]:
 def decode_tokens(token_ids: list[int]) -> str:
     """Inverse of encode_to_token_ids."""
     tok = bge_tokenizer()
-    return tok.decode(token_ids, skip_special_tokens=True)
+    return str(tok.decode(token_ids, skip_special_tokens=True))

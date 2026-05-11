@@ -5,8 +5,9 @@ Uses defusedxml.lxml per AGENTS.md. Output is ready for asyncpg COPY.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from datetime import date
-from typing import Generator, cast
+from typing import cast
 
 from defusedxml.lxml import fromstring
 from lxml import etree
@@ -58,8 +59,8 @@ def parse_and_chunk_one(
         short_name=short_name,
         title=title,
         pubmed_id=pubmed_id,
-        gene_symbols=(),     # populated by sidedata join
-        omim_ids=(),         # populated by sidedata join
+        gene_symbols=(),  # populated by sidedata join
+        omim_ids=(),  # populated by sidedata join
         authors=authors,
         initial_pub_date=initial,
         last_updated_date=updated,
@@ -72,7 +73,7 @@ def parse_and_chunk_one(
     if body is not None:
         global_chunk = 0
         for section in body.findall("sec"):
-            for chunk_passages, global_chunk in _walk_section(
+            for chunk_passages, next_chunk in _walk_section(
                 section,
                 nbk_id=nbk_id,
                 ancestor_titles=(),
@@ -82,10 +83,12 @@ def parse_and_chunk_one(
                 overlap_tokens=overlap_tokens,
             ):
                 passages.extend(chunk_passages)
+                global_chunk = next_chunk
     return chapter, passages
 
 
 # ---------- helpers ----------
+
 
 def _text(el: etree._Element | None) -> str | None:
     if el is None:
@@ -132,13 +135,11 @@ def _walk_section(
     """Recursive section walker. Yields (passages_for_this_call, next_global_chunk)."""
     title_el = section.find("title")
     title = _text(title_el) or "(untitled)"
-    titles = ancestor_titles + (title,)
+    titles = (*ancestor_titles, title)
     heading_path = " > ".join(titles)
     canonical = canonical_section(titles[0])
 
-    own_text_parts = [
-        _text(p) for p in section.findall("p") if _text(p)
-    ]
+    own_text_parts = [_text(p) for p in section.findall("p") if _text(p)]
     if own_text_parts:
         full = "\n\n".join(cast(list[str], own_text_parts))
         chunks = chunk_section_text(full, max_tokens=max_tokens, overlap_tokens=overlap_tokens)

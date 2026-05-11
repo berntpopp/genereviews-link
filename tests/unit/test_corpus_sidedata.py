@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from genereview_link.corpus.sidedata import SideData, load_sidedata
+from genereview_link.corpus.sidedata import load_sidedata
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "sidedata"
 

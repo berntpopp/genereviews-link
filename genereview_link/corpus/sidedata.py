@@ -6,9 +6,9 @@ Source: https://ftp.ncbi.nlm.nih.gov/pub/GeneReviews/
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
 
 GENESYM_FILE = "NBKid_shortname_genesymbol.txt"
 OMIM_FILE = "NBKid_shortname_OMIM.txt"

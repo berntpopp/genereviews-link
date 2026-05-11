@@ -76,11 +76,11 @@ async def download_tarball(
     url = f"{LITARCH_BASE}/{listing.relpath}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     sha = hashlib.sha256()
-    async with httpx.AsyncClient(timeout=None) as client:
-        async with client.stream("GET", url) as resp:
-            resp.raise_for_status()
-            with dest.open("wb") as fh:
-                async for chunk in resp.aiter_bytes(chunk_size):
-                    sha.update(chunk)
-                    fh.write(chunk)
+    # timeout=None is intentional: large tarball (~600 MB), no read deadline.
+    async with httpx.AsyncClient(timeout=None) as client, client.stream("GET", url) as resp:  # noqa: S113
+        resp.raise_for_status()
+        with dest.open("wb") as fh:
+            async for chunk in resp.aiter_bytes(chunk_size):
+                sha.update(chunk)
+                fh.write(chunk)
     return sha.hexdigest()
