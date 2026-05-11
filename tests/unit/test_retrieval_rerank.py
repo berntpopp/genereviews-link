@@ -48,3 +48,18 @@ def test_rrf_combines_lexical_and_dense() -> None:
 def test_section_priority_constants() -> None:
     assert SECTION_PRIORITY["summary"] == 0
     assert SECTION_PRIORITY["references"] == 50
+
+
+def test_rerank_populates_dense_rank_and_rrf_score() -> None:
+    """After RRF reranking, evidence rows carry non-None dense_rank and rrf_score."""
+    rows = [_row("p1", "summary", 1.0), _row("p2", "summary", 0.5)]
+    dense = {"p1": 0.3, "p2": 0.9}  # dense flips order: p2 ranks higher densely
+    out, diag = rerank_with_embeddings(rows, dense_scores=dense, rrf_k=60)
+    assert diag.active is True
+    # Top result must have both fields populated
+    assert out[0].rrf_score is not None
+    assert out[0].dense_rank is not None
+    # All non-guarded (evidence) rows should have fields set
+    for row in out:
+        assert row.rrf_score is not None
+        assert row.dense_rank is not None

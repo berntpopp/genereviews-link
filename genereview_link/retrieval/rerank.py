@@ -10,6 +10,7 @@ Sort key (tuple, descending RRF, then ascending priorities):
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -99,10 +100,18 @@ def rerank_with_embeddings(
             score += 1.0 / (rrf_k + dense_rank[r.passage.passage_id])
         return score
 
+    scored_evidence = [
+        dataclasses.replace(
+            r,
+            dense_rank=dense_rank.get(r.passage.passage_id),
+            rrf_score=rrf(r),
+        )
+        for r in evidence
+    ]
     final_evidence = sorted(
-        evidence,
+        scored_evidence,
         key=lambda r: (
-            -rrf(r),
+            -(r.rrf_score or 0.0),
             -dense_scores.get(r.passage.passage_id, 0.0),
             _section_key(r),
             r.passage.nbk_id,
