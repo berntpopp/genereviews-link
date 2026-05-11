@@ -10,6 +10,7 @@ import uvicorn
 from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastmcp import FastMCP
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -27,6 +28,7 @@ from genereview_link.api.routes import (
     search,
 )
 from genereview_link.config import ServerConfig, settings
+from genereview_link.services.errors import NotYetIndexedError
 from genereview_link.logging_config import get_logger
 from genereview_link.services.service_manager import (
     get_service_manager,
@@ -127,6 +129,22 @@ class UnifiedServerManager:
 
         if settings.ENABLE_METRICS:
             app.add_middleware(PrometheusMiddleware)
+
+        @app.exception_handler(NotYetIndexedError)
+        async def not_yet_indexed_handler(
+            _request: object, exc: NotYetIndexedError
+        ) -> JSONResponse:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "error": "not_yet_indexed",
+                    "gene_symbol": exc.gene_symbol,
+                    "nbk_id": exc.nbk_id,
+                    "pubmed_id": exc.pubmed_id,
+                    "corpus_version": exc.corpus_version,
+                    "hint": "Pass ?fresh=true to fetch from NCBI live",
+                },
+            )
 
         app.include_router(search.router)
         app.include_router(abstract.router)
