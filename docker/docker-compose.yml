@@ -1,0 +1,44 @@
+services:
+  genereview-link:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+
+    container_name: genereview_link_server
+
+    env_file:
+      - path: ../.env
+        required: false
+
+    environment:
+      GENEREVIEW_LINK_LOG_LEVEL: INFO
+      GENEREVIEW_LINK_HOST: 0.0.0.0
+      GENEREVIEW_LINK_PORT: 8000
+
+    ports:
+      - "${GENEREVIEW_LINK_PORT:-8000}:8000"
+
+    command: ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+    restart: unless-stopped
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,57 @@
+# Production overlay
+# Usage: docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+
+services:
+  genereview-link:
+    environment:
+      GENEREVIEW_LINK_LOG_LEVEL: INFO
+      LOG_JSON: "true"
+      GUNICORN_WORKERS: 4
+      GUNICORN_LOG_LEVEL: warning
+
+    volumes: []
+    ports: !reset []
+
+    read_only: true
+    tmpfs:
+      - /tmp/genereview-link:rw,noexec,nosuid,size=64m
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    pids_limit: 256
+    init: true
+
+    command: ["gunicorn", "-c", "gunicorn_conf.py", "server:app"]
+
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+          pids: 256
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        labels: "service=genereview-link,environment=production"

@@ -1,0 +1,15 @@
+# Nginx Proxy Manager overlay
+# Usage: docker compose -f docker/docker-compose.yml -f docker/docker-compose.npm.yml up -d
+
+services:
+  genereview-link:
+    ports: !reset []
+    expose:
+      - "8000"
+    networks:
+      - npm-network
+
+networks:
+  npm-network:
+    external: true
+    name: ${NPM_NETWORK_NAME:-npm_network}

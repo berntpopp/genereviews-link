@@ -1,0 +1,31 @@
+# Development overlay with hot-reloading
+# Usage: docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up --build
+
+services:
+  genereview-link:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: builder
+
+    environment:
+      GENEREVIEW_LINK_LOG_LEVEL: DEBUG
+      PYTHONPATH: /home/app/web
+
+    volumes:
+      - ../genereview_link:/home/app/web/genereview_link:delegated
+      - ../server.py:/home/app/web/server.py:ro
+      - ../mcp_server.py:/home/app/web/mcp_server.py:ro
+      - ../pyproject.toml:/home/app/web/pyproject.toml:ro
+      - ../README.md:/home/app/web/README.md:ro
+
+    command: >
+      sh -c "
+        cd /home/app/web &&
+        pip install -e . &&
+        uvicorn server:app --host 0.0.0.0 --port 8000 --reload --reload-dir genereview_link
+      "
+
+    user: root
+
+    working_dir: /home/app/web
