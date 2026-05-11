@@ -9,9 +9,11 @@ from fastapi import APIRouter, Depends, Path, Request
 from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.routes.passages import _get_corpus_version, get_repository
 from genereview_link.models.genereview_models import (
+    ChapterMetadataResponse,
     ChapterSectionResponse,
     PassageInSection,
     ResponseMeta,
+    SectionSummary,
 )
 from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.repository import GeneReviewRepository
@@ -85,5 +87,54 @@ async def get_chapter_section(
             for p in passages
         ],
         concatenated_text="\n\n".join(p.text for p in passages),
+        meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
+    )
+
+
+@router.get(
+    "/chapters/{nbk_id}/metadata",
+    response_model=ChapterMetadataResponse,
+    response_model_by_alias=True,
+    operation_id="get_chapter_metadata",
+    summary="Return chapter title, last-updated date, gene symbols, section counts, and table count",
+)
+async def get_chapter_metadata(
+    nbk_id: Annotated[
+        str,
+        Path(
+            pattern=r"^NBK\d+$",
+            description="Bare NCBI Bookshelf ID, e.g. 'NBK1247'.",
+        ),
+    ],
+    repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
+    request: Request = ...,  # type: ignore[assignment]
+) -> ChapterMetadataResponse:
+    """Return chapter title, last-updated date, gene symbols, section counts, and table count.
+
+    Use this before get_chapter_section to avoid blind calls on empty sections.
+    """
+    meta = await repo.get_chapter_metadata(nbk_id)
+    if meta is None:
+        raise StructuredHTTPException(
+            status_code=404,
+            code="chapter_not_found",
+            message=f"chapter {nbk_id!r} not in corpus",
+            recovery_hint=(
+                "check the NBK ID; use search_passages to discover indexed chapters"
+            ),
+            next_commands=[
+                {"tool": "search_passages", "arguments": {"q": "<gene symbol or term>"}}
+            ],
+        )
+    return ChapterMetadataResponse(  # type: ignore[call-arg]
+        nbk_id=meta.nbk_id,
+        title=meta.title,
+        chapter_last_updated=meta.chapter_last_updated,
+        gene_symbols=list(meta.gene_symbols),
+        sections=[
+            SectionSummary(section=s.section, passage_count=s.passage_count)  # type: ignore[arg-type]
+            for s in meta.sections
+        ],
+        table_count=meta.table_count,
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )

@@ -268,3 +268,24 @@ class ChapterSectionResponse(BaseModel):
     concatenated_text: str
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
     model_config = {"populate_by_name": True}
+
+
+class SectionSummary(BaseModel):
+    """Per-section passage count, emitted inside ChapterMetadataResponse."""
+
+    section: SectionName
+    passage_count: int
+
+
+class ChapterMetadataResponse(BaseModel):
+    """Envelope returned by GET /chapters/{nbk_id}/metadata."""
+
+    nbk_id: str
+    title: str
+    chapter_last_updated: date | None = None
+    gene_symbols: list[str] = Field(default_factory=list)
+    sections: list[SectionSummary] = Field(default_factory=list)
+    table_count: int = 0
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}
