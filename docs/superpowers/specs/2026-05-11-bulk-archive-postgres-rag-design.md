@@ -137,9 +137,87 @@ genereview_link/
 
 ## Database schema
 
-Six tables plus `schema_migrations`. All migrations live under
-`genereview_link/db/migrations/` named `NNNN_<topic>.sql` and applied in
-lexical order by `db/migrate.py`.
+### Two-schema model for atomic corpus swaps
+
+A naive single-schema design cannot atomically swap a 150K-row corpus —
+incremental writes during stages 4–7 would be visible to live queries, and
+`on conflict do nothing` would silently drop metadata refreshes between
+versions.
+
+Solution: split into a **control schema** (`public`) holding operational
+tables that persist across corpus versions, and a **data schema**
+(`genereview`) holding the per-version chapter/passage/embedding tables.
+Ingest writes to a `genereview_staging` schema and the atomic swap is
+`ALTER SCHEMA … RENAME` inside a single transaction.
+
+```
+public                                       (permanent, control)
+  ├── schema_migrations
+  ├── genereview_corpus_version
+  ├── genereview_refresh_log
+  └── genereview_active_embedding
+
+genereview                                   (current data, swap target)
+  ├── genereview_chapters
+  ├── genereview_passages
+  └── genereview_embeddings_bge384
+
+genereview_staging                           (transient, during ingest)
+  ├── (same three tables as genereview)
+  └── HNSW index built AFTER bulk COPY completes
+
+genereview_old_2026_04_30                    (previous versions, retained)
+genereview_old_2026_05_03                    (dropped by cleanup beyond N=2)
+```
+
+**Atomic swap transaction** (stage 8):
+
+```sql
+begin;
+-- 1. retire current
+alter schema genereview rename to genereview_old_<old_version>;
+-- 2. promote staging
+alter schema genereview_staging rename to genereview;
+-- 3. flip control flags
+update genereview_active_embedding
+   set table_name = 'genereview_embeddings_bge384', ...;
+update genereview_corpus_version set is_active = false where is_active;
+update genereview_corpus_version
+   set is_active = true,
+       ingest_status = 'completed',
+       ingest_finished_at = now()
+   where version = $new_version;
+commit;
+```
+
+Until commit, queries see the old corpus through search_path
+`genereview, public`. After commit, queries see the new corpus immediately.
+No mixed-version reads possible.
+
+**Cleanup** (stage 9): `drop schema if exists genereview_old_<v> cascade`
+for any old schemas beyond the retention window (default N=2).
+
+**Migration runner implications**: `db/migrate.py` applies migrations
+**twice** — once to `public` (control tables) and once to whichever data
+schema is the target (`genereview` for first boot, `genereview_staging` for
+ingest). Migrations are split into two directories:
+
+```
+genereview_link/db/migrations/
+├── control/           ← applied once into public
+│   ├── 0001_*.sql
+│   └── ...
+└── data/              ← applied into the target data schema
+    ├── 0001_*.sql
+    └── ...
+```
+
+### Migrations overview
+
+All migrations live under `genereview_link/db/migrations/{control,data}/`
+named `NNNN_<topic>.sql` and applied in lexical order by `db/migrate.py`.
+The control set and data set are versioned independently; the manifest
+records both lists.
 
 ### `genereview_chapters`
 
@@ -236,16 +314,27 @@ create table genereview_embeddings_bge384 (
         on delete cascade
 );
 
-create index genereview_embeddings_bge384_hnsw_cosine
-    on genereview_embeddings_bge384
-    using hnsw (embedding vector_cosine_ops)
-    with (m = 16, ef_construction = 200);
+-- HNSW index is NOT created at migration time. Per-row index maintenance
+-- during bulk COPY of 150K rows is dramatically slower than a single
+-- post-load build. The `embed` CLI runs this statement after the backfill
+-- COPY completes; pg_dump captures both table and index for MODE 1 bundles.
+--
+-- create index genereview_embeddings_bge384_hnsw_cosine
+--     on genereview_embeddings_bge384
+--     using hnsw (embedding vector_cosine_ops)
+--     with (m = 16, ef_construction = 200);
 ```
 
 **Model-flexibility design** (fixes pubtator-link's hardcoded
 `check (embedding_dim = 384)` pitfall): one table per embedding model. A
 new model = a new migration creating a new table. No `CHECK` constraint on
 dim; pgvector enforces dim at the column type already.
+
+**HNSW build timing**: index is created after the bulk COPY in stage 7, not
+at migration time. See "Rollout phases" → Phase 3 for the exact sequence.
+This is the single biggest cost difference between MODE 1 (pg_restore
+correctly orders data-then-indexes) and MODE 2 (BUILD_LOCAL — would
+otherwise pay per-row HNSW maintenance during ingest).
 
 ### `genereview_active_embedding`
 
@@ -282,8 +371,31 @@ create unique index genereview_corpus_version_active_unique
 ```
 
 The partial unique index enforces "at most one active version." Atomic-swap
-pattern: new rows ingested with `is_active=false`; on success, single
-transaction flips active true on new + false on old.
+pattern: new rows ingested with `is_active=false`; on success, the same
+transaction that renames `genereview_staging` → `genereview` flips
+`is_active` on the corpus_version row.
+
+**Version naming**: `YYYY-MM-DD[-rN]` where `-rN` disambiguates same-day
+re-ingests (e.g., `2026-05-10-r2` if a manual workflow_dispatch retriggers
+on the same day). The CI workflow picks the next free `-rN` suffix when
+the existing day's version is already used.
+
+### `schema_migrations` (control schema)
+
+```sql
+create table schema_migrations (
+    namespace       text not null,                      -- 'control' or 'data'
+    version         text not null,                     -- '0001_base', etc.
+    applied_at      timestamptz not null default now(),
+    primary key (namespace, version)
+);
+```
+
+`namespace` distinguishes control migrations (applied once into `public`)
+from data migrations (applied into each data schema — `genereview` plus
+each `genereview_staging` instantiated during ingest). The runner records
+both per-schema applications so the manifest can attest "this bundle was
+built against control=0001..0003, data=0001..0005."
 
 ### `genereview_refresh_log`
 
@@ -319,15 +431,19 @@ Nine stages, fully idempotent, resumable on crash. State machine tracked in
 `genereview_corpus_version.ingest_status`.
 
 ```
+0. prepare_staging         create genereview_staging schema; apply data migrations
 1. check_remote_version    HEAD/GET file_list.csv → extract NBK1116 row
 2. download_tarball        range-resumable GET of gene_NBK1116.tar.gz; sha256 verify
-3. download_sidedata       asyncio.gather over 6 side-data files
+3. download_sidedata       asyncio.gather over the 3 side-data files
 4. parse_nxml              ProcessPoolExecutor (N=min(cpu_count, 8)) — BITS parser
-5. chunk                   folded into worker fn — 512-token windows within <sec>
-6. write_passages          4 concurrent asyncpg copy_records_to_table writers
-7. backfill_embeddings     pipelined: 1 encoder + 2 writers; batch 256
-8. atomic_swap             single tx: flip is_active true on new, false on old
-9. cleanup                 retain last 2 versions; cascade-delete older
+5. chunk                   folded into worker fn — 510-token windows within <sec>
+6. write_passages          4 concurrent asyncpg copy_records_to_table writers (→ staging)
+7. backfill_embeddings     pipelined: 1 encoder + 2 writers; batch 256 (→ staging)
+   7b. build_hnsw_index    CREATE INDEX ... USING hnsw post-COPY (~2 min for 150K rows)
+8. atomic_swap             single tx: ALTER SCHEMA genereview RENAME → genereview_old_<v>;
+                                       ALTER SCHEMA genereview_staging RENAME → genereview;
+                                       flip is_active flags on control tables.
+9. cleanup                 drop schemas matching genereview_old_* beyond retention (N=2)
 ```
 
 Detailed flow in section "Parallelization model" below.
@@ -343,28 +459,50 @@ Detailed flow in section "Parallelization model" below.
 - Recursive `<sec>` walk; capture `<title>` and `<p>` text
 - Skip `<fig>`, `<table-wrap>`, `<ref-list>` in v1 (Phase 7 enhancement)
 - Section canonicalization via regex table; unmatched → `other`
+  (**TODO for implementation plan:** specify the exact regex → canonical-name mapping table; ~10 entries covering the GeneReviews vocabulary)
 - Skip-and-log policy on parse failure per chapter
+
+### Tokenizer (chunking and encoding share one)
+
+Both the chunk-window boundary calculation and the BGE encoder use the
+**same** tokenizer: `transformers.AutoTokenizer.from_pretrained("BAAI/bge-small-en-v1.5")`.
+This avoids the silent-truncation failure mode where word-counted chunks
+overflow BGE's 512-token model max.
+
+- Chunk window: **510 net tokens** (leaves room for BGE's `[CLS]`/`[SEP]`
+  specials)
+- Overlap: **50 tokens** between adjacent windows
+- Always count via the BGE tokenizer — never via Python `str.split()` or
+  word heuristics
+- Tokenizer is loaded once per worker process; cached for the life of the
+  process
 
 ### Side-data files
 
-Six files fetched from `https://ftp.ncbi.nlm.nih.gov/pub/GeneReviews/`:
+Three files fetched from `https://ftp.ncbi.nlm.nih.gov/pub/GeneReviews/`:
 
 - `GRtitle_shortname_NBKid.txt` — title↔short-name↔NBK id
 - `NBKid_shortname_genesymbol.txt` — NBK↔gene-symbol (canonical for `gene_symbols[]`)
 - `NBKid_shortname_OMIM.txt` — NBK↔OMIM id (canonical for `omim_ids[]`)
-- Plus three additional cross-reference files (UniProt, etc.)
 
-Parsed into in-memory dicts keyed by NBK id; joined during stage 4.
+(NCBI publishes additional side-data files in this directory; v1 ingests
+only the three above. Others can be added later without schema changes —
+they map to `raw_metadata` jsonb fields.)
+
+Parsed into in-memory dicts keyed by NBK id; joined during stage 4. All
+three are bundled verbatim in the release artifact (`sidedata/` directory)
+for reproducibility and downstream consumer use.
 
 ### Failure modes
 
 | Failure | Recovery |
 |---|---|
-| Crash between stages 2–6 | Resume from stage indicated by populated rows for the in-progress version; stages 4–6 are idempotent (`on conflict do nothing` on chapters; delete-then-insert per chapter on passages) |
-| NCBI 503 / network blip | httpx retries with exponential backoff (max 5, cap 60s); on exhaustion mark `status=failed`, next run retries |
+| Crash between stages 2–7 | `genereview_staging` schema persists with whatever was written before the crash. Next run inspects `genereview_corpus_version.ingest_status='in_progress'`, drops the staging schema, and restarts the version from stage 0. Live `genereview` schema is unaffected since the swap (stage 8) never executed. |
+| NCBI 503 / network blip | httpx retries with exponential backoff (max 5, cap 60s); on exhaustion mark `status=failed`, next run retries from stage 0 (drops staging first) |
 | Single NXML malformed | Skip chapter, log to `refresh_log.detail.skipped_chapters[]`; ingest continues |
-| Embedding model download fails | Stage 7 fails; status `completed_without_embeddings`; lexical-only retrieval still works; next run retries embedding backfill independently |
-| Disk fills during extract | tarfile is streamed; passages flushed per chapter; partial passages for the last chapter; corpus_version stays inactive; next run re-downloads cleanly |
+| Embedding model download fails | Stage 7 fails; status `completed_without_embeddings`; lexical-only retrieval still works (the swap proceeds without embeddings; HNSW index simply isn't created). Next run can retry embedding backfill independently against the live schema. |
+| Disk fills during extract | tarfile is streamed; partial staging schema gets dropped on next attempt |
+| Crash during stage 8 transaction | Postgres rolls back; nothing changed; next run cleans staging and retries |
 
 ## Parallelization model (CI builder)
 
@@ -375,7 +513,7 @@ producer-consumer fan-out with bounded backpressure queues.
 |---|---|---|
 | 1. check_remote_version | none | single async call |
 | 2. download_tarball | none | single async stream |
-| 3. download_sidedata | 6-way fan-out | `asyncio.gather` |
+| 3. download_sidedata | 3-way fan-out | `asyncio.gather` |
 | 4. parse_nxml | N=min(cpu_count, 8) | `ProcessPoolExecutor` |
 | 5. chunk | same workers as 4 | folded into worker fn |
 | 6. write_passages | 4 concurrent writers | asyncpg `copy_records_to_table` |
@@ -503,6 +641,29 @@ SECTION_PRIORITY = {
 }
 ```
 
+**Final sort key — section_priority is a tiebreaker, NOT additive.**
+
+RRF scores are O(1/60) ≈ 0.016; adding a section_priority of 50 to that
+would swamp it. Per pubtator-link's `embedding_rerank.py:55–64` and
+`ranking.py:80–86`, ordering is a Python tuple sort:
+
+```python
+sorted(
+    rows,
+    key=lambda row: (
+        -rrf_score(row),                         # 1st: descending RRF
+        SECTION_PRIORITY.get(row.chapter_section, 100),  # 2nd: lowest priority wins ties
+        row.nbk_id,                              # 3rd: deterministic
+        row.passage_id,                          # 4th: deterministic
+    ),
+)
+```
+
+Two passages with the same RRF score get ordered by section priority;
+two with the same RRF and same section get ordered by NBK id. Guarded
+sections (`references`) are partitioned out before RRF and appended last
+regardless of dense score.
+
 ### Query-time flow
 
 1. Lexical query returns top-50 candidates
@@ -520,7 +681,7 @@ latency.
 | Path | Internal change |
 |---|---|
 | `GET /search/{gene_symbol}?retmax=N` | Serves from `genereview_chapters.gene_symbols` GIN scan; falls back to `EutilsClient.search_genereviews` only on `?fresh=true` |
-| `GET /abstract/{pubmed_id}` | Backed by chapter metadata when PMID maps to an indexed chapter (`genereview_chapters.pubmed_id` lookup); falls through to `EutilsClient.fetch_abstract` otherwise |
+| `GET /abstract/{pubmed_id}` | Backed by chapter metadata when PMID maps to an indexed chapter (`genereview_chapters.pubmed_id` lookup); falls through to `EutilsClient.fetch_abstract` otherwise. See response-field mapping below. |
 | `GET /links/{pubmed_id}` | Bookshelf URLs reconstructed from `nbk_id`; same fallback policy |
 | `GET /fulltext/{nbk_id}?sections=X,Y` | Serves indexed passages reassembled per section; `sections=` narrows to `chapter_section in (...)` |
 | `GET /genereview/{gene_symbol}` | Routes through repository; same composite response shape |
@@ -544,6 +705,25 @@ Old clients that don't read these keep working.
   "hint": "Pass ?fresh=true to fetch from NCBI live"
 }
 ```
+
+### `/abstract/{pubmed_id}` response-field mapping
+
+GeneReviews chapters don't carry an NLM-style abstract element. To
+preserve the existing `AbstractData` contract while serving from the
+index, fields are populated as follows:
+
+| `AbstractData` field | Source from index |
+|---|---|
+| `pmid` | `genereview_chapters.pubmed_id` |
+| `title` | `genereview_chapters.title` |
+| `abstract` | Concatenated text of all passages in `chapter_section = 'summary'`, joined by `\n\n`, ordered by `chunk_index` |
+| `authors` | `genereview_chapters.authors` parsed into a list (split on `,` / `and`) |
+| `journal` | Literal string `"GeneReviews(R) - NCBI Bookshelf"` |
+| `publication_date` | `genereview_chapters.last_updated_date` formatted as ISO 8601 |
+
+If the chapter has no `summary` section (rare; logged at WARNING), the
+route falls through to `EutilsClient.fetch_abstract`. On `?fresh=true`,
+always uses the live path.
 
 ### New routes (v1) — 3
 
@@ -605,31 +785,53 @@ schedule: cron 0 6 * * MON       # weekly Monday 06:00 UTC
 on: workflow_dispatch
 ```
 
+**Runner sizing**: `runs-on: ubuntu-latest-8-core` (16 GB RAM, 8 vCPU).
+Free `ubuntu-latest` (7 GB / 2-core) cannot reliably hold 8 parse workers
++ BGE + the Postgres service container. If the larger runner is
+unavailable for cost reasons, split into separate jobs sharing an
+artifact (parse-write → embed → dump); see Risk register entry #5.
+
 ```
 check-job
+  runs-on: ubuntu-latest        (cheap, just network)
   HEAD file_list.csv → extract NBK1116 "Last Updated"
   compare to latest release tag (corpus-YYYY-MM-DD)
   → no change? exit 0 (skipped)
-  → changed? emit corpus_version output
+  → changed? emit corpus_version (with -rN suffix if same-day reuse)
                                   │
                                   ▼
 build-corpus-job (matrix per embedding flavor)
+  runs-on: ubuntu-latest-8-core
   services: postgres: pgvector/pgvector:0.8.2-pg18
   - checkout, uv sync
+  - actions/cache@v5            # ~/.cache/huggingface keyed by model@revision
+      key: hf-BAAI_bge-small-en-v1.5-${{ hashFiles('pyproject.toml') }}
   - genereview-link db migrate
-  - genereview-link ingest      (parallelized pipeline)
-  - pg_dump -Fc -f corpus.dump genereview
-  - generate manifest.json (checksums, counts, schema versions)
-  - tar czf bundle.tar.gz manifest.json corpus.dump sidedata/
-  - upload-artifact
+  - genereview-link ingest      (parallelized pipeline; writes staging schema)
+  - genereview-link embed       (builds HNSW post-COPY)
+  - genereview-link bundle      (pg_dump -Fc + manifest + tar.gz)
+  - sha256sum bundle.tar.gz > bundle.tar.gz.sha256
+  - upload-artifact (both files)
                                   │
                                   ▼
 release-job
   softprops/action-gh-release@v3
-  tag: corpus-2026-05-10
-  attach all bundles + each manifest.json
+  tag: corpus-2026-05-10[-rN]
+  attach: bundle.tar.gz + bundle.tar.gz.sha256 + manifest.json
   update `latest` pointer if all matrix jobs succeeded
 ```
+
+**Sibling SHA-256 asset**: the `bundle.tar.gz.sha256` file is published
+alongside the bundle on the release. The container entrypoint downloads
+**both** and verifies the tarball's checksum against the sibling
+**before** extracting. This catches truncated downloads that would
+otherwise parse as a valid (but partial) manifest. GitHub Releases also
+exposes asset digests through the REST API as a cross-check.
+
+**`BUNDLE_URL=latest` sentinel**: when set to the literal string `latest`,
+the entrypoint hits `GET /repos/{owner}/{repo}/releases/latest` and
+resolves to the most recent corpus release asset URL. Deployments don't
+need a version bump per refresh.
 
 ### Bundle format
 
@@ -669,7 +871,7 @@ genereview-corpus-2026-05-10-bge384.tar.gz
   "created_at": "2026-05-11T06:14:00Z",
   "created_by": "github-actions:build-corpus.yml#42",
   "license": {
-    "copyright": "© 1993-2026 University of Washington",
+    "copyright": "(c) 1993-2026 University of Washington",
     "terms_url": "https://www.ncbi.nlm.nih.gov/books/NBK138602/"
   },
   "checksums": {
@@ -690,9 +892,13 @@ async def entrypoint():
 
     if settings.BUNDLE_URL:
         # MODE 1
-        bundle = await download_bundle(settings.BUNDLE_URL)
-        verify_manifest_checksums(bundle)
-        verify_compatibility(bundle.manifest)  # pg version, pgvector version
+        url = await resolve_bundle_url(settings.BUNDLE_URL)  # "latest" → GH API
+        # Verify out-of-band sha256 BEFORE extracting:
+        expected_sha256 = await fetch_sibling_sha256(url + ".sha256")
+        tarball_bytes = await download_with_integrity_check(url, expected_sha256)
+        bundle = extract_bundle(tarball_bytes)
+        verify_manifest_checksums(bundle)             # per-file checksums inside manifest
+        verify_compatibility(bundle.manifest)         # pg major version, pgvector version
         await pg_restore(bundle.corpus_dump, jobs=os.cpu_count())
         await db.mark_active(bundle.manifest.corpus_version)
         return await serve()
@@ -702,28 +908,73 @@ async def entrypoint():
         await run_full_ingest()
         return await serve()
 
-    # MODE 3 (external Postgres)
+    # MODE 3 (external Postgres) — assume migrations + corpus exist
     return await serve()
 ```
 
-### Optional release watcher
+### Optional release watcher (advisory-lock-guarded under multi-worker gunicorn)
+
+With `GUNICORN_WORKERS=4` in production, naive `@scheduler.scheduled_job`
+registration would fire the hourly check from all 4 workers
+simultaneously. The lightest fix is a Postgres advisory lock — the first
+worker to acquire it does the check; the rest no-op.
 
 ```python
-@scheduler.scheduled_job('cron', minute=17)  # hourly :17
+RELEASE_WATCHER_LOCK_ID = 0x47525F524C5F31  # "GR_RL_1" hashed to bigint
+
+@scheduler.scheduled_job('cron', minute=17)  # hourly at :17
 async def check_for_new_release():
-    latest = await github.get_latest_release_manifest()
-    active = await db.active_corpus_version()
-    if latest.corpus_version > active.version:
-        log.info("newer corpus available", latest=latest.corpus_version)
-        if settings.AUTO_PULL_RELEASES:
-            await pull_and_swap_via_schema(latest)
-        # else: surface in /health/corpus, operator-driven
+    async with pool.acquire() as conn:
+        got = await conn.fetchval(
+            "select pg_try_advisory_lock($1)", RELEASE_WATCHER_LOCK_ID
+        )
+        if not got:
+            return  # another worker already ran (or is running) this tick
+        try:
+            latest = await github.get_latest_release_manifest()
+            active = await db.active_corpus_version()
+            if latest.corpus_version > active.version:
+                log.info("newer corpus available", latest=latest.corpus_version)
+                if settings.AUTO_PULL_RELEASES:
+                    await pull_and_swap(latest)
+                # else: surface in /health/corpus; operator-driven
+        finally:
+            await conn.fetchval(
+                "select pg_advisory_unlock($1)", RELEASE_WATCHER_LOCK_ID
+            )
 ```
 
 `AUTO_PULL_RELEASES` defaults to `false` — production swaps are
-operator-driven. Hot-swap via schema rename: `pg_restore --schema=staging`
-into a new schema, flip `search_path` for the app role atomically, drop
-old schema after a retention window.
+operator-driven. The auto-pull path uses the same staging-schema +
+schema-rename transaction described in the Database schema section, so
+hot-swap is zero-downtime and identical to MODE 2 ingest.
+
+### Memory budget under production gunicorn
+
+`docker/docker-compose.prod.yml` currently caps the container at 1 GB.
+The new design pushes this above that limit. Per-process resident memory:
+
+| Component | Approx RSS per worker |
+|---|---|
+| FastAPI + asyncpg + python interpreter | ~150 MB |
+| `BAAI/bge-small-en-v1.5` (loaded lazily on first `/passages/search` or `/abstract`) | ~120 MB model weights + ~300 MB torch/transformers runtime |
+| Tokenizer (`AutoTokenizer`) | ~30 MB |
+| **Per-worker total when BGE loaded** | **~600 MB** |
+
+With `GUNICORN_WORKERS=4`, full saturation = ~2.4 GB. **Raise the prod
+container limit to 3 GB**; document `memory: 3G` in
+`docker/docker-compose.prod.yml` and a `memory_swap` matching limit.
+
+**Tuning knobs** for memory-constrained operators:
+
+- `GUNICORN_WORKERS=2` — halves the model-replication cost; usually fine
+  for low-traffic deployments. Documented in README.
+- `GENEREVIEW_EAGER_LOAD_BGE=true` — preload BGE in `post_worker_init` so
+  startup time is paid once instead of on-first-request. Default `false`
+  to keep `/health` fast.
+- v2 escape hatch (NOT in scope for v1): single embedding-sidecar
+  microservice that workers RPC to; reduces total model RAM to one copy.
+  Flagged as a follow-up if 4-worker memory becomes a real bottleneck.
 
 ## Testing strategy
 
@@ -772,33 +1023,60 @@ Catches "bundle is valid but ranks badly" regressions.
 latest bundle; compute MRR@10 + section-precision@5. Regression threshold:
 drop > 5% on either metric blocks the release.
 
+**Methodology:**
+
+- **Authorship**: Initial 30 triples curated by the implementer during
+  Phase 4, reviewed by the project owner before Phase 5 ships. Future
+  additions go through PR review like code.
+- **Baseline**: When the eval set first lands (Phase 4), baseline scores
+  are captured against the then-current corpus bundle. Stored in
+  `tests/eval/baseline.json` alongside the queries.
+- **Comparison**: Each nightly run compares to `baseline.json`, not to
+  the previous night's run. This prevents quality drift via slow
+  ratchet-down.
+- **Legitimate baseline updates**: When a ranking change is intentional
+  (e.g., section_priority weights tuned, new model rolled out), the PR
+  that makes the change also updates `baseline.json` and includes an
+  explanation in the PR description. CI requires explicit baseline
+  approval for changes that move metrics by >5%.
+- **What gets measured**: MRR@10 over `expected_chapter` membership in
+  the top-10 results of `/passages/search`; section-precision@5 over
+  `expected_section` match in the top 5.
+- **Triple format**: `{"query": "...", "expected_chapter": "NBK1247", "expected_section": "diagnosis", "notes": "...optional rationale..."}`
+
 ## Rollout phases
 
 Phased to keep `main` shippable at every step. Each phase = one PR with
-passing CI.
+passing CI. Each phase also adds matching `Makefile` targets (see Makefile
+section below).
 
 ### Phase 1 — schema & migrations (no behavior change)
 
-- Add `genereview_link/db/` with `migrate.py` and migration files
+- Add `genereview_link/db/` with `migrate.py` and migration files (control + data sets)
 - Add `docker-compose.yml` Postgres service (pgvector image)
-- Wire `DATABASE_URL` env var; entrypoint runs migrations on boot
+- Wire `DATABASE_URL` env var; entrypoint runs control migrations on boot
 - No route changes; existing routes still use `EutilsClient`
+- Makefile: `db-migrate`, `db-shell`, `db-reset` (dev only)
 - **Done when:** fresh `docker compose up` provisions empty schema; `make test` green.
 
 ### Phase 2 — corpus ingest pipeline (CLI only)
 
 - Add `genereview_link/corpus/` (archive, nxml, chunking, sidedata)
-- Add `genereview-link ingest` CLI subcommand
+- Add `genereview-link ingest` CLI subcommand — writes to `genereview_staging`, atomic-swaps to `genereview`
 - Parallelized as designed
 - No embeddings yet; lexical-only schema active
-- **Done when:** running CLI locally populates Postgres with 900+ chapters; psql queries return sensible results.
+- Makefile: `ingest`, `ingest-dry-run`
+- **Done when:** running CLI locally populates Postgres with 900+ chapters; psql queries return sensible results; mid-ingest crash leaves live `genereview` untouched.
 
 ### Phase 3 — embedding backfill
 
 - Add `retrieval/embeddings.py` (BGE-small provider, lazy load)
 - Add `genereview-link embed` CLI subcommand
-- Add migration with embeddings table + HNSW index
-- **Done when:** post-ingest, `embed` populates ~150K vectors.
+- Add migration creating embeddings table **without** HNSW index
+- `embed` CLI runs: `COPY … ; CREATE INDEX … USING hnsw …` in that order — table-then-index, never per-row maintenance during COPY
+- Integration test asserts the index doesn't exist until `embed` finishes
+- Makefile: `embed`, `embed-rebuild-index`
+- **Done when:** post-ingest, `embed` populates ~150K vectors and builds the HNSW index in one CLI invocation.
 
 ### Phase 4 — retrieval layer
 
@@ -847,6 +1125,11 @@ passing CI.
 | NCBI changes file_list.csv format or tarball path | Low | High | check-job fails early; existing release stays live; GitHub Actions failure email |
 | Stale corpus served while chapter retracted upstream | Low | Medium | `/health/corpus` returns `{version, age_days}`; documented monitoring guidance |
 | App role accidentally has write to passages | Low | Medium | Migration grants ingest-role write, app-role read-only; integration test verifies |
+| APScheduler release-watcher fires N times under `GUNICORN_WORKERS=N` | High (without mitigation) | Low | `pg_try_advisory_lock` guard ensures single-worker execution per tick; integration test asserts only one worker runs the job |
+| Bundle download truncated; partial tarball parses but data corrupt | Medium | High | Sibling `bundle.tar.gz.sha256` asset verified **before** extracting; cross-check against GitHub Releases API asset digest |
+| HNSW build during `pg_restore` exceeds "<5 min" entrypoint claim on 4-core runners | Medium | Medium | 150K x 384d HNSW takes ~2–4 min on 4-core; document expected range in README; `/health` reports "restoring" status during this window |
+| GeneReviews chapter lacks `summary` section, breaking `/abstract/{pmid}` index path | Low | Low | Route falls through to `EutilsClient.fetch_abstract`; logged at WARNING with NBK id |
+| Eval baseline ratchets down silently via small unflagged regressions | Medium | Medium | Baseline stored in versioned JSON; any change to baseline requires explicit PR approval; CI blocks unexplained >5% moves |
 
 ## Observability
 
@@ -858,6 +1141,37 @@ passing CI.
   `genereview_fresh_fallback_total`,
   `genereview_corpus_version_info` (gauge labeled by version)
 
+## Makefile targets
+
+Per AGENTS.md "Prefer `Makefile` targets over ad hoc commands." The
+implementation adds:
+
+```makefile
+# Database
+db-migrate:        ## Apply control + data migrations against $DATABASE_URL
+db-shell:          ## psql shell into the dev Postgres
+db-reset:          ## DROP genereview schemas; re-run migrations (dev only)
+
+# Ingest pipeline
+ingest:            ## Full ingest: prepare staging, parse NXML, write, swap
+ingest-dry-run:    ## Parse + chunk only; emit chapter/passage counts; no DB writes
+
+# Embedding backfill
+embed:             ## Backfill embeddings + build HNSW index for active embedding table
+embed-rebuild-index: ## Drop and rebuild the HNSW index (without re-embedding)
+
+# Bundle distribution
+bundle:            ## Run pg_dump -Fc + manifest + tar.gz + sibling sha256
+bundle-verify:     ## Verify a local bundle.tar.gz against its sibling sha256
+bundle-restore:    ## pg_restore from a local bundle into $DATABASE_URL
+
+# Eval set
+eval:              ## Run MRR@10 / section-precision@5 against tests/eval/
+eval-baseline:     ## Re-capture baseline.json (requires explicit operator confirmation)
+```
+
+Each is a thin wrapper around `uv run genereview-link <subcommand>`.
+
 ## Deferred to later
 
 - Cross-encoder reranker (`bge-reranker-v2-m3`) — pattern decided, not shipping v1
@@ -866,6 +1180,7 @@ passing CI.
 - Table / figure extraction from NXML
 - Annotations / saved searches / multi-user state — not precluded by schema
 - Cross-encoder + `nomic-embed-text-v1.5` truncated to 384d as drop-in upgrade if BGE-small ranking gap emerges
+- Single embedding-sidecar microservice (RPC instead of per-worker model load) — v2 if 4-worker memory becomes a real bottleneck
 
 ## Decisions explicitly locked
 
