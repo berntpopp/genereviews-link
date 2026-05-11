@@ -37,6 +37,14 @@ def add_service_context(logger: Any, method_name: str, event_dict: EventDict) ->
     return event_dict
 
 
+def add_correlation_id(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
+    """Inject asgi-correlation-id's request-scoped correlation ID into the log record."""
+    from asgi_correlation_id.context import correlation_id
+
+    event_dict["correlation_id"] = correlation_id.get()
+    return event_dict
+
+
 def json_serializer(obj: Any, **kwargs: Any) -> bytes:
     """Fast JSON serializer using orjson."""
     return orjson.dumps(obj, option=orjson.OPT_APPEND_NEWLINE)
@@ -59,6 +67,7 @@ def configure_structlog() -> None:
         add_log_level,
         add_timestamp,
         add_service_context,
+        add_correlation_id,
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
