@@ -47,7 +47,6 @@ def test_chapter_section_response_meta_alias_is_underscore_meta() -> None:
         chapter_section="management",
         chapter_last_updated=None,
         passages=[],
-        concatenated_text="",
     )
     dumped = r.model_dump(by_alias=True)
     assert "_meta" in dumped

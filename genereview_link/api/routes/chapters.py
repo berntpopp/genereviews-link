@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi.responses import JSONResponse
 
 from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.routes.passages import _get_corpus_version, get_repository
@@ -43,13 +44,22 @@ async def get_chapter_section(
             ),
         ),
     ],
+    include: Annotated[
+        list[Literal["concatenated_text"]] | None,
+        Query(
+            description=(
+                "Opt into default-off response fields. Pass include=concatenated_text "
+                "to receive the joined passage text in addition to passages[]."
+            ),
+        ),
+    ] = None,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
-) -> ChapterSectionResponse:
+) -> ChapterSectionResponse | JSONResponse:
     """Return all passages for a specific section of a GeneReview chapter.
 
-    Concatenates all passage texts in chunk order and returns both the
-    individual passages and the combined text.
+    By default returns individual passages only. Pass include=concatenated_text
+    to also receive the joined passage text.
     """
     passages = await repo.get_section(nbk_id, section)
     if not passages:
@@ -71,7 +81,13 @@ async def get_chapter_section(
             ],
         )
     head = passages[0]
-    return ChapterSectionResponse(  # type: ignore[call-arg]
+    include_set = set(include or [])
+    concatenated = (
+        "\n\n".join(p.text for p in passages)
+        if "concatenated_text" in include_set
+        else None
+    )
+    response = ChapterSectionResponse(  # type: ignore[call-arg]
         nbk_id=nbk_id,
         chapter_title=head.chapter_title or "",
         chapter_section=section,
@@ -86,9 +102,14 @@ async def get_chapter_section(
             )
             for p in passages
         ],
-        concatenated_text="\n\n".join(p.text for p in passages),
+        concatenated_text=concatenated,
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )
+    if "concatenated_text" not in include_set:
+        return JSONResponse(
+            response.model_dump(exclude={"concatenated_text"}, mode="json", by_alias=True)
+        )
+    return response
 
 
 @router.get(

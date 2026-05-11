@@ -275,7 +275,7 @@ class ChapterSectionResponse(BaseModel):
     chapter_section: SectionName
     chapter_last_updated: date | None = None
     passages: list[PassageInSection]
-    concatenated_text: str
+    concatenated_text: str | None = None  # opt-in via include=concatenated_text
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
     model_config = {"populate_by_name": True}
 

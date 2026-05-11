@@ -101,11 +101,24 @@ class TestChapterSectionRoute:
         assert body["nbk_id"] == "NBK1247"
         assert body["chapter_section"] == "summary"
         assert len(body["passages"]) == 2
+        # concatenated_text is opt-in; must be absent by default
+        assert "concatenated_text" not in body
+        # License lives at the dedicated /license endpoint, not inlined here.
+        assert "license" not in body
+
+    @pytest.mark.asyncio
+    async def test_returns_section_with_concatenated_text_when_opted_in(
+        self, http_client: AsyncClient
+    ) -> None:
+        resp = await http_client.get(
+            "/chapters/NBK1247/sections/summary",
+            params={"include": "concatenated_text"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
         assert "concatenated_text" in body
         assert "First chunk" in body["concatenated_text"]
         assert "Second chunk" in body["concatenated_text"]
-        # License lives at the dedicated /license endpoint, not inlined here.
-        assert "license" not in body
 
     @pytest.mark.asyncio
     async def test_returns_404_when_section_not_found(
@@ -142,7 +155,10 @@ async def test_returns_passages_with_chapter_title_envelope() -> None:
     app = _build_app(passages=[pr])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get("/chapters/NBK1/sections/management")
+        resp = await c.get(
+            "/chapters/NBK1/sections/management",
+            params={"include": "concatenated_text"},
+        )
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -243,3 +259,49 @@ async def test_section_response_includes_corpus_version_from_app_state() -> None
         resp = await c.get("/chapters/NBK1/sections/management")
     body = resp.json()
     assert body["_meta"]["corpus_version"] == "2026-03-10"
+
+
+@pytest.mark.asyncio
+async def test_chapter_section_default_omits_concatenated_text() -> None:
+    """Default response must NOT contain the concatenated_text key at all."""
+    pr = PassageRow(
+        nbk_id="NBK1247",
+        passage_id="NBK1247:0001",
+        chapter_section="summary",
+        heading_path="Summary",
+        section_level=1,
+        chunk_index=0,
+        text="some text",
+    )
+    app = _build_app(passages=[pr])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/sections/summary")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "passages" in data
+    assert "concatenated_text" not in data
+
+
+@pytest.mark.asyncio
+async def test_chapter_section_include_concatenated_returns_both() -> None:
+    """include=concatenated_text adds the joined string alongside passages."""
+    pr = PassageRow(
+        nbk_id="NBK1247",
+        passage_id="NBK1247:0001",
+        chapter_section="summary",
+        heading_path="Summary",
+        section_level=1,
+        chunk_index=0,
+        text="some text",
+    )
+    app = _build_app(passages=[pr])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK1247/sections/summary",
+            params={"include": "concatenated_text"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "passages" in data
+    assert "concatenated_text" in data
+    assert isinstance(data["concatenated_text"], str)
