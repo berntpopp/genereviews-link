@@ -9,8 +9,7 @@ from dataclasses import dataclass
 
 from genereview_link.corpus.tokenizer import (
     BGE_NET_CHUNK_TOKENS,
-    decode_tokens,
-    encode_to_token_ids,
+    encode_with_offsets,
 )
 
 DEFAULT_OVERLAP_TOKENS = 50
@@ -25,32 +24,11 @@ class TextChunk:
     token_count: int
 
 
-# T2.2: text-normalization leak audit (2026-05-12)
-#
-# The encode -> slice -> decode round-trip performed by chunk_section_text for
-# multi-window chunks destroys text fidelity in two ways:
-#
-#   1. Case loss: BAAI/bge-small-en-v1.5 uses an uncased WordPiece vocabulary.
-#      tok.decode() reconstructs tokens in their lowercased canonical form, so
-#      "Lynch syndrome (CRC)" becomes "lynch syndrome ( crc )".
-#
-#   2. Whitespace artifacts around punctuation: WordPiece tokenizes "(" and ")"
-#      as standalone sub-word tokens.  tok.decode() inserts spaces between every
-#      token, producing "( crc )" instead of "(CRC)" and "low - density" instead
-#      of "low-density".
-#
-# Only the multi-window path (len(token_ids) > max_tokens) is affected; the
-# fast-path at the early-return above returns the original string verbatim.
-# Because GeneReviews chapter sections are routinely longer than 510 tokens,
-# most stored passages are mangled.
-#
-# Evidence (probe run 2026-05-12):
-#   input:  'Lynch syndrome (CRC) and low-density lipoprotein cholesterol (LDL-C).'
-#   output: 'lynch syndrome ( crc ) and low - density lipoprotein cholesterol ( ldl - c ).'
-#
-# Fix: replace decode_tokens(window) with a character-span slice of the
-# original text, using the token offsets returned by the tokenizer.  This
-# eliminates the decode round-trip entirely.  Planned for next commit (Task 27).
+# Earlier versions used decode_tokens(window) to recover text from each token
+# window, which lossily lowercased everything and inserted spaces around
+# punctuation tokens (e.g. "Lynch syndrome (CRC)" became
+# "lynch syndrome ( crc )").  We now slice the original text by character
+# offsets returned by the tokenizer, eliminating the decode round-trip.
 def chunk_section_text(
     text: str,
     *,
@@ -65,7 +43,7 @@ def chunk_section_text(
     if not text.strip():
         return []
 
-    token_ids = encode_to_token_ids(text)
+    token_ids, offsets = encode_with_offsets(text)
     if len(token_ids) <= max_tokens:
         return [TextChunk(chunk_index=0, text=text, token_count=len(token_ids))]
 
@@ -77,15 +55,18 @@ def chunk_section_text(
     start = 0
     index = 0
     while start < len(token_ids):
-        window = token_ids[start : start + max_tokens]
+        end = min(start + max_tokens, len(token_ids))
+        window_len = end - start
+        char_start = offsets[start][0]
+        char_end = offsets[end - 1][1]
         chunks.append(
             TextChunk(
                 chunk_index=index,
-                text=decode_tokens(window),
-                token_count=len(window),
+                text=text[char_start:char_end],
+                token_count=window_len,
             )
         )
-        if start + max_tokens >= len(token_ids):
+        if end >= len(token_ids):
             break
         start += stride
         index += 1

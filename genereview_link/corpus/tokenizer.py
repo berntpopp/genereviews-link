@@ -40,3 +40,25 @@ def decode_tokens(token_ids: list[int]) -> str:
     """Inverse of encode_to_token_ids."""
     tok = bge_tokenizer()
     return str(tok.decode(token_ids, skip_special_tokens=True))
+
+
+def encode_with_offsets(text: str) -> tuple[list[int], list[tuple[int, int]]]:
+    """Return token ids and their character-span offsets in *text*.
+
+    Each offset tuple ``(start, end)`` is the half-open character range of the
+    corresponding token in the original *text* string.  Special tokens are
+    excluded (``add_special_tokens=False``).
+
+    Use this instead of ``encode_to_token_ids`` + ``decode_tokens`` when you
+    need to recover the original text for a token window: slice
+    ``text[offsets[i][0]:offsets[j][1]]`` rather than calling
+    ``decode_tokens``, which would lossily lowercase and insert spaces around
+    punctuation.
+    """
+    tok = bge_tokenizer()
+    encoding = tok(text, add_special_tokens=False, return_offsets_mapping=True)
+    token_ids: list[int] = list(encoding["input_ids"])
+    offsets: list[tuple[int, int]] = [
+        (int(start), int(end)) for start, end in encoding["offset_mapping"]
+    ]
+    return token_ids, offsets
