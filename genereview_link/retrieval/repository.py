@@ -472,8 +472,8 @@ class GeneReviewRepository:
         """Return chapter-level metadata with per-section passage counts.
 
         Emits all canonical sections (including zero-count ones) so callers
-        can see exactly what is available. ``table_count`` is a Phase-7
-        placeholder and is always 0 here.
+        can see exactly what is available. ``table_count`` reflects the real
+        number of table-type passages stored for this chapter.
         """
         async with self._acquire() as conn:
             await conn.execute("set search_path to genereview, public")
@@ -498,6 +498,12 @@ class GeneReviewRepository:
                 nbk_id,
             )
 
+            table_count = await conn.fetchval(
+                "select count(*)::int from genereview_passages "
+                "where nbk_id=$1 and passage_type='table'",
+                nbk_id,
+            )
+
         counts = {r["chapter_section"]: r["cnt"] for r in section_rows}
         sections = tuple(
             SectionSummaryRow(section=name, passage_count=counts.get(name, 0))
@@ -510,7 +516,7 @@ class GeneReviewRepository:
             chapter_last_updated=chapter["last_updated_date"],
             gene_symbols=tuple(chapter["gene_symbols"] or ()),
             sections=sections,
-            table_count=0,  # placeholder; replaced in Phase 7
+            table_count=table_count or 0,
         )
 
     async def get_table(self, nbk_id: str, table_id: str) -> TableRow | None:

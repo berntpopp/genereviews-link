@@ -105,12 +105,50 @@ async def test_get_chapter_metadata_passage_counts(pool: asyncpg.Pool) -> None:
 
 
 async def test_get_chapter_metadata_table_count_is_zero(pool: asyncpg.Pool) -> None:
-    """table_count is 0 (Phase-7 placeholder)."""
+    """table_count is 0 for a chapter that has only narrative passages."""
     await _seed(pool)
     repo = GeneReviewRepository(pool)
     meta = await repo.get_chapter_metadata("NBKMETA")
     assert meta is not None
     assert meta.table_count == 0
+
+
+# Seed SQL for a chapter that has table-type passages
+_SEED_SQL_TABLE_CHAPTER = """
+insert into genereview.genereview_chapters
+    (nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
+     authors, nxml_relpath, corpus_version, last_updated_date)
+values ('NBKTBL', 'TBTG', 'TableGene Overview', null,
+        ARRAY['TBTG1'], ARRAY['700001']::text[], ARRAY['B. Author']::text[],
+        'NBKTBL.xml', '2026-01-01', DATE '2025-07-01')
+"""
+
+_SEED_SQL_TABLE_PASSAGES = """
+insert into genereview.genereview_passages
+    (nbk_id, passage_id, chapter_section, heading_path,
+     section_level, chunk_index, text, text_hash,
+     char_count, token_estimate, corpus_version,
+     passage_type, table_id, table_data)
+values
+    ('NBKTBL', 'NBKTBL:0001', 'diagnosis', 'Diagnosis', 1, 0, 'Narrative p0', 'th0', 12, 2, '2026-01-01',
+     'narrative', null, null),
+    ('NBKTBL', 'NBKTBL:0002', 'diagnosis', 'Diagnosis', 1, 1, 'Table p0', 'th1', 8, 2, '2026-01-01',
+     'table', 'T1', '{"caption":"Cap1","header":["A","B"],"rows":[["1","2"]]}'),
+    ('NBKTBL', 'NBKTBL:0003', 'diagnosis', 'Diagnosis', 1, 2, 'Table p1', 'th2', 8, 2, '2026-01-01',
+     'table', 'T2', '{"caption":"Cap2","header":["X","Y"],"rows":[["a","b"]]}')
+"""
+
+
+async def test_get_chapter_metadata_table_count_populated(pool: asyncpg.Pool) -> None:
+    """table_count reflects the real number of table passages for a chapter."""
+    await _seed(pool)
+    async with pool.acquire() as conn:
+        await conn.execute(_SEED_SQL_TABLE_CHAPTER)
+        await conn.execute(_SEED_SQL_TABLE_PASSAGES)
+    repo = GeneReviewRepository(pool)
+    meta = await repo.get_chapter_metadata("NBKTBL")
+    assert meta is not None
+    assert meta.table_count == 2
 
 
 async def test_get_chapter_metadata_gene_symbols_null_safe(pool: asyncpg.Pool) -> None:
