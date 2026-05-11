@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<book-part xmlns:xlink="http://www.w3.org/1999/xlink" book-part-type="chapter" id="brca1">
+  <book-part-meta>
+    <book-part-id pub-id-type="pmid">20301425</book-part-id>
+    <title-group>
+      <title>BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer</title>
+    </title-group>
+    <contrib-group>
+      <contrib contrib-type="author"><name><surname>Petrucelli</surname><given-names>N</given-names></name></contrib>
+      <contrib contrib-type="author"><name><surname>Daly</surname><given-names>MB</given-names></name></contrib>
+    </contrib-group>
+    <pub-date pub-type="initial"><day>4</day><month>9</month><year>1998</year></pub-date>
+    <pub-date pub-type="updated"><day>21</day><month>9</month><year>2023</year></pub-date>
+  </book-part-meta>
+  <body>
+    <sec id="summary">
+      <title>Summary</title>
+      <p>BRCA1 and BRCA2 are tumor suppressor genes.</p>
+      <p>Pathogenic variants confer increased lifetime risk of breast and ovarian cancer.</p>
+    </sec>
+    <sec id="diagnosis">
+      <title>Diagnosis</title>
+      <p>Molecular genetic testing is required for diagnosis.</p>
+      <sec id="diagnosis-establishing">
+        <title>Establishing the Diagnosis</title>
+        <p>Multi-gene panel testing is the preferred approach.</p>
+      </sec>
+    </sec>
+    <sec id="management">
+      <title>Management</title>
+      <p>Risk-reducing surgery may be considered.</p>
+    </sec>
+  </body>
+</book-part>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<book-part book-part-type="chapter" id="nopub">
+  <book-part-meta>
+    <title-group><title>Test Chapter Without Dates</title></title-group>
+  </book-part-meta>
+  <body><sec><title>Summary</title><p>Body text.</p></sec></body>
+</book-part>
