@@ -65,7 +65,7 @@ safety framing, structured 404s.
 
 | Phase | Theme | Risk | Sequencing |
 |-------|-------|------|------------|
-| Phase 5 — Trust | Backfill `chapter_last_updated`, wire `rrf_score`/`dense_rank`, flip `exclude=score_breakdown` default, lock `exclude` bug | Low (additive) | First |
+| Phase 5 — Trust | Backfill `chapter_last_updated`, wire `rrf_score`/`dense_rank`, flip `exclude=score_breakdown` default, lock `exclude` bug | Low (one response-shape change, no validator changes) | First |
 | Phase 6 — Discovery | `get_passage(neighbors)`, `get_chapter_metadata`, empty-result diagnostics, drop `concatenated_text` default | Low-medium (one breaking shape change) | Second |
 | Phase 7 — Content | Tables as `passage_type="table"` passages + `get_table` tool, fix tokenizer-leak normalization, verify section ordering, full corpus rebuild | High (DB migration + rebuild + passage_id shifts) | Third |
 | Phase 8 — Polish | `get_license` as MCP resource, latency hints in tool descriptions, structured 422 for nested-q, HGNC alias guidance, optional dedup on chapter section | Low | Fourth |
@@ -141,12 +141,18 @@ waste.
 - `exclude: list[Literal["score_breakdown", "heading_path"]]` schema
   unchanged. `exclude=["score_breakdown"]` still validates but is now a
   redundant no-op (the field is excluded by default anyway). This keeps
-  Phase 5 truly additive — old callers that explicitly excluded
-  `score_breakdown` are unaffected.
+  the parameter validator backward-compatible.
 
 **Why parallel `include` rather than just inverting `exclude`:**
-keeps the parameters semantically clear (each affects a disjoint field
-set when combined with the new default).
+keeps the parameters semantically clear — `include` opts into
+default-off fields (only `score_breakdown` today; future expansion as
+fields are added), `exclude` opts out of default-on fields (only
+`heading_path` today). `heading_path` is intentionally not includable
+because it's already on by default.
+
+**Breaking change for callers that parse `score_breakdown`
+unconditionally:** the field is no longer present unless explicitly
+requested. See the breaking-changes table.
 
 **Server instructions:** updated to mention `include=["score_breakdown"]`
 for ranker debugging.
@@ -187,11 +193,19 @@ must return valid responses with the expected fields present/absent.
 
 **Constraints:**
 
-- `neighbors: int` in `[0, 5]`, default `0`. With `0`, the focal-passage
-  shape is preserved and both neighbor arrays are empty.
+- `neighbors: int` in `[0, 5]`, default `0`. The wrapper response shape
+  above is **always** returned — when `neighbors=0`, both neighbor
+  arrays are empty and both `has_more_*` flags reflect whether the
+  focal passage sits at a boundary. This is a **breaking shape change**
+  for callers that destructure the previous flat `PassageDetail`
+  response (see breaking-changes table). The focal passage's own fields
+  are unchanged in their nested location under `passage`.
 - `cross_sections: bool`, default `false`. Neighbors stop at section
   boundaries. With `true`, they wrap to the previous/next section in
-  `chunk_index` order.
+  `chunk_index` order **within the same chapter**. Neighbors never
+  cross chapter boundaries regardless of `cross_sections`;
+  `has_more_after=false` at the final chunk of the chapter and
+  `has_more_before=false` at the first chunk.
 - `has_more_before`/`has_more_after` flag the LLM that more context
   exists past the returned window.
 
@@ -256,14 +270,12 @@ When `len(results) == 0`, attach a `diagnostics` block to `_meta`:
   "attribution": "...",
   "corpus_version": "2026-05-10",
   "diagnostics": {
-    "lexical_hits": 0,
-    "lexical_hits_after_filters": 0,
-    "dense_max_score": 0.42,                 // null if rerank != "rrf"
-    "applied_filters": ["gene=BRCA9", "sections=management"],
+    "lexical_hits": 12,                       // pre-filter ts_query match count
+    "lexical_hits_after_filters": 0,          // post gene/sections/nbk_id filter
+    "applied_filters": ["gene=BRCA1", "sections=management"],
     "suggestions": [
-      "drop the gene filter (no chapters indexed for 'BRCA9' — did you mean BRCA1 or BRCA2?)",
-      "broaden q (current query is very specific)",
-      "try sections=clinical_features instead of management"
+      "the gene 'BRCA1' is indexed but no passages match within sections=management; try removing the sections filter",
+      "broaden q (current query is very specific)"
     ]
   }
 }
@@ -276,13 +288,21 @@ When `len(results) == 0`, attach a `diagnostics` block to `_meta`:
 
 **Suggestion generation:** rule-based, not LLM-generated. Three rules:
 
-1. If `applied_filters` includes `gene=X` and
-   `lexical_hits_after_filters < lexical_hits / 10`, suggest dropping
-   the gene filter. Optionally Levenshtein-suggest a close gene from
-   indexed symbols.
+1. If `applied_filters` includes `gene=X`, `X` is a valid indexed
+   symbol (T4.6 ensures invalid symbols 400 out before reaching this
+   path), and `lexical_hits_after_filters < lexical_hits / 10`,
+   suggest dropping the gene filter. **Note:** unknown-symbol
+   diagnostics are owned by T4.6 (Phase 8); after Phase 8 ships, this
+   rule only fires for valid-but-unmatching gene filters.
 2. If `len(q) > 80` chars or query has >8 tokens, suggest broadening.
 3. If `applied_filters` includes `sections=X` and `lexical_hits` is
    non-zero pre-filter but post-filter is zero, suggest other sections.
+
+**Note on `dense_max_score`:** intentionally not included. On a
+zero-result path the dense reranker has no candidates (it only operates
+on lexical hits), so the field would always be null and provide no
+signal. A future enhancement could add an independent dense-only probe
+across the corpus, but that's out of scope.
 
 **Acceptance:** Integration tests: zero-result query returns
 `diagnostics` with non-empty suggestions; non-zero result query has no
@@ -322,14 +342,20 @@ create index passages_type_chapter_idx
   on public.genereview_passages(nbk_id, passage_type);
 
 alter table public.genereview_passages
-  add column table_data jsonb;
-create index passages_table_data_idx
-  on public.genereview_passages(nbk_id, table_data)
+  add column table_id text;     -- non-null only for passage_type='table'
+create unique index passages_table_id_unique_idx
+  on public.genereview_passages(nbk_id, table_id)
   where passage_type = 'table';
+
+alter table public.genereview_passages
+  add column table_data jsonb;  -- non-null only for passage_type='table'
 ```
 
 `default 'narrative'` makes the migration safe for existing rows.
-`table_data` is populated only for `passage_type='table'`.
+`table_id` and `table_data` are populated only for `passage_type='table'`.
+The unique partial index guarantees `(nbk_id, table_id)` is the lookup
+key for `get_table` and prevents duplicate table-passages within a
+chapter.
 
 **Scraper changes (`corpus/nxml.py`):**
 
@@ -360,6 +386,13 @@ break that.
 Caption + first 1-2 rows usually carry enough semantics for retrieval.
 For very large tables this may underperform; the structured `get_table`
 tool is the precision escape hatch.
+
+**Token budget for embedding:** the BGE model's input window caps
+embedding input. Tables exceeding ~480 tokens of serialized markdown
+(caption + header + rows) are truncated for the *embedding pass only*
+(caption + header + as many rows as fit, in source order). The full
+structured table is always available via `get_table` and the full
+markdown is preserved in the `text` column for keyword retrieval.
 
 **`get_table(nbk_id, table_id)` tool:**
 
@@ -477,14 +510,16 @@ already say "call once per session" — textbook MCP resource use case.
 
 ### T4.4 — Latency hints in tool descriptions
 
-Measure during Phase 5 smoke tests and add one-line hints to each tool
-description:
+Collect p50 latency measurements **during each phase's smoke tests**
+(not just Phase 5, since `get_chapter_metadata` doesn't exist until
+Phase 6 and `get_table` doesn't exist until Phase 7). Phase 8
+consolidates the measurements into final tool-description hints:
 
-- `search_passages` p50: rrf vs lexical vs off
-- `get_passage` p50: with/without `neighbors=3`
-- `get_chapter_section` p50
-- `get_chapter_metadata` p50
-- `get_table` p50
+- `search_passages` p50: rrf vs lexical vs off (Phase 5 measurement)
+- `get_passage` p50: with/without `neighbors=3` (Phase 6 measurement)
+- `get_chapter_section` p50 (Phase 6 measurement, post-payload-trim)
+- `get_chapter_metadata` p50 (Phase 6 measurement)
+- `get_table` p50 (Phase 7 measurement, post-rebuild)
 
 Format example: `"Latency: rrf ~150ms p50, lexical ~30ms p50, off
 ~10ms p50."` Numbers go in FastAPI route docstrings (which become MCP
@@ -503,17 +538,26 @@ object instead of a query string" and returns structured
 ### T4.6 — HGNC alias guidance in gene-filter 400s
 
 Today gene filtering silently returns empty when the symbol doesn't
-match an indexed canonical symbol.
+match an indexed canonical symbol. Phase 6's empty-result diagnostics
+(T3.3) partially addressed this for the in-result-set path; T4.6
+intercepts earlier with a structured 400.
 
 - Validate `gene` against the indexed-symbols set at request time
   (cached in `app.state` alongside `corpus_version`).
 - On miss, return 400 with `code="gene_not_indexed"`,
   `recovery_hint="use the canonical HGNC symbol; aliases (e.g., 'hMLH1'
-  for 'MLH1') are not supported"`, plus Levenshtein-1 close matches in
+  for 'MLH1') are not supported"`, plus rapidfuzz close matches in
   `next_commands`.
 
 Symbol-set query: `select distinct unnest(gene_symbols) from
 genereview_chapters`.
+
+**Intentional behavior change vs T3.3:** after T4.6 ships, requests
+with an unknown gene symbol 400 immediately and never reach the search
+path. T3.3's empty-result diagnostics for invalid genes become
+unreachable (correctly — T4.6 owns that diagnostic now). T3.3's gene
+suggestion rule is updated in this phase to only fire for
+valid-but-unmatching symbols.
 
 ### T4.7 — Optional chunk overlap dedup
 
@@ -563,9 +607,11 @@ rarely used because clients don't surface prompts well.
 
 Phase 5:
 
-- Top RRF hit has non-null `score_breakdown.rrf_score`
+- Top RRF hit has non-null `score_breakdown.rrf_score` when
+  `include=score_breakdown`
 - `score_breakdown` absent by default
-- `chapter.last_updated_date` non-null after Phase 7 rebuild
+- Unit-test parser populates `chapter.last_updated_date` from a fixture
+  NXML (corpus-level backfill is gated on the Phase 7 rebuild)
 
 Phase 6:
 
@@ -577,6 +623,7 @@ Phase 6:
 Phase 7:
 
 - `count(*) where passage_type='table'` > 0
+- `count(*) where last_updated_date is not null` ~ 882
 - `get_table(NBK1247, "table-1")` returns structured rows
 - Sample passage text contains proper case + no stray spacing
 
@@ -599,22 +646,39 @@ Phase 8:
 
 | # | Change | Phase | Caller impact |
 |---|---|---|---|
-| 1 | `get_chapter_section` no longer returns `concatenated_text` by default | 6 | Add `?include=concatenated_text` if you relied on it |
-| 2 | Some narrative `passage_id`s shift `chunk_index` | 7 | Re-resolve cached IDs via `search_passages` |
-| 3 | `get_license` MCP tool removed (REST route stays) | 8 | MCP clients use `genereview://license` resource |
+| 1 | `score_breakdown` removed from default `search_passages` response | 5 | Pass `include=score_breakdown` if you parsed the field unconditionally |
+| 2 | `get_passage` response is always wrapped (`{passage, neighbors_*, has_more_*}`) | 6 | Read focal fields from `response.passage.*` instead of the top level |
+| 3 | `get_chapter_section` no longer returns `concatenated_text` by default | 6 | Add `?include=concatenated_text` if you relied on it |
+| 4 | Some narrative `passage_id`s shift `chunk_index` | 7 | Re-resolve cached IDs via `search_passages` |
+| 5 | Ordinal `table_id`s (`"table-N"`) may shift if NCBI inserts/removes a table upstream between rebuilds | 7 | Re-resolve table IDs via `get_chapter_metadata` after each rebuild; prefer NXML-attribute IDs when available |
+| 6 | `get_license` MCP tool removed (REST route stays) | 8 | MCP clients use `genereview://license` resource |
+| 7 | Invalid gene symbol now returns 400 instead of empty results | 8 | Catch `code="gene_not_indexed"` and use suggested close matches |
 
-Document all three in release notes / commit messages.
+Document all of these in release notes / commit messages.
+
+**Phase 5 framing correction:** Phase 5 is mostly additive but item #1
+above is a true breaking change to the `search_passages` response
+shape. The phase remains low-risk because the schema validators stay
+backward-compatible (no rejected requests), only response parsing
+changes.
 
 ## Effort estimate
 
-- Phase 5: 1-2 days, ~3-4 commits, additive only.
+- Phase 5: 1-2 days, ~3-4 commits.
 - Phase 6: 3-5 days, ~6 commits, one breaking shape change.
-- Phase 7: 1-2 weeks (mostly investigation + rebuild verification + DB
+- Phase 7: 7-14 days (mostly investigation + rebuild verification + DB
   migration + scraper changes), ~10-12 commits.
 - Phase 8: 2-3 days, ~5 commits, one MCP-tool removal.
 
-Total: ~3 weeks across the four phases, with each phase shippable
-independently.
+Total: ~13-24 working days (3-5 weeks calendar) across the four phases,
+with each phase shippable independently.
+
+## Library decisions
+
+- **Fuzzy string matching for gene-symbol close-matches (T3.3, T4.6):**
+  use `rapidfuzz`. Pure-Python wheel, no compile step, MIT-licensed,
+  faster than `python-Levenshtein`, actively maintained. Check
+  `uv.lock` first; add as a direct dependency in Phase 6.
 
 ## Open questions for implementer
 
@@ -625,6 +689,3 @@ independently.
 - Whether `get_chapter_metadata` should also expose dense-embedding
   health (e.g., "this chapter has embeddings: true"). Defer to Phase 6
   implementer judgment.
-- Levenshtein library choice for gene-symbol close-matches in T3.3
-  and T4.6. Recommend `python-Levenshtein` for speed; `rapidfuzz` if
-  already a transitive dep (check `uv.lock`).
