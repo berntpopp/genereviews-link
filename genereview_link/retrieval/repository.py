@@ -9,6 +9,7 @@ from typing import Any
 import asyncpg
 
 from genereview_link.config import settings
+from genereview_link.models.sections import SECTION_NAMES
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +65,22 @@ class LexicalPassageRow:
     snippet: str | None = None
     dense_rank: int | None = None
     rrf_score: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SectionSummaryRow:
+    section: str
+    passage_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ChapterMetadataRow:
+    nbk_id: str
+    title: str
+    chapter_last_updated: date | None
+    gene_symbols: tuple[str, ...]
+    sections: tuple[SectionSummaryRow, ...]
+    table_count: int
 
 
 class GeneReviewRepository:
@@ -446,6 +463,51 @@ class GeneReviewRepository:
         )
         after_clipped = [self._row_to_passage(r) for r in after_rows[:after]]
         return focal, before_clipped, after_clipped, has_more_before, has_more_after
+
+    async def get_chapter_metadata(self, nbk_id: str) -> ChapterMetadataRow | None:
+        """Return chapter-level metadata with per-section passage counts.
+
+        Emits all canonical sections (including zero-count ones) so callers
+        can see exactly what is available. ``table_count`` is a Phase-7
+        placeholder and is always 0 here.
+        """
+        async with self._acquire() as conn:
+            await conn.execute("set search_path to genereview, public")
+            chapter = await conn.fetchrow(
+                """
+                select nbk_id, title, last_updated_date, gene_symbols
+                  from genereview_chapters
+                 where nbk_id = $1
+                """,
+                nbk_id,
+            )
+            if chapter is None:
+                return None
+
+            section_rows = await conn.fetch(
+                """
+                select chapter_section, count(*)::int as cnt
+                  from genereview_passages
+                 where nbk_id = $1
+                 group by chapter_section
+                """,
+                nbk_id,
+            )
+
+        counts = {r["chapter_section"]: r["cnt"] for r in section_rows}
+        sections = tuple(
+            SectionSummaryRow(section=name, passage_count=counts.get(name, 0))
+            for name in SECTION_NAMES
+        )
+
+        return ChapterMetadataRow(
+            nbk_id=chapter["nbk_id"],
+            title=chapter["title"],
+            chapter_last_updated=chapter["last_updated_date"],
+            gene_symbols=tuple(chapter["gene_symbols"] or ()),
+            sections=sections,
+            table_count=0,  # placeholder; replaced in Phase 7
+        )
 
     async def dense_scores_for_passages(
         self,
