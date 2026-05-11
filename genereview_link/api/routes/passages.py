@@ -6,11 +6,12 @@ boot). Set GENEREVIEW_EAGER_LOAD_BGE=true to use the real SentenceTransformer.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from genereview_link.models.genereview_models import RankedPassage, ScoreBreakdown
+from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.embeddings import EmbeddingProvider
 from genereview_link.retrieval.repository import GeneReviewRepository
 from genereview_link.retrieval.rerank import (
@@ -88,7 +89,9 @@ async def search_passages(
                 passage_id=r.passage.passage_id,
                 nbk_id=r.passage.nbk_id,
                 gene_symbols=list(r.gene_symbols),
-                chapter_section=r.passage.chapter_section,
+                chapter_title=r.passage.chapter_title or "",
+                chapter_last_updated=r.passage.chapter_last_updated,
+                chapter_section=cast(SectionName, r.passage.chapter_section),
                 heading_path=r.passage.heading_path,
                 text=r.passage.text,
                 char_count=len(r.passage.text),

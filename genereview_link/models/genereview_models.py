@@ -3,9 +3,11 @@
 Defines structured data models for validation and serialization.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
+
+from genereview_link.models.sections import SectionName
 
 
 class GeneReviewSection(BaseModel):
@@ -172,13 +174,38 @@ class ScoreBreakdown(BaseModel):
 
 
 class RankedPassage(BaseModel):
-    """A passage returned by /passages/search, annotated with ranking scores."""
+    """A passage returned by /passages/search, annotated with ranking scores.
+
+    Either ``text`` or ``snippet`` is populated, never both. The route's
+    ``mode`` query parameter controls which:
+    - ``mode="brief"`` (default) → ``snippet`` populated, ``text`` null.
+    - ``mode="full"`` → ``text`` populated, ``snippet`` null.
+    """
 
     passage_id: str
     nbk_id: str
     gene_symbols: list[str] = []
-    chapter_section: str
+    chapter_title: str
+    chapter_last_updated: date | None = None
+    chapter_section: SectionName
     heading_path: str | None = None
-    text: str
+    text: str | None = None
+    snippet: str | None = None
     char_count: int
     score_breakdown: ScoreBreakdown
+
+
+class PassageDetail(BaseModel):
+    """Returned by GET /passages/{passage_id}."""
+
+    passage_id: str
+    nbk_id: str
+    chapter_title: str
+    chapter_last_updated: date | None = None
+    chapter_section: SectionName
+    heading_path: str | None = None
+    section_level: int
+    chunk_index: int
+    text: str
+    char_count: int
+    gene_symbols: list[str] = []
