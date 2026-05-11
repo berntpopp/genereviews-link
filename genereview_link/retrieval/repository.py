@@ -49,7 +49,7 @@ class PassageRow:
 
 @dataclass(frozen=True, slots=True)
 class LexicalPassageRow:
-    """A passage with its lexical scores attached.
+    """A passage with its lexical and (optional) dense/RRF scores attached.
 
     Gene symbols live on ``passage.gene_symbols`` — there is no top-level
     duplicate field. Read them via ``row.passage.gene_symbols``.
@@ -62,6 +62,8 @@ class LexicalPassageRow:
     recall_overlap_count: int
     lexical_rank: float
     snippet: str | None = None
+    dense_rank: int | None = None
+    rrf_score: float | None = None
 
 
 class GeneReviewRepository:
