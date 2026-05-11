@@ -42,6 +42,9 @@ class PassageRow:
     section_level: int
     chunk_index: int
     text: str
+    chapter_title: str | None = None
+    chapter_last_updated: date | None = None
+    gene_symbols: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +138,8 @@ class GeneReviewRepository:
                         p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
                         p.section_level, p.chunk_index, p.text,
                         c.gene_symbols,
+                        c.title as chapter_title,
+                        c.last_updated_date as chapter_last_updated,
                         ts_rank_cd(p.search_vector, q.phrase_query) as phrase_rank,
                         ts_rank_cd(p.search_vector, q.strict_query) as strict_rank,
                         ts_rank_cd(p.search_vector, q.recall_query) as recall_rank,
@@ -161,6 +166,7 @@ class GeneReviewRepository:
                 select
                     nbk_id, passage_id, chapter_section, heading_path, section_level,
                     chunk_index, text, gene_symbols,
+                    chapter_title, chapter_last_updated,
                     phrase_rank, strict_rank, recall_rank, recall_overlap_count,
                     (phrase_rank * 3.0 + strict_rank * 2.0 + recall_rank)
                       * case
@@ -194,6 +200,9 @@ class GeneReviewRepository:
                     section_level=r["section_level"],
                     chunk_index=r["chunk_index"],
                     text=r["text"],
+                    chapter_title=r["chapter_title"],
+                    chapter_last_updated=r["chapter_last_updated"],
+                    gene_symbols=tuple(r["gene_symbols"] or ()),
                 ),
                 phrase_rank=float(r["phrase_rank"]),
                 strict_rank=float(r["strict_rank"]),
@@ -254,11 +263,15 @@ class GeneReviewRepository:
             await conn.execute("set search_path to genereview, public")
             rows = await conn.fetch(
                 """
-                select nbk_id, passage_id, chapter_section, heading_path,
-                       section_level, chunk_index, text
-                  from genereview_passages
-                 where nbk_id = $1 and chapter_section = $2
-                 order by chunk_index
+                select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
+                       p.section_level, p.chunk_index, p.text,
+                       c.title as chapter_title,
+                       c.last_updated_date as chapter_last_updated,
+                       c.gene_symbols
+                  from genereview_passages p
+                  join genereview_chapters c on c.nbk_id = p.nbk_id
+                 where p.nbk_id = $1 and p.chapter_section = $2
+                 order by p.chunk_index
                 """,
                 nbk_id,
                 chapter_section,
@@ -272,9 +285,43 @@ class GeneReviewRepository:
                 section_level=r["section_level"],
                 chunk_index=r["chunk_index"],
                 text=r["text"],
+                chapter_title=r["chapter_title"],
+                chapter_last_updated=r["chapter_last_updated"],
+                gene_symbols=tuple(r["gene_symbols"] or ()),
             )
             for r in rows
         ]
+
+    async def get_passage(self, passage_id: str) -> PassageRow | None:
+        async with self._acquire() as conn:
+            await conn.execute("set search_path to genereview, public")
+            row = await conn.fetchrow(
+                """
+                select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
+                       p.section_level, p.chunk_index, p.text,
+                       c.title as chapter_title,
+                       c.last_updated_date as chapter_last_updated,
+                       c.gene_symbols
+                  from genereview_passages p
+                  join genereview_chapters c on c.nbk_id = p.nbk_id
+                 where p.passage_id = $1
+                """,
+                passage_id,
+            )
+        if row is None:
+            return None
+        return PassageRow(
+            nbk_id=row["nbk_id"],
+            passage_id=row["passage_id"],
+            chapter_section=row["chapter_section"],
+            heading_path=row["heading_path"],
+            section_level=row["section_level"],
+            chunk_index=row["chunk_index"],
+            text=row["text"],
+            chapter_title=row["chapter_title"],
+            chapter_last_updated=row["chapter_last_updated"],
+            gene_symbols=tuple(row["gene_symbols"] or ()),
+        )
 
     async def dense_scores_for_passages(
         self,
