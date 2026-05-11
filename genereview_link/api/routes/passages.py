@@ -63,8 +63,9 @@ async def get_embedding_provider(request: Request) -> EmbeddingProvider:
         "- `lexical`: skip the dense pass; lexical scoring only. "
         "Faster - saves the embed + HNSW probe round-trip. Use for "
         "latency-critical exact-term lookups.\n"
-        "- `off`: raw BM25-style lexical scores, no reranking. "
-        "Debugging only.\n\n"
+        "- `off`: lexical-only, NO section_priority tiebreaker. Returns "
+        "rows in the repository's own lexical_rank order. Debugging / "
+        "diagnostic use only.\n\n"
         "Use `mode='brief'` (default) for triage - returns "
         "~300-500-char `ts_headline` snippets with **bold** highlights "
         "around query terms. Switch to `mode='full'` once you've "
@@ -164,7 +165,12 @@ async def search_passages(
             [(r.passage.nbk_id, r.passage.passage_id) for r in lex],
             model_table=active_table,
         )
-    ranked, _diag = rerank_with_embeddings(lex, dense_scores)
+
+    if rerank == "off":
+        # Truly raw lexical order from the repo (no section_priority tiebreak).
+        ranked = list(lex)
+    else:
+        ranked, _diag = rerank_with_embeddings(lex, dense_scores)
     ranked = ranked[:limit]
 
     out: list[RankedPassage] = []

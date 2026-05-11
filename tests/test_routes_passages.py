@@ -141,6 +141,55 @@ class TestPassagesSearchRoute:
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
+    async def test_rerank_off_preserves_repo_order(
+        self, http_client: AsyncClient, fake_repo: Any
+    ) -> None:
+        """rerank=off bypasses section_priority; rows arrive in repo order."""
+        # First row is "references" (high section_priority), second is "summary".
+        # With section_priority tiebreaker, summary should win;
+        # with rerank=off, the repo order is preserved.
+        row_refs = LexicalPassageRow(
+            passage=PassageRow(
+                nbk_id="NBK1",
+                passage_id="p_refs",
+                chapter_section="references",
+                heading_path="References",
+                section_level=1,
+                chunk_index=0,
+                text="ref text",
+            ),
+            phrase_rank=1.0,
+            strict_rank=0.0,
+            recall_rank=0.0,
+            recall_overlap_count=1,
+            lexical_rank=1.0,
+            gene_symbols=(),
+        )
+        row_summary = LexicalPassageRow(
+            passage=PassageRow(
+                nbk_id="NBK1",
+                passage_id="p_summary",
+                chapter_section="summary",
+                heading_path="Summary",
+                section_level=1,
+                chunk_index=0,
+                text="summary text",
+            ),
+            phrase_rank=1.0,
+            strict_rank=0.0,
+            recall_rank=0.0,
+            recall_overlap_count=1,
+            lexical_rank=1.0,
+            gene_symbols=(),
+        )
+        fake_repo.search_passages.return_value = [row_refs, row_summary]
+        resp = await http_client.get("/passages/search?q=BRCA1&rerank=off")
+        assert resp.status_code == 200
+        results = resp.json()["results"]
+        assert results[0]["passage_id"] == "p_refs"
+        assert results[1]["passage_id"] == "p_summary"
+
+    @pytest.mark.asyncio
     async def test_503_when_repository_not_set(
         self, app: FastAPI, http_client: AsyncClient
     ) -> None:
