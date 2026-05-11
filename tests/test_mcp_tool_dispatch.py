@@ -182,11 +182,11 @@ async def test_get_passage_uses_app_state_repository() -> None:
         chapter_last_updated=date(2025, 12, 1),
         gene_symbols=("TG",),
     )
-    app.state.repository.get_passage = AsyncMock(return_value=pr)
+    app.state.repository.get_passage_window = AsyncMock(return_value=(pr, [], [], False, False))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get("/passages/NBK1:0001")
     assert resp.status_code == 200, resp.text
-    assert resp.json()["chapter_title"] == "Test"
+    assert resp.json()["passage"]["chapter_title"] == "Test"
 
 
 def test_server_instructions_are_set(monkeypatch: pytest.MonkeyPatch) -> None:

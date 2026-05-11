@@ -15,13 +15,14 @@ from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.models.genereview_models import (
     PassageDetail,
     PassageSearchResponse,
+    PassageWindowResponse,
     RankedPassage,
     ResponseMeta,
     ScoreBreakdown,
 )
 from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.embeddings import EmbeddingProvider
-from genereview_link.retrieval.repository import GeneReviewRepository
+from genereview_link.retrieval.repository import GeneReviewRepository, PassageRow
 from genereview_link.retrieval.rerank import (
     SECTION_PRIORITY,
     rerank_with_embeddings,
@@ -246,9 +247,17 @@ async def search_passages(
 
 @router.get(
     "/passages/{passage_id}",
-    response_model=PassageDetail,
+    response_model=PassageWindowResponse,
+    response_model_by_alias=True,
     operation_id="get_passage",
-    summary="Fetch a single GeneReviews passage by its passage_id.",
+    summary="Fetch a GeneReviews passage by its passage_id, with optional context window.",
+    description=(
+        "Returns the focal passage wrapped in a ``PassageWindowResponse`` envelope. "
+        "Use ``neighbors`` (0–5) to fetch adjacent chunks before and after the focal "
+        "passage within the same section. Set ``cross_sections=true`` to allow neighbors "
+        "to span section boundaries within the same chapter.\n\n"
+        "The ``_meta`` field carries attribution and the active corpus version."
+    ),
 )
 async def get_passage(
     passage_id: Annotated[
@@ -262,10 +271,33 @@ async def get_passage(
             pattern=r"^NBK\d+:\d{4}$",
         ),
     ],
+    neighbors: Annotated[
+        int,
+        Query(
+            ge=0,
+            le=5,
+            description=(
+                "Fetch this many adjacent chunks before and after the focal passage. "
+                "Default 0 returns only the focal passage with empty neighbor lists."
+            ),
+        ),
+    ] = 0,
+    cross_sections: Annotated[
+        bool,
+        Query(
+            description=(
+                "If true, neighbors may span across section boundaries within the same "
+                "chapter. Default false keeps neighbors within the same section."
+            ),
+        ),
+    ] = False,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
-) -> PassageDetail:
-    row = await repo.get_passage(passage_id)
-    if row is None:
+    request: Request = ...,  # type: ignore[assignment]
+) -> PassageWindowResponse:
+    focal, before, after, has_more_before, has_more_after = await repo.get_passage_window(
+        passage_id, before=neighbors, after=neighbors, cross_sections=cross_sections
+    )
+    if focal is None:
         raise StructuredHTTPException(
             status_code=404,
             code="passage_not_found",
@@ -279,16 +311,27 @@ async def get_passage(
                 {"tool": "search_passages", "arguments": {"q": "<your query>"}},
             ],
         )
-    return PassageDetail(
-        passage_id=row.passage_id,
-        nbk_id=row.nbk_id,
-        chapter_title=row.chapter_title or "",
-        chapter_last_updated=row.chapter_last_updated,
-        chapter_section=cast(SectionName, row.chapter_section),
-        heading_path=row.heading_path,
-        section_level=row.section_level,
-        chunk_index=row.chunk_index,
-        text=row.text,
-        char_count=len(row.text),
-        gene_symbols=list(row.gene_symbols),
+
+    def _to_detail(row: PassageRow) -> PassageDetail:
+        return PassageDetail(
+            passage_id=row.passage_id,
+            nbk_id=row.nbk_id,
+            chapter_title=row.chapter_title or "",
+            chapter_last_updated=row.chapter_last_updated,
+            chapter_section=cast(SectionName, row.chapter_section),
+            heading_path=row.heading_path,
+            section_level=row.section_level,
+            chunk_index=row.chunk_index,
+            text=row.text,
+            char_count=len(row.text),
+            gene_symbols=list(row.gene_symbols),
+        )
+
+    return PassageWindowResponse(  # type: ignore[call-arg]
+        passage=_to_detail(focal),
+        neighbors_before=[_to_detail(r) for r in before],
+        neighbors_after=[_to_detail(r) for r in after],
+        has_more_before=has_more_before,
+        has_more_after=has_more_after,
+        meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )
