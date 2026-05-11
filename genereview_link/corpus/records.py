@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import date
 from functools import cached_property
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,9 @@ class PassageRecord:
     text: str
     char_count: int
     token_estimate: int
+    passage_type: Literal["narrative", "table"] = "narrative"
+    table_id: str | None = None
+    table_data: dict[str, object] | None = None  # {"caption": str, "header": list[str], "rows": list[list[str]]}
 
     @cached_property
     def text_hash(self) -> str:

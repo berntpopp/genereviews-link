@@ -639,6 +639,9 @@ class TestRepository:
                 "chapter_title": "BRCA1",
                 "chapter_last_updated": None,
                 "gene_symbols": ["BRCA1"],
+                "passage_type": "narrative",
+                "table_id": None,
+                "table_data": None,
             }
         )
         repo = GeneReviewRepository(_fake_pool(conn))
@@ -667,6 +670,9 @@ class TestRepository:
                     "chapter_title": "Chap",
                     "chapter_last_updated": None,
                     "gene_symbols": ["BRCA1"],
+                    "passage_type": "narrative",
+                    "table_id": None,
+                    "table_data": None,
                 },
                 {
                     "nbk_id": "NBK1",
@@ -679,6 +685,9 @@ class TestRepository:
                     "chapter_title": "Chap",
                     "chapter_last_updated": None,
                     "gene_symbols": [],
+                    "passage_type": "narrative",
+                    "table_id": None,
+                    "table_data": None,
                 },
             ]
         )
@@ -799,6 +808,9 @@ class TestRepository:
                     "gene_symbols": ["BRCA1"],
                     "chapter_title": "Chap",
                     "chapter_last_updated": None,
+                    "passage_type": "narrative",
+                    "table_id": None,
+                    "table_data": None,
                     "phrase_rank": 0.5,
                     "strict_rank": 0.4,
                     "recall_rank": 0.3,

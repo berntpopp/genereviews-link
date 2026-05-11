@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -46,6 +47,9 @@ class PassageRow:
     chapter_title: str | None = None
     chapter_last_updated: date | None = None
     gene_symbols: tuple[str, ...] = ()
+    passage_type: str = "narrative"
+    table_id: str | None = None
+    table_data: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +184,7 @@ class GeneReviewRepository:
                         c.gene_symbols,
                         c.title as chapter_title,
                         c.last_updated_date as chapter_last_updated,
+                        p.passage_type, p.table_id, p.table_data,
                         ts_rank_cd(p.search_vector, q.phrase_query) as phrase_rank,
                         ts_rank_cd(p.search_vector, q.strict_query) as strict_rank,
                         ts_rank_cd(p.search_vector, q.recall_query) as recall_rank,
@@ -208,6 +213,7 @@ class GeneReviewRepository:
                         nbk_id, passage_id, chapter_section, heading_path,
                         section_level, chunk_index, text,
                         gene_symbols, chapter_title, chapter_last_updated,
+                        passage_type, table_id, table_data,
                         phrase_rank, strict_rank, recall_rank, recall_overlap_count,
                         (phrase_rank * 3.0 + strict_rank * 2.0 + recall_rank)
                           * case
@@ -236,18 +242,7 @@ class GeneReviewRepository:
 
         return [
             LexicalPassageRow(
-                passage=PassageRow(
-                    nbk_id=r["nbk_id"],
-                    passage_id=r["passage_id"],
-                    chapter_section=r["chapter_section"],
-                    heading_path=r["heading_path"],
-                    section_level=r["section_level"],
-                    chunk_index=r["chunk_index"],
-                    text=r["text"],
-                    chapter_title=r["chapter_title"],
-                    chapter_last_updated=r["chapter_last_updated"],
-                    gene_symbols=tuple(r["gene_symbols"] or ()),
-                ),
+                passage=self._row_to_passage(r),
                 phrase_rank=float(r["phrase_rank"]),
                 strict_rank=float(r["strict_rank"]),
                 recall_rank=float(r["recall_rank"]),
@@ -311,7 +306,8 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
-                       c.gene_symbols
+                       c.gene_symbols,
+                       p.passage_type, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
                  where p.nbk_id = $1 and p.chapter_section = $2
@@ -320,21 +316,7 @@ class GeneReviewRepository:
                 nbk_id,
                 chapter_section,
             )
-        return [
-            PassageRow(
-                nbk_id=r["nbk_id"],
-                passage_id=r["passage_id"],
-                chapter_section=r["chapter_section"],
-                heading_path=r["heading_path"],
-                section_level=r["section_level"],
-                chunk_index=r["chunk_index"],
-                text=r["text"],
-                chapter_title=r["chapter_title"],
-                chapter_last_updated=r["chapter_last_updated"],
-                gene_symbols=tuple(r["gene_symbols"] or ()),
-            )
-            for r in rows
-        ]
+        return [self._row_to_passage(r) for r in rows]
 
     async def get_passage(self, passage_id: str) -> PassageRow | None:
         async with self._acquire() as conn:
@@ -345,7 +327,8 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
-                       c.gene_symbols
+                       c.gene_symbols,
+                       p.passage_type, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
                  where p.passage_id = $1
@@ -359,6 +342,11 @@ class GeneReviewRepository:
     @staticmethod
     def _row_to_passage(row: asyncpg.Record) -> PassageRow:
         """Convert a DB record (with chapter_last_updated alias) to PassageRow."""
+        raw_table_data = row["table_data"]
+        if isinstance(raw_table_data, str):
+            table_data: dict[str, Any] | None = json.loads(raw_table_data)
+        else:
+            table_data = raw_table_data
         return PassageRow(
             nbk_id=row["nbk_id"],
             passage_id=row["passage_id"],
@@ -370,6 +358,9 @@ class GeneReviewRepository:
             chapter_title=row["chapter_title"],
             chapter_last_updated=row["chapter_last_updated"],
             gene_symbols=tuple(row["gene_symbols"] or ()),
+            passage_type=row["passage_type"],
+            table_id=row["table_id"],
+            table_data=table_data,
         )
 
     async def _fetch_passage_row(
@@ -384,7 +375,8 @@ class GeneReviewRepository:
                    p.section_level, p.chunk_index, p.text,
                    c.title as chapter_title,
                    c.last_updated_date as chapter_last_updated,
-                   c.gene_symbols
+                   c.gene_symbols,
+                   p.passage_type, p.table_id, p.table_data
               from genereview_passages p
               join genereview_chapters c on c.nbk_id = p.nbk_id
              where p.passage_id = $1
@@ -427,7 +419,8 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
-                       c.gene_symbols
+                       c.gene_symbols,
+                       p.passage_type, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
                  where p.nbk_id = $1
@@ -444,7 +437,8 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
-                       c.gene_symbols
+                       c.gene_symbols,
+                       p.passage_type, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
                  where p.nbk_id = $1
