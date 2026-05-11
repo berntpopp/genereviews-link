@@ -183,6 +183,26 @@ async def test_old_path_param_name_does_not_match() -> None:
 
 
 @pytest.mark.asyncio
+async def test_section_not_found_returns_structured_payload():
+    app = _build_app(passages=[])  # empty list -> 404
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/sections/management")
+    assert resp.status_code == 404
+    detail = resp.json()["detail"]
+    assert detail["code"] == "section_not_found"
+    assert detail["recovery_hint"]
+    # field_errors must enumerate the section enum so an LLM can self-correct:
+    fe = detail["field_errors"][0]
+    assert fe["field"] == "section"
+    assert "management" in fe["valid_values"]
+    assert "summary" in fe["valid_values"]
+    # next_commands suggests search_passages:
+    nc = detail["next_commands"][0]
+    assert nc["tool"] == "search_passages"
+    assert nc["arguments"]["nbk_id"] == "NBK1247"
+
+
+@pytest.mark.asyncio
 async def test_section_response_includes_meta_attribution() -> None:
     """Chapter section response wraps payload in an envelope with _meta.attribution."""
     pr = PassageRow(

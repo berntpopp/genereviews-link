@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, Path
 
+from genereview_link.api.errors import FieldError, StructuredHTTPException
 from genereview_link.api.routes.passages import get_repository
 from genereview_link.models.genereview_models import (
     ChapterSectionResponse,
     PassageInSection,
 )
-from genereview_link.models.sections import SectionName
+from genereview_link.models.sections import SECTION_NAMES, SectionName
 from genereview_link.retrieval.repository import GeneReviewRepository
 
 router = APIRouter(tags=["Chapters"])
@@ -48,7 +49,29 @@ async def get_chapter_section(
     """
     passages = await repo.get_section(nbk_id, section)
     if not passages:
-        raise HTTPException(status_code=404, detail="section not found")
+        raise StructuredHTTPException(
+            status_code=404,
+            code="section_not_found",
+            message=f"section {section!r} not found for chapter {nbk_id}",
+            recovery_hint=(
+                "valid section names are listed in the section parameter's "
+                "JSONSchema enum; use search_passages without a section "
+                "filter to discover which sections exist for this chapter."
+            ),
+            field_errors=[
+                FieldError(
+                    field="section",
+                    reason="unknown_value",
+                    valid_values=list(SECTION_NAMES),
+                )
+            ],
+            next_commands=[
+                {
+                    "tool": "search_passages",
+                    "arguments": {"q": "<your query>", "nbk_id": nbk_id},
+                }
+            ],
+        )
     head = passages[0]
     return ChapterSectionResponse(
         nbk_id=nbk_id,
