@@ -74,8 +74,8 @@ test-fast: ## Run tests in parallel with pytest-xdist
 test-unit: ## Run unit tests in parallel
 	uv run pytest tests -q -n auto -m "not integration and not slow"
 
-test-integration: ## Run integration tests serially
-	uv run pytest tests -q -m "integration"
+test-integration: ## Run integration tests (requires GENEREVIEW_TEST_DATABASE_URL)
+	uv run pytest tests/integration/ -v
 
 test-cov: ## Run unit tests with coverage (matches ci-local's selection)
 	uv run pytest tests -m "not integration and not slow" --cov=genereview_link --cov-report=term-missing --cov-report=html --cov-report=xml

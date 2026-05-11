@@ -10,6 +10,13 @@ import pytest
 import pytest_asyncio
 
 
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Auto-mark every test in tests/integration/ with @pytest.mark.integration."""
+    for item in items:
+        if "tests/integration/" in str(item.fspath) or "tests\\integration\\" in str(item.fspath):
+            item.add_marker(pytest.mark.integration)
+
+
 def _database_url() -> str:
     url = os.environ.get("GENEREVIEW_TEST_DATABASE_URL")
     if not url:
