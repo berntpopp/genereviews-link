@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
+from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastmcp import FastMCP
@@ -23,9 +24,6 @@ from genereview_link.api.routes import (
 )
 from genereview_link.config import ServerConfig, settings
 from genereview_link.logging_config import get_logger
-from genereview_link.middleware.logging_middleware import (
-    RequestLoggingMiddleware,
-)
 from genereview_link.services.service_manager import (
     get_service_manager,
     shutdown_services,
@@ -76,13 +74,20 @@ class UnifiedServerManager:
             redoc_url=None,
         )
 
-        app.add_middleware(RequestLoggingMiddleware)
+        # asgi-correlation-id should be added last so it becomes the outermost
+        # middleware and tags every response (including CORS preflight) with the
+        # correlation ID. See https://github.com/snok/asgi-correlation-id
         app.add_middleware(
             CORSMiddleware,
             allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",")],
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
+        )
+        app.add_middleware(
+            CorrelationIdMiddleware,
+            header_name=settings.CORRELATION_ID_HEADER,
+            update_request_header=True,
         )
 
         app.include_router(search.router)

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     LOG_JSON: bool = False  # Set to True for JSON logging in production
     ENVIRONMENT: str = "development"  # Environment name for logging context
 
+    # Correlation ID
+    CORRELATION_ID_HEADER: str = "X-Request-ID"
+
     # Transport Configuration (for unified server)
     MCP_TRANSPORT: Literal["unified", "http", "stdio"] = "unified"
     MCP_HOST: str = "127.0.0.1"

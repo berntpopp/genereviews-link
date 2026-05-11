@@ -33,9 +33,9 @@ async def search_genereviews(
     Uses NCBI E-utils esearch to find relevant GeneReviews.
     Returns a list of PubMed IDs along with search metadata.
     """
-    # Create request-scoped logger
+    # Create request-scoped logger. correlation_id is injected automatically by
+    # the structlog processor wired in logging_config.py (Task B3).
     request_logger = logger.bind(
-        correlation_id=getattr(request.state, "correlation_id", "unknown"),
         gene_symbol=gene_symbol,
         retmax=retmax,
     )
