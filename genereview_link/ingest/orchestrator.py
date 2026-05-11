@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator
+from typing import Any
 
 import asyncpg
 
@@ -64,7 +65,7 @@ async def backfill_embeddings(
     batch_size = batch_size or settings.INGEST_EMBED_BATCH_SIZE
     db_writers = db_writers or settings.INGEST_EMBED_WRITERS
 
-    encoded_q: asyncio.Queue[list[tuple] | None] = asyncio.Queue(maxsize=2)
+    encoded_q: asyncio.Queue[list[Any] | None] = asyncio.Queue(maxsize=2)
     total = 0
 
     async def encoder() -> None:

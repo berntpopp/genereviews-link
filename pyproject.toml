@@ -143,7 +143,6 @@ module = [
     "asgi_correlation_id.*",
     "prometheus_client.*",
     "asyncpg.*",
-    "pgvector.*",
     "lxml.*",
     "defusedxml.*",
     "transformers.*",

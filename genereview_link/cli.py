@@ -236,9 +236,7 @@ def embed_cmd(
         pool = await create_pool()
         try:
             provider = (
-                FakeEmbeddingProvider(dim=384)
-                if fake
-                else SentenceTransformerEmbeddingProvider()
+                FakeEmbeddingProvider(dim=384) if fake else SentenceTransformerEmbeddingProvider()
             )
             count = await backfill_embeddings(pool, provider, schema=schema)
             typer.echo(f"embedded {count} passages")

@@ -6,8 +6,7 @@ import asyncpg
 import pytest
 
 from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
-from genereview_link.ingest.orchestrator import backfill_embeddings, build_hnsw_index
-from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
+from genereview_link.ingest.orchestrator import build_hnsw_index
 
 
 @pytest.mark.asyncio
