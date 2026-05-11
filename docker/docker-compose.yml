@@ -1,4 +1,20 @@
 services:
+  postgres:
+    image: pgvector/pgvector:0.8.2-pg18
+    container_name: genereview_link_postgres
+    environment:
+      POSTGRES_DB: genereview
+      POSTGRES_USER: ${POSTGRES_USER:-genereview}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-genereview}
+    volumes:
+      - genereview_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-genereview}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   genereview-link:
     build:
       context: ..
@@ -15,6 +31,11 @@ services:
       GENEREVIEW_LINK_LOG_LEVEL: INFO
       GENEREVIEW_LINK_HOST: 0.0.0.0
       GENEREVIEW_LINK_PORT: 8000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-genereview}:${POSTGRES_PASSWORD:-genereview}@postgres:5432/genereview
+
+    depends_on:
+      postgres:
+        condition: service_healthy
 
     ports:
       - "${GENEREVIEW_LINK_PORT:-8000}:8000"
@@ -42,3 +63,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  genereview_pg_data:

@@ -29,7 +29,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 3G        # Raised from 1G — BGE model loaded per gunicorn worker
           cpus: '1.0'
           pids: 256
         reservations:
