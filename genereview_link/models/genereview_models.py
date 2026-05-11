@@ -3,6 +3,8 @@
 Defines structured data models for validation and serialization.
 """
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -30,6 +32,8 @@ class SearchResult(BaseModel):
     ids: list[str] = Field(description="List of PubMed IDs found.")
     webenv: str = Field(description="Web environment string for history server.")
     querykey: str = Field(description="Query key for history server.")
+    corpus_version: str | None = None
+    license: "LicenseNotice | None" = None
 
 
 class AbstractData(BaseModel):
@@ -41,6 +45,8 @@ class AbstractData(BaseModel):
     authors: list[str] = Field(default_factory=list, description="List of author names.")
     journal: str = Field(description="Journal name.")
     publication_date: str = Field(description="Publication date.")
+    corpus_version: str | None = None
+    license: "LicenseNotice | None" = None
 
 
 class LinkData(BaseModel):
@@ -50,6 +56,8 @@ class LinkData(BaseModel):
         default_factory=list,
         description="All available URLs for the publication.",
     )
+    corpus_version: str | None = None
+    license: "LicenseNotice | None" = None
 
 
 class Reference(BaseModel):
@@ -88,6 +96,8 @@ class FullTextData(BaseModel):
         default_factory=FullTextMetadata, description="Extracted metadata."
     )
     error: str | None = Field(default=None, description="Error message if scraping failed.")
+    corpus_version: str | None = None
+    license: "LicenseNotice | None" = None
 
 
 class GeneReview(BaseModel):
@@ -117,3 +127,60 @@ class GeneReview(BaseModel):
     full_text_data: FullTextData | None = Field(
         default=None, description="Comprehensive scraped content."
     )
+    corpus_version: str | None = None
+    license: "LicenseNotice | None" = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 new models
+# ---------------------------------------------------------------------------
+
+
+class CorpusVersion(BaseModel):
+    """Describes an active corpus version in the Postgres store."""
+
+    version: str
+    last_updated: datetime | None = None
+    is_active: bool
+
+
+class LicenseNotice(BaseModel):
+    """License and copyright notice attached to all API responses."""
+
+    copyright: str = "(c) 1993-2026 University of Washington"
+    terms_url: str = "https://www.ncbi.nlm.nih.gov/books/NBK138602/"
+
+
+class ScoreBreakdown(BaseModel):
+    """Per-passage ranking scores produced by the retrieval pipeline."""
+
+    lexical_rank: float
+    phrase_rank: float
+    strict_rank: float
+    recall_rank: float
+    dense_score: float | None = None
+    dense_rank: int | None = None
+    rrf_score: float | None = None
+    section_priority: int
+    final_position: int
+
+
+class RankedPassage(BaseModel):
+    """A passage returned by /passages/search, annotated with ranking scores."""
+
+    passage_id: str
+    nbk_id: str
+    gene_symbols: list[str] = []
+    chapter_section: str
+    heading_path: str | None = None
+    text: str
+    char_count: int
+    score_breakdown: ScoreBreakdown
+
+
+# Resolve forward references for models that mention LicenseNotice
+SearchResult.model_rebuild()
+AbstractData.model_rebuild()
+LinkData.model_rebuild()
+FullTextData.model_rebuild()
+GeneReview.model_rebuild()
