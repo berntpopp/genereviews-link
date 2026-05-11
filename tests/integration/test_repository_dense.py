@@ -40,7 +40,9 @@ async def test_dense_scores_returns_cosine_in_range(pool: asyncpg.Pool) -> None:
     repo = GeneReviewRepository(pool)
     qv = await provider.embed_query("hello")
     scores = await repo.dense_scores_for_passages(
-        qv, [("NBK1", "NBK1:0001"), ("NBK1", "NBK1:0002")], model_table="genereview_embeddings_bge384",
+        qv,
+        [("NBK1", "NBK1:0001"), ("NBK1", "NBK1:0002")],
+        model_table="genereview_embeddings_bge384",
     )
     assert set(scores.keys()) == {"NBK1:0001", "NBK1:0002"}
     for v in scores.values():

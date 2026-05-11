@@ -31,7 +31,7 @@ def _row(passage_id: str, section: str, lexical_rank: float = 1.0) -> LexicalPas
 
 def test_section_priority_orders_ties() -> None:
     rows = [_row("a", "references", 1.0), _row("b", "summary", 1.0)]
-    out, diag = rerank_with_embeddings(rows, dense_scores={}, rrf_k=60)
+    out, _diag = rerank_with_embeddings(rows, dense_scores={}, rrf_k=60)
     # references is guarded — appended last
     assert out[0].passage.passage_id == "b"
     assert out[-1].passage.passage_id == "a"

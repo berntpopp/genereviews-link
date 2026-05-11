@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Any
 
 import asyncpg
 
@@ -72,7 +73,7 @@ class GeneReviewRepository:
             else settings.DATABASE_ACQUIRE_TIMEOUT_S
         )
 
-    def _acquire(self) -> asyncpg.pool.PoolConnectionContext:  # type: ignore[type-arg]
+    def _acquire(self) -> Any:
         return self._pool.acquire(timeout=self._acquire_timeout_s)
 
     # ---- operational ----
@@ -288,14 +289,10 @@ class GeneReviewRepository:
         pids = [p for _, p in passage_ids]
         async with self._acquire() as conn:
             await conn.execute("set search_path to genereview, public")
+            # model_table is operator-controlled (not user input); S608 suppressed
+            sql = f'select passage_id, 1 - (embedding <=> $1::vector) as score from "{model_table}" where (nbk_id, passage_id) in (select unnest($2::text[]), unnest($3::text[]))'  # noqa: S608
             rows = await conn.fetch(
-                f"""
-                select passage_id, 1 - (embedding <=> $1::vector) as score
-                  from "{model_table}"
-                 where (nbk_id, passage_id) in (
-                     select unnest($2::text[]), unnest($3::text[])
-                 )
-                """,
+                sql,
                 query_vector,
                 nbks,
                 pids,

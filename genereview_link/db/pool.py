@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncpg
-from pgvector.asyncpg import register_vector
+import pgvector.asyncpg
 
 from genereview_link import config
 
 
-async def _init_conn(conn: asyncpg.Connection) -> None:  # type: ignore[type-arg]
+async def _init_conn(conn: asyncpg.Connection) -> None:
     """Register pgvector codec on each new connection."""
-    await register_vector(conn)
+    await pgvector.asyncpg.register_vector(conn)
 
 
 async def create_pool() -> asyncpg.Pool:
