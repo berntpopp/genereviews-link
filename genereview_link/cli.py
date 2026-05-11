@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from enum import StrEnum
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -242,6 +243,60 @@ def embed_cmd(
             typer.echo(f"embedded {count} passages")
             await build_hnsw_index(pool, schema=schema)
             typer.echo("HNSW index built")
+        finally:
+            await pool.close()
+
+    asyncio.run(run())
+
+
+bundle_app = typer.Typer(name="bundle", help="Build and verify release bundles.")
+app.add_typer(bundle_app)
+
+
+@bundle_app.command("build")
+def bundle_build(
+    output: Annotated[Path, typer.Option("--output")] = Path("genereview-corpus.tar.gz"),
+) -> None:
+    """Build a release bundle from the current DATABASE_URL."""
+    import asyncio
+    import tempfile
+    from datetime import UTC, datetime
+
+    from genereview_link.config import settings
+    from genereview_link.corpus.bundle import (
+        BundleManifest,
+        pg_dump_to,
+        write_bundle,
+    )
+    from genereview_link.db.pool import create_pool
+
+    async def run() -> None:
+        pool = await create_pool()
+        try:
+            row = await pool.fetchrow(
+                "select version, chapter_count from public.genereview_corpus_version where is_active"
+            )
+            if not row:
+                typer.echo("no active corpus version; aborting")
+                raise typer.Exit(1)
+            with tempfile.TemporaryDirectory() as td:
+                td_path = Path(td)
+                pg_dump_to(td_path / "corpus.dump", database_url=settings.DATABASE_URL)
+                sidedata = td_path / "sidedata"
+                sidedata.mkdir()
+                # In CI: side-data is fetched by the ingest step into a known dir;
+                # here we re-fetch for simplicity.
+                from genereview_link.corpus.pipeline import _download_sidedata
+
+                await _download_sidedata(sidedata)
+                m = BundleManifest(
+                    corpus_version=row["version"],
+                    chapter_count=row["chapter_count"] or 0,
+                    created_at=datetime.now(UTC).isoformat(),
+                    created_by="cli",
+                )
+                write_bundle(work_dir=td_path, output=output, manifest=m, sidedata_dir=sidedata)
+                typer.echo(f"wrote {output} (+ {output}.sha256)")
         finally:
             await pool.close()
 

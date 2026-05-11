@@ -130,6 +130,9 @@ ingest: ## Run full ingest pipeline (download → parse → write → swap)
 embed: ## Backfill embeddings + build HNSW index
 	uv run genereview-link embed
 
+bundle: ## Build release bundle from active corpus
+	uv run genereview-link bundle build
+
 eval: ## Run MRR@10 / section-precision@5 against tests/eval/
 	uv run python -m tests.eval.run_eval
 
