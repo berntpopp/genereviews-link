@@ -46,6 +46,7 @@ dependencies = [
     "transformers>=4.46.0",
     "tokenizers>=0.20.0",
     "sentence-transformers>=3.0.0",
+    "apscheduler>=3.11.0,<4.0.0",
 ]
 
 [dependency-groups]
@@ -149,6 +150,7 @@ module = [
     "tokenizers.*",
     "sentence_transformers.*",
     "pgvector.*",
+    "apscheduler.*",
 ]
 ignore_missing_imports = true
 

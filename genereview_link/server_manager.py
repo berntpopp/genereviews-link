@@ -227,9 +227,24 @@ class UnifiedServerManager:
                 "FakeEmbeddingProvider active (set GENEREVIEW_EAGER_LOAD_BGE=true for BGE)."
             )
 
+        # --- Release watcher scheduler ---
+        scheduler = None
+        if settings.AUTO_PULL_RELEASES and pool is not None:
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+            from genereview_link.ingest.scheduler import check_for_new_release
+
+            scheduler = AsyncIOScheduler()
+            scheduler.add_job(check_for_new_release, "cron", minute=17, args=[pool])
+            scheduler.start()
+            logger.info("Release watcher scheduler started (fires at :17 each hour).")
+
         yield
 
         logger.info("Shutting down GeneReview Link Server...")
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
+            logger.info("Release watcher scheduler stopped.")
         await shutdown_services()
         await shutdown_clients()
         if pool is not None:

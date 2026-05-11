@@ -18,7 +18,7 @@ async def get_chapter_section(
     nbk: str,
     section: str,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
-) -> dict:
+) -> dict[str, object]:
     """Return all passages for a specific section of a GeneReview chapter.
 
     Concatenates all passage texts in chunk order and returns both the

@@ -31,7 +31,7 @@ async def debug_ranking(
     limit: Annotated[int, Query(ge=1, le=50)] = 10,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     embedder: Annotated[EmbeddingProvider, Depends(get_embedding_provider)] = ...,  # type: ignore[assignment]
-) -> dict:
+) -> dict[str, object]:
     """Return full ScoreBreakdown for top-N lexical candidates (debug only).
 
     Gated behind DEBUG_RANKING_ENABLED=true. Returns 404 when disabled.
