@@ -26,6 +26,12 @@ class Settings(BaseSettings):
 
     NCBI_API_KEY: str = ""
     EUTILS_BASE_URL: str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+
+    # Postgres connection (set in MODE 1/2; empty triggers EutilsClient-only fallback path)
+    DATABASE_URL: str = ""
+    DATABASE_POOL_MIN_SIZE: int = 2
+    DATABASE_POOL_MAX_SIZE: int = 10
+    DATABASE_ACQUIRE_TIMEOUT_S: float = 5.0
     CACHE_SIZE: int = 512
     CACHE_TTL_HOURS: int = 24
     LOG_LEVEL: str = "INFO"
