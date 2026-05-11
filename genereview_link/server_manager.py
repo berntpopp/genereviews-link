@@ -91,8 +91,13 @@ class UnifiedServerManager:
         await shutdown_clients()
         logger.info("Shutdown complete.")
 
-    async def create_fastapi_app(self, config: ServerConfig) -> FastAPI:
-        """Create the core FastAPI application."""
+    def create_fastapi_app(self, config: ServerConfig) -> FastAPI:
+        """Create the core FastAPI application.
+
+        Synchronous so it can be invoked at module import time (e.g. by gunicorn's
+        preload, by `uvicorn server:app`, or by `uvicorn --reload`) without nesting
+        an event loop.
+        """
         app = FastAPI(
             title="GeneReview Link Server",
             description=(
@@ -180,7 +185,7 @@ class UnifiedServerManager:
         """Start the server in unified mode (REST API + MCP over HTTP)."""
         self._current_transport = "unified"
         logger.info(f"Starting unified server on {config.host}:{config.port}")
-        self.app = await self.create_fastapi_app(config)
+        self.app = self.create_fastapi_app(config)
         self.mcp = await self.create_mcp_server(self.app, config)
         self.app.mount(config.mcp_path, self.mcp.http_app())
         logger.info(f"MCP HTTP interface mounted at {config.mcp_path}")
@@ -198,7 +203,7 @@ class UnifiedServerManager:
         """Start the server in STDIO mode for MCP."""
         self._current_transport = "stdio"
         logger.info("Starting STDIO MCP server...")
-        self.app = await self.create_fastapi_app(config)
+        self.app = self.create_fastapi_app(config)
         # Manually initialize services since lifespan won't run
         client_manager = await get_client_manager()
         await client_manager.get_client()
@@ -212,7 +217,7 @@ class UnifiedServerManager:
         """Start the server in HTTP-only mode (REST API only)."""
         self._current_transport = "http"
         logger.info(f"Starting HTTP-only server on {config.host}:{config.port}")
-        self.app = await self.create_fastapi_app(config)
+        self.app = self.create_fastapi_app(config)
 
         uvicorn_config = uvicorn.Config(
             app=self.app,

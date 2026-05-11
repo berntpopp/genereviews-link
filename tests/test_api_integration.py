@@ -35,7 +35,7 @@ async def app() -> FastAPI:
 
     config = ServerConfig(transport="http", log_level="WARNING", enable_docs=True)
     manager = UnifiedServerManager()
-    app = await manager.create_fastapi_app(config)
+    app = manager.create_fastapi_app(config)
 
     # Manually initialize services since lifespan won't run in tests
     client_manager = await get_client_manager()

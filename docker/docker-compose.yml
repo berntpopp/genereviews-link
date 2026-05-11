@@ -19,7 +19,7 @@ services:
     ports:
       - "${GENEREVIEW_LINK_PORT:-8000}:8000"
 
-    command: ["gunicorn", "-c", "gunicorn_conf.py", "server:app"]
+    command: ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
