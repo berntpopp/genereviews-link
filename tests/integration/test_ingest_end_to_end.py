@@ -75,7 +75,5 @@ async def test_full_ingest_against_mini_tarball(pool: asyncpg.Pool) -> None:
     await cleanup_old(pool)
 
     async with pool.acquire() as conn:
-        in_genereview = await conn.fetchval(
-            "select count(*) from genereview.genereview_chapters"
-        )
+        in_genereview = await conn.fetchval("select count(*) from genereview.genereview_chapters")
         assert in_genereview == chapter_count
