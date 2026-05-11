@@ -62,7 +62,11 @@ def parse_and_chunk_one(
 
     authors = _join_authors(meta.find("contrib-group"))
     initial = _parse_pub_date(meta.find("pub-date[@pub-type='initial']"))
-    updated = _parse_pub_date(meta.find("pub-date[@pub-type='updated']"))
+    # Production NCBI NXMLs use pub-type="last-revision"; hand-crafted fixtures
+    # use pub-type="updated". Probe last-revision first, fall back to updated.
+    _last_rev = meta.find("pub-date[@pub-type='last-revision']")
+    _updated_el = meta.find("pub-date[@pub-type='updated']")
+    updated = _parse_pub_date(_last_rev if _last_rev is not None else _updated_el)
 
     chapter = ChapterRecord(
         nbk_id=nbk_id,
