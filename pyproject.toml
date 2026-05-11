@@ -45,6 +45,7 @@ dependencies = [
     "pgvector>=0.4.0",
     "transformers>=4.46.0",
     "tokenizers>=0.20.0",
+    "sentence-transformers>=3.0.0",
 ]
 
 [dependency-groups]
@@ -147,6 +148,7 @@ module = [
     "defusedxml.*",
     "transformers.*",
     "tokenizers.*",
+    "sentence_transformers.*",
 ]
 ignore_missing_imports = true
 
