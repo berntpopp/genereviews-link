@@ -116,8 +116,8 @@ class TestPassagesSearchRoute:
         assert p["passage_id"] == "p1"
         assert p["nbk_id"] == "NBK1"
         assert p["chapter_section"] == "summary"
-        assert "score_breakdown" in p
-        assert p["score_breakdown"]["final_position"] == 1
+        # score_breakdown is opt-in; absent by default
+        assert "score_breakdown" not in p
 
     @pytest.mark.asyncio
     async def test_missing_q_returns_422(self, http_client: AsyncClient) -> None:
@@ -373,4 +373,70 @@ async def test_search_exclude_path_includes_corpus_version() -> None:
         )
     body = resp.json()
     assert body["_meta"]["corpus_version"] == "2026-02-01"
+    assert "score_breakdown" not in body["results"][0]
+
+
+# ---------------------------------------------------------------------------
+# score_breakdown opt-in tests (Task 5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_omits_score_breakdown_by_default() -> None:
+    """score_breakdown is absent from results unless include=score_breakdown."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["results"]
+    assert "score_breakdown" not in body["results"][0]
+
+
+@pytest.mark.asyncio
+async def test_search_includes_score_breakdown_when_requested() -> None:
+    """include=score_breakdown adds the field to every result row."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "include": "score_breakdown"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["results"]
+    p = body["results"][0]
+    assert "score_breakdown" in p
+    sb = p["score_breakdown"]
+    assert sb["final_position"] == 1
+    # All ScoreBreakdown fields must be present
+    for field in (
+        "lexical_rank",
+        "phrase_rank",
+        "strict_rank",
+        "recall_rank",
+        "section_priority",
+        "final_position",
+    ):
+        assert field in sb, f"Missing ScoreBreakdown field: {field}"
+
+
+@pytest.mark.asyncio
+async def test_search_exclude_score_breakdown_is_noop_after_default_flip() -> None:
+    """exclude=score_breakdown is a no-op; field is already absent by default."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "exclude": "score_breakdown"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["results"]
     assert "score_breakdown" not in body["results"][0]

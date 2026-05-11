@@ -200,7 +200,7 @@ class RankedPassage(BaseModel):
     text: str | None = None
     snippet: str | None = None
     char_count: int
-    score_breakdown: ScoreBreakdown
+    score_breakdown: ScoreBreakdown | None = None
 
 
 class PassageDetail(BaseModel):

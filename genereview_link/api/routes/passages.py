@@ -144,6 +144,16 @@ async def search_passages(
             )
         ),
     ] = None,
+    include: Annotated[
+        list[Literal["score_breakdown"]] | None,
+        Query(
+            description=(
+                "Opt into default-off response fields. Currently supports "
+                "'score_breakdown' (raw lexical/dense ranks). Use for ranker "
+                "debugging."
+            )
+        ),
+    ] = None,
     rerank: Annotated[
         Literal["rrf", "lexical", "off"],
         Query(
@@ -179,8 +189,26 @@ async def search_passages(
         ranked, _diag = rerank_with_embeddings(lex, dense_scores)
     ranked = ranked[:limit]
 
+    include_set = set(include or [])
+    include_score_breakdown = "score_breakdown" in include_set
+
     out: list[RankedPassage] = []
     for pos, r in enumerate(ranked, start=1):
+        score_breakdown = (
+            ScoreBreakdown(
+                lexical_rank=r.lexical_rank,
+                phrase_rank=r.phrase_rank,
+                strict_rank=r.strict_rank,
+                recall_rank=r.recall_rank,
+                dense_score=dense_scores.get(r.passage.passage_id),
+                dense_rank=r.dense_rank,
+                rrf_score=r.rrf_score,
+                section_priority=SECTION_PRIORITY.get(r.passage.chapter_section, 100),
+                final_position=pos,
+            )
+            if include_score_breakdown
+            else None
+        )
         out.append(
             RankedPassage(
                 passage_id=r.passage.passage_id,
@@ -193,24 +221,20 @@ async def search_passages(
                 text=r.passage.text if mode == "full" else None,
                 snippet=r.snippet if mode == "brief" else None,
                 char_count=len(r.passage.text),
-                score_breakdown=ScoreBreakdown(
-                    lexical_rank=r.lexical_rank,
-                    phrase_rank=r.phrase_rank,
-                    strict_rank=r.strict_rank,
-                    recall_rank=r.recall_rank,
-                    dense_score=dense_scores.get(r.passage.passage_id),
-                    dense_rank=None,
-                    rrf_score=None,
-                    section_priority=SECTION_PRIORITY.get(r.passage.chapter_section, 100),
-                    final_position=pos,
-                ),
+                score_breakdown=score_breakdown,
             )
         )
 
     corpus = _get_corpus_version(request)
     meta = ResponseMeta(corpus_version=corpus)
-    if exclude:
-        excluded: set[str] = {str(field) for field in exclude}
+
+    # score_breakdown is opt-in (absent by default). Always exclude it from
+    # model_dump, then re-inject only when the caller requested it.
+    excluded: set[str] = {str(field) for field in (exclude or [])}
+    if not include_score_breakdown:
+        excluded.add("score_breakdown")
+
+    if excluded:
         return JSONResponse(
             {
                 "results": [row.model_dump(exclude=excluded, mode="json") for row in out],
