@@ -126,3 +126,6 @@ db-reset: ## DROP and recreate genereview schemas (dev only)
 
 ingest: ## Run full ingest pipeline (download → parse → write → swap)
 	uv run genereview-link ingest
+
+embed: ## Backfill embeddings + build HNSW index
+	uv run genereview-link embed

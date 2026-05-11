@@ -217,5 +217,38 @@ def ingest_cmd(
     asyncio.run(run())
 
 
+@app.command("embed")
+def embed_cmd(
+    schema: Annotated[str, typer.Option("--schema")] = "genereview",
+    fake: Annotated[
+        bool, typer.Option("--fake", help="Use deterministic FakeEmbeddingProvider (testing).")
+    ] = False,
+) -> None:
+    """Backfill BGE embeddings for missing passages and build HNSW index."""
+    from genereview_link.db.pool import create_pool
+    from genereview_link.ingest.orchestrator import backfill_embeddings, build_hnsw_index
+    from genereview_link.retrieval.embeddings import (
+        FakeEmbeddingProvider,
+        SentenceTransformerEmbeddingProvider,
+    )
+
+    async def run() -> None:
+        pool = await create_pool()
+        try:
+            provider = (
+                FakeEmbeddingProvider(dim=384)
+                if fake
+                else SentenceTransformerEmbeddingProvider()
+            )
+            count = await backfill_embeddings(pool, provider, schema=schema)
+            typer.echo(f"embedded {count} passages")
+            await build_hnsw_index(pool, schema=schema)
+            typer.echo("HNSW index built")
+        finally:
+            await pool.close()
+
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     app()
