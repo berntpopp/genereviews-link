@@ -52,6 +52,94 @@ REQUEST_LATENCY = Histogram(
 )
 
 
+async def _bootstrap() -> None:
+    """Bootstrap the corpus before the pool is opened for request serving.
+
+    Three modes:
+    1. BUNDLE_URL set → download + verify + pg_restore bundle.
+    2. BUILD_LOCAL=true → run full local ingest pipeline.
+    3. Neither → assume an external Postgres already has a corpus (or it's empty).
+
+    In all cases, if an active corpus version already exists the function
+    returns immediately (hot-path / already-populated).
+    """
+    import json
+    import os
+    import tarfile as tf_mod
+    from pathlib import Path
+
+    import asyncpg
+
+    from genereview_link.corpus.bundle import sha256_file
+    from genereview_link.db.migrate import apply_control_migrations
+    from genereview_link.db.pool import create_pool
+    from genereview_link.ingest.github_release import (
+        download_with_integrity,
+        fetch_sibling_sha256,
+        pg_restore,
+        resolve_latest,
+    )
+
+    pool = await create_pool()
+    try:
+        applied = await apply_control_migrations(pool)
+        if applied:
+            logger.info("applied control migrations", versions=applied)
+
+        active = await pool.fetchval(
+            "select 1 from public.genereview_corpus_version where is_active"
+        )
+        if active:
+            logger.info("active corpus found; skipping bootstrap")
+            return  # MODE 1 hot path / already-populated
+
+        bundle_url = settings.BUNDLE_URL
+        if bundle_url == "latest":
+            bundle_url = await resolve_latest(settings.GITHUB_REPO)
+        if bundle_url:
+            logger.info("downloading corpus bundle", url=bundle_url)
+            sha = await fetch_sibling_sha256(bundle_url)
+            tmp = Path("/tmp") / "bundle.tar.gz"  # noqa: S108
+            await download_with_integrity(bundle_url, tmp, expected_sha256=sha)
+            extract_dir = Path("/tmp/bundle_extract")  # noqa: S108
+            with tf_mod.open(tmp, "r:gz") as tar:
+                tar.extractall(str(extract_dir))  # noqa: S202
+            manifest = json.loads((extract_dir / "manifest.json").read_text())
+            for relpath, expected in manifest["checksums"].items():
+                actual = sha256_file(extract_dir / relpath)
+                if actual != expected:
+                    raise RuntimeError(f"manifest checksum mismatch on {relpath}")
+            await pg_restore(
+                extract_dir / "corpus.dump",
+                database_url=settings.DATABASE_URL,
+                jobs=os.cpu_count(),
+            )
+            logger.info("corpus bundle restored")
+            return
+
+        if settings.BUILD_LOCAL:
+            logger.info("BUILD_LOCAL=true; running full local ingest")
+            from genereview_link.corpus.pipeline import run_full_ingest
+            from genereview_link.ingest.orchestrator import backfill_embeddings, build_hnsw_index
+            from genereview_link.retrieval.embeddings import SentenceTransformerEmbeddingProvider
+
+            await run_full_ingest(pool)
+            await backfill_embeddings(pool, SentenceTransformerEmbeddingProvider())
+            await build_hnsw_index(pool)
+            logger.info("local ingest complete")
+            return
+
+        # MODE 3: external Postgres — assume corpus already present (or empty)
+        logger.warning(
+            "no BUNDLE_URL or BUILD_LOCAL set and no active corpus; "
+            "/passages/search will return 503 until corpus is loaded"
+        )
+    except asyncpg.PostgresError as exc:
+        logger.warning("bootstrap failed; server will start without corpus", error=str(exc))
+    finally:
+        await pool.close()
+
+
 class PrometheusMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
         start = time.perf_counter()
@@ -85,6 +173,11 @@ class UnifiedServerManager:
             version="2.0.0",
             environment=settings.ENVIRONMENT,
         )
+
+        # --- Corpus bootstrap (bundle / build-local / external) ---
+        if settings.DATABASE_URL:
+            await _bootstrap()
+
         client_manager = await get_client_manager()
         service_manager = await get_service_manager()
         await client_manager.get_client()  # Initialize client

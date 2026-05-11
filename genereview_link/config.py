@@ -75,6 +75,16 @@ class Settings(BaseSettings):
     # Set to True to enable the /debug/ranking diagnostic endpoint.
     DEBUG_RANKING_ENABLED: bool = False
 
+    # Corpus bootstrap modes
+    # BUNDLE_URL: set to a .tar.gz URL (or "latest") to restore from a release bundle.
+    BUNDLE_URL: str = ""
+    # BUILD_LOCAL: set to True to run a full local ingest on first boot.
+    BUILD_LOCAL: bool = False
+    # GITHUB_REPO: owner/repo for release resolution when BUNDLE_URL="latest".
+    GITHUB_REPO: str = "berntpopp/genereviews-link"
+    # AUTO_PULL_RELEASES: start the hourly release watcher scheduler.
+    AUTO_PULL_RELEASES: bool = False
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
