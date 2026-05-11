@@ -5,6 +5,7 @@ Provides REST API endpoint for retrieving comprehensive content from NCBI Booksh
 
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,6 +16,7 @@ from genereview_link.models.genereview_models import (
     FullTextData,
     FullTextMetadata,
     GeneReviewSection,
+    LicenseNotice,
 )
 
 router = APIRouter(prefix="/fulltext", tags=["Full Text"])
@@ -82,6 +84,7 @@ async def get_fulltext(
             examples=["summary,diagnosis,management"],
         ),
     ] = None,
+    fresh: bool = Query(False, description="Bypass index; fetch live from NCBI"),
 ) -> FullTextData:
     """Scrape comprehensive content from an NCBI Bookshelf page.
 
@@ -89,7 +92,11 @@ async def get_fulltext(
     Returns structured sections, metadata, and the complete document content.
     When ``sections`` is supplied, only matching sections are included in the
     response.
+
+    Pass ``?fresh=true`` to bypass the index and fetch live from NCBI.
     """
+    # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient
+    # until repository is populated.
     try:
         # Clean up NBK ID - remove NBK prefix if present and ensure it's valid
         clean_id = re.sub(r"^NBK", "", nbk_id)
@@ -126,13 +133,17 @@ async def get_fulltext(
             references=metadata_dict.get("references", []),
         )
 
-        return FullTextData(
+        out = FullTextData(
             nbk_id=result.get("nbk_id", clean_id),
             url=result.get("url", book_url),
             title=result.get("title", ""),
             sections=filtered_sections,
             metadata=metadata,
         )
+        out.license = LicenseNotice()
+        if fresh:
+            out.corpus_version = f"live:{datetime.now(UTC).isoformat()}"
+        return out
     except HTTPException:
         raise
     except Exception as e:
