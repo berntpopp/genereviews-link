@@ -25,7 +25,6 @@ def _row(passage_id: str, section: str, lexical_rank: float = 1.0) -> LexicalPas
         recall_rank=0.0,
         recall_overlap_count=1,
         lexical_rank=lexical_rank,
-        gene_symbols=(),
     )
 
 

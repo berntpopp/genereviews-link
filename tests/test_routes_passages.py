@@ -56,7 +56,6 @@ def _make_lexical_row(passage_id: str = "p1") -> LexicalPassageRow:
         recall_rank=0.3,
         recall_overlap_count=2,
         lexical_rank=0.6,
-        gene_symbols=("BRCA1",),
     )
 
 
@@ -163,7 +162,6 @@ class TestPassagesSearchRoute:
             recall_rank=0.0,
             recall_overlap_count=1,
             lexical_rank=1.0,
-            gene_symbols=(),
         )
         row_summary = LexicalPassageRow(
             passage=PassageRow(
@@ -180,7 +178,6 @@ class TestPassagesSearchRoute:
             recall_rank=0.0,
             recall_overlap_count=1,
             lexical_rank=1.0,
-            gene_symbols=(),
         )
         fake_repo.search_passages.return_value = [row_refs, row_summary]
         resp = await http_client.get("/passages/search?q=BRCA1&rerank=off")
@@ -226,7 +223,6 @@ def _brief_row(pid: str, snippet: str) -> LexicalPassageRow:
         recall_rank=0.4,
         recall_overlap_count=1,
         lexical_rank=1.0,
-        gene_symbols=("TG",),
         snippet=snippet,
     )
 

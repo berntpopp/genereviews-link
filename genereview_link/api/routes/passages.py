@@ -185,7 +185,7 @@ async def search_passages(
             RankedPassage(
                 passage_id=r.passage.passage_id,
                 nbk_id=r.passage.nbk_id,
-                gene_symbols=list(r.gene_symbols),
+                gene_symbols=list(r.passage.gene_symbols),
                 chapter_title=r.passage.chapter_title or "",
                 chapter_last_updated=r.passage.chapter_last_updated,
                 chapter_section=cast(SectionName, r.passage.chapter_section),

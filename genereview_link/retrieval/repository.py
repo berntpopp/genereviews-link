@@ -49,7 +49,11 @@ class PassageRow:
 
 @dataclass(frozen=True, slots=True)
 class LexicalPassageRow:
-    """A passage with its lexical scores attached."""
+    """A passage with its lexical scores attached.
+
+    Gene symbols live on ``passage.gene_symbols`` — there is no top-level
+    duplicate field. Read them via ``row.passage.gene_symbols``.
+    """
 
     passage: PassageRow
     phrase_rank: float
@@ -57,7 +61,6 @@ class LexicalPassageRow:
     recall_rank: float
     recall_overlap_count: int
     lexical_rank: float
-    gene_symbols: tuple[str, ...]
     snippet: str | None = None
 
 
@@ -231,7 +234,6 @@ class GeneReviewRepository:
                 recall_rank=float(r["recall_rank"]),
                 recall_overlap_count=int(r["recall_overlap_count"]),
                 lexical_rank=float(r["lexical_rank"]),
-                gene_symbols=tuple(r["gene_symbols"] or ()),
                 snippet=r["snippet"] if brief else None,
             )
             for r in rows
