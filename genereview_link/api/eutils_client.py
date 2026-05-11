@@ -12,7 +12,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 import httpx
-from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
 
 from genereview_link.config import settings
 from genereview_link.logging_config import PerformanceLogger, get_logger
@@ -58,7 +58,7 @@ class EutilsClient:
         )
         self.rate_limit_delay = 0.11 if settings.NCBI_API_KEY else 0.34
 
-    async def _make_request(self, endpoint: str, params: dict) -> dict[str, Any]:
+    async def _make_request(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
         """Centralized request maker with rate limiting (JSON responses)."""
         if settings.NCBI_API_KEY:
             params["api_key"] = settings.NCBI_API_KEY
@@ -157,7 +157,10 @@ class EutilsClient:
                 logger.error(f"Request failed after {max_retries} attempts: {e}")
                 raise
 
-    async def _make_xml_request(self, endpoint: str, params: dict) -> ET.Element:
+        # Should be unreachable: every loop iteration either returns or raises.
+        raise RuntimeError(f"Request to {url} exhausted retries without response")
+
+    async def _make_xml_request(self, endpoint: str, params: dict[str, Any]) -> ET.Element:
         """Centralized request maker for XML responses."""
         if settings.NCBI_API_KEY:
             params["api_key"] = settings.NCBI_API_KEY
@@ -568,11 +571,11 @@ class EutilsClient:
             logger.error(f"Error scraping comprehensive content from {book_url}: {e}")
             return {"error": str(e)}
 
-    def _find_main_content(self, soup: BeautifulSoup) -> BeautifulSoup | None:
+    def _find_main_content(self, soup: BeautifulSoup) -> Tag | None:
         """Find the main content container using GeneReviews-specific strategies."""
         # Strategy 1: Look for the standard GeneReviews main content container
         main_content = soup.find("div", {"class": "main-content lit-style"})
-        if main_content:
+        if isinstance(main_content, Tag):
             return main_content
 
         # Strategy 2: Look for main-content class variations
@@ -581,18 +584,21 @@ class EutilsClient:
             soup.find("div", {"class": re.compile(r".*main.*content.*", re.I)}),
         ]
         for content in main_content_variations:
-            if content and content.find_all(["h2", "h3"]):
+            if isinstance(content, Tag) and content.find_all(["h2", "h3"]):
                 return content
 
         # Strategy 3: Look for div with NBK ID that contains actual content
-        nbk_divs = soup.find_all("div", {"id": lambda x: x and x.startswith("NBK")})
+        def _starts_with_nbk(value: str | None) -> bool:
+            return bool(value) and value is not None and value.startswith("NBK")
+
+        nbk_divs = soup.find_all("div", {"id": _starts_with_nbk})
         for div in nbk_divs:
             # Check if this div has substantial content (h2/h3 headings)
             if div.find_all(["h2", "h3"]):
                 return div
 
         # Strategy 4: Look for content areas with substantial headings
-        content_selectors = [
+        content_selectors: list[dict[str, Any]] = [
             {"class": re.compile(r".*content.*", re.I)},
             {"class": re.compile(r".*main.*", re.I)},
             {"class": re.compile(r".*article.*", re.I)},
@@ -603,14 +609,14 @@ class EutilsClient:
 
         for selector in content_selectors:
             content_div = soup.find("div", selector)
-            if content_div and content_div.find_all(["h2", "h3"]):
+            if isinstance(content_div, Tag) and content_div.find_all(["h2", "h3"]):
                 return content_div
 
         # Strategy 5: Look for semantic HTML5 elements with content
         for tag in ["main", "article", "section"]:
-            content_div = soup.find(tag)
-            if content_div and content_div.find_all(["h2", "h3"]):
-                return content_div
+            semantic_div = soup.find(tag)
+            if isinstance(semantic_div, Tag) and semantic_div.find_all(["h2", "h3"]):
+                return semantic_div
 
         # Strategy 6: Find any container with multiple h2/h3 headings
         all_containers = soup.find_all(["div", "section", "article"])
@@ -620,9 +626,10 @@ class EutilsClient:
                 return container
 
         # Strategy 7: Use the body as fallback
-        return soup.find("body")
+        body = soup.find("body")
+        return body if isinstance(body, Tag) else None
 
-    def _extract_title(self, soup: BeautifulSoup, content_div: BeautifulSoup) -> str:
+    def _extract_title(self, soup: BeautifulSoup, content_div: Tag) -> str:
         """Extract document title using GeneReviews-specific strategies."""
         # Strategy 1: Look for GeneReviews title structure: span.title within h1
         h1_tags = content_div.find_all("h1")
@@ -661,7 +668,7 @@ class EutilsClient:
                 return str(title)
 
         # Strategy 4: Look for specific title classes or attributes
-        title_selectors = [
+        title_selectors: list[dict[str, Any]] = [
             {"class": re.compile(r".*title.*", re.I)},
             {"class": re.compile(r".*heading.*", re.I)},
             {"data-title": True},
@@ -688,7 +695,7 @@ class EutilsClient:
 
         return "Unknown Document"
 
-    def _extract_metadata(self, soup: BeautifulSoup, content_div: BeautifulSoup) -> dict[str, Any]:
+    def _extract_metadata(self, soup: BeautifulSoup, content_div: Tag) -> dict[str, Any]:
         """Extract comprehensive metadata from the document."""
         metadata = {}
 
@@ -719,7 +726,7 @@ class EutilsClient:
 
         return metadata
 
-    def _extract_authors(self, content_div: BeautifulSoup) -> str | None:
+    def _extract_authors(self, content_div: Tag) -> str | None:
         """Extract author information."""
         patterns = [
             re.compile(r"Author[s]?\s*:", re.I),
@@ -742,7 +749,7 @@ class EutilsClient:
 
         return None
 
-    def _extract_update_info(self, content_div: BeautifulSoup) -> str | None:
+    def _extract_update_info(self, content_div: Tag) -> str | None:
         """Extract update information."""
         patterns = [
             re.compile(r"Last\s*(Updated?|Revision)", re.I),
@@ -760,7 +767,7 @@ class EutilsClient:
 
         return None
 
-    def _extract_publication_info(self, content_div: BeautifulSoup) -> str | None:
+    def _extract_publication_info(self, content_div: Tag) -> str | None:
         """Extract publication and copyright information."""
         patterns = [
             re.compile(r"Copyright", re.I),
@@ -777,7 +784,7 @@ class EutilsClient:
 
         return None
 
-    def _extract_last_updated(self, content_div: BeautifulSoup) -> str | None:
+    def _extract_last_updated(self, content_div: Tag) -> str | None:
         """Extract last updated date."""
         # Look for date patterns
         date_pattern = re.compile(
@@ -797,12 +804,14 @@ class EutilsClient:
 
         return None
 
-    def _extract_references(self, content_div: BeautifulSoup) -> list[str]:
+    def _extract_references(self, content_div: Tag) -> list[str]:
         """Extract and parse references section as a list of strings."""
         references: list[str] = []
 
-        # Find references section
-        ref_headings = content_div.find_all(
+        # Find references section. bs4's overloads do not statically permit
+        # combining ``name`` and ``string`` filters together, but the runtime
+        # behaviour is documented and used widely.
+        ref_headings = content_div.find_all(  # type: ignore[call-overload]
             ["h1", "h2", "h3", "h4", "h5", "h6"],
             string=re.compile(r"references?|bibliography", re.I),
         )
@@ -958,16 +967,17 @@ class EutilsClient:
 
         return ref_data
 
-    def _extract_hierarchical_sections(
-        self, content_div: BeautifulSoup
-    ) -> dict[str, dict[str, Any]]:
+    def _extract_hierarchical_sections(self, content_div: Tag) -> dict[str, dict[str, Any]]:
         """Extract sections with hierarchical structure optimized for GeneReviews."""
-        sections = {}
+        sections: dict[str, dict[str, Any]] = {}
 
         # Strategy 1: Look for GeneReviews-specific section divs (preferred method)
+        def _is_section_id(value: str | None) -> bool:
+            return bool(value) and value is not None and "." in value and not value.startswith("_")
+
         section_divs = content_div.find_all(
             "div",
-            {"id": lambda x: x and "." in str(x) and not x.startswith("_")},
+            {"id": _is_section_id},
         )
 
         if section_divs:
@@ -1030,9 +1040,7 @@ class EutilsClient:
 
         return sections
 
-    def _extract_subsection_content(
-        self, h3_heading: BeautifulSoup, section_div: BeautifulSoup
-    ) -> str:
+    def _extract_subsection_content(self, h3_heading: Tag, section_div: Tag) -> str:
         """Extract content for an h3 subsection within a section div."""
         content_parts = []
         current = h3_heading.find_next_sibling()
@@ -1052,11 +1060,9 @@ class EutilsClient:
         content = " ".join(content_parts).strip()
         return self._clean_content(content)
 
-    def _extract_sections_by_headings(
-        self, content_div: BeautifulSoup
-    ) -> dict[str, dict[str, Any]]:
+    def _extract_sections_by_headings(self, content_div: Tag) -> dict[str, dict[str, Any]]:
         """Fallback method: extract sections based on h2/h3 heading structure."""
-        sections = {}
+        sections: dict[str, dict[str, Any]] = {}
 
         # Get all h2 headings as main sections
         h2_headings = content_div.find_all("h2")
@@ -1122,7 +1128,7 @@ class EutilsClient:
 
         return sections
 
-    def _extract_heading_content(self, heading: BeautifulSoup, stop_tags: list) -> str:
+    def _extract_heading_content(self, heading: Tag, stop_tags: list[str]) -> str:
         """Extract content following a heading until the next heading of same or higher level."""
         content_parts = []
         current = heading.find_next_sibling()

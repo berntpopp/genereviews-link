@@ -39,7 +39,7 @@ def add_service_context(logger: Any, method_name: str, event_dict: EventDict) ->
 
 def json_serializer(obj: Any, **kwargs: Any) -> bytes:
     """Fast JSON serializer using orjson."""
-    return orjson.dumps(obj, option=orjson.OPT_APPEND_NEWLINE)  # type: ignore[no-any-return]
+    return orjson.dumps(obj, option=orjson.OPT_APPEND_NEWLINE)
 
 
 def configure_structlog() -> None:
@@ -64,6 +64,7 @@ def configure_structlog() -> None:
         structlog.processors.format_exc_info,
     ]
 
+    processors: list[Processor]
     if use_json:
         # Production: JSON logging
         processors = [
@@ -106,7 +107,8 @@ def configure_structlog() -> None:
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     """Get a structured logger for the given name."""
-    return structlog.get_logger(name)
+    logger: structlog.stdlib.BoundLogger = structlog.get_logger(name)
+    return logger
 
 
 # Context managers and utilities for enhanced logging

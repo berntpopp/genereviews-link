@@ -42,7 +42,7 @@ async def get_genereview(
     You can control which additional data to include using the query parameters.
     """
     try:
-        return await service.get_genereview_comprehensive(  # type: ignore[no-any-return]
+        return await service.get_genereview_comprehensive(
             gene_symbol,
             include_abstract=include_abstract,
             include_links=include_links,

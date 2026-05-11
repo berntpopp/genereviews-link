@@ -2,7 +2,7 @@
 
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import Request, Response
@@ -29,7 +29,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             "/openapi.json",
         ]
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         """Process requests with correlation IDs and logging."""
         # Generate correlation ID
         correlation_id = str(uuid.uuid4())
@@ -101,7 +103,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             return str(real_ip)
 
         # Fallback to client host
-        if hasattr(request.client, "host"):
+        if request.client is not None and hasattr(request.client, "host"):
             return str(request.client.host)
 
         return "unknown"

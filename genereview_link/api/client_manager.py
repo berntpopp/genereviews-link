@@ -146,9 +146,13 @@ class ClientManager:
                     logger.info("Creating new EutilsClient instance")
                     # Create client with rate limiter injection
                     self._client = EutilsClient()
-                    # Replace the client's rate limiting with our distributed version
-                    self._client._rate_limiter = self._rate_limiter
-                    self._client._distributed_wait = self._rate_limiter.wait_if_needed
+                    # Replace the client's rate limiting with our distributed version.
+                    # EutilsClient discovers these via ``hasattr`` at call time, so they
+                    # are duck-typed extensions rather than declared fields.
+                    self._client._rate_limiter = self._rate_limiter  # type: ignore[attr-defined]
+                    self._client._distributed_wait = (  # type: ignore[attr-defined]
+                        self._rate_limiter.wait_if_needed
+                    )
 
         return self._client
 
