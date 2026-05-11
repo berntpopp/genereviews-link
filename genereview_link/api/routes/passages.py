@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi.responses import JSONResponse
 
 from genereview_link.models.genereview_models import (
     PassageDetail,
@@ -49,30 +50,106 @@ async def get_embedding_provider(request: Request) -> EmbeddingProvider:
     "/passages/search",
     response_model=list[RankedPassage],
     operation_id="search_passages",
-    summary="Hybrid lexical + dense RAG search across GeneReviews passages",
+    summary="Hybrid lexical + dense RAG search across GeneReviews passages.",
+    description=(
+        "Returns ranked passages from the active GeneReviews corpus.\n\n"
+        "**Rerank modes:**\n"
+        "- `rrf` (default): RRF over three-tsquery lexical + BGE-small "
+        "dense cosine. Balanced quality. Use this for general questions.\n"
+        "- `lexical`: skip the dense pass; lexical scoring only. "
+        "Faster - saves the embed + HNSW probe round-trip. Use for "
+        "latency-critical exact-term lookups.\n"
+        "- `off`: raw BM25-style lexical scores, no reranking. "
+        "Debugging only.\n\n"
+        "Use `mode='brief'` (default) for triage - returns "
+        "~300-500-char `ts_headline` snippets with **bold** highlights "
+        "around query terms. Switch to `mode='full'` once you've "
+        "picked the row(s) you want to read.\n\n"
+        "Filter with `gene` (HGNC symbol), `nbk_id` (single chapter), "
+        "or `sections` (list; valid values in the sections JSONSchema "
+        "enum). Use `exclude=score_breakdown` or `exclude=heading_path` "
+        "to trim response payload further."
+    ),
 )
 async def search_passages(
-    q: Annotated[str, Query(min_length=1, max_length=500)],
-    gene: Annotated[str | None, Query()] = None,
-    nbk: Annotated[str | None, Query()] = None,
-    sections: Annotated[list[str] | None, Query()] = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
-    rerank: Annotated[Literal["rrf", "lexical", "off"], Query()] = "rrf",
+    q: Annotated[
+        str,
+        Query(
+            min_length=1,
+            max_length=500,
+            description="Free-text query. Phrases, gene symbols, and clinical terms all work.",
+        ),
+    ],
+    gene: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Filter to a single HGNC gene symbol (e.g. 'BRCA1'). "
+                "Matches any chapter whose gene_symbols array contains this value."
+            ),
+        ),
+    ] = None,
+    nbk_id: Annotated[
+        str | None,
+        Query(
+            description="Restrict results to one chapter, e.g. 'NBK1247'.",
+        ),
+    ] = None,
+    sections: Annotated[
+        list[SectionName] | None,
+        Query(
+            description=(
+                "Restrict to one or more canonical sections. Valid values "
+                "are listed in this parameter's JSONSchema enum."
+            ),
+        ),
+    ] = None,
+    mode: Annotated[
+        Literal["brief", "full"],
+        Query(
+            description=(
+                "brief (default): each row carries a ts_headline snippet "
+                "(2 fragments, ~30-60 words total, **bold** highlights around "
+                "query terms - roughly 300-500 chars per row, so <= ~3 KB "
+                "total at limit=5). full: each row carries the entire "
+                "passage text - pick this only when you have already chosen "
+                "the row(s) you want to read."
+            ),
+        ),
+    ] = "brief",
+    limit: Annotated[
+        int,
+        Query(
+            ge=1,
+            le=100,
+            description="Number of rows to return. Default 5 keeps the brief-mode payload <= ~3 KB.",
+        ),
+    ] = 5,
+    exclude: Annotated[
+        list[Literal["score_breakdown", "heading_path"]] | None,
+        Query(
+            description=(
+                "Optional field projection. Each listed value is dropped "
+                "from every row. Use when you only need text + passage_id."
+            )
+        ),
+    ] = None,
+    rerank: Annotated[
+        Literal["rrf", "lexical", "off"],
+        Query(
+            description="See route description for operational guidance.",
+        ),
+    ] = "rrf",
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     embedder: Annotated[EmbeddingProvider, Depends(get_embedding_provider)] = ...,  # type: ignore[assignment]
-) -> list[RankedPassage]:
-    """Search GeneReview passages using hybrid lexical + dense retrieval.
-
-    Returns ranked passages from the active corpus. Use ``?rerank=lexical``
-    to skip dense embedding (faster but lower quality). Use ``?rerank=off``
-    to return raw BM25-style results.
-    """
+) -> list[RankedPassage] | JSONResponse:
     lex = await repo.search_passages(
         q,
         gene_symbol=gene,
-        nbk_id=nbk,
-        sections=sections,
+        nbk_id=nbk_id,
+        sections=list(sections) if sections else None,
         limit=max(limit * 3, 50),
+        brief=(mode == "brief"),
     )
     dense_scores: dict[str, float] = {}
     if rerank == "rrf":
@@ -97,7 +174,8 @@ async def search_passages(
                 chapter_last_updated=r.passage.chapter_last_updated,
                 chapter_section=cast(SectionName, r.passage.chapter_section),
                 heading_path=r.passage.heading_path,
-                text=r.passage.text,
+                text=r.passage.text if mode == "full" else None,
+                snippet=r.snippet if mode == "brief" else None,
                 char_count=len(r.passage.text),
                 score_breakdown=ScoreBreakdown(
                     lexical_rank=r.lexical_rank,
@@ -112,6 +190,10 @@ async def search_passages(
                 ),
             )
         )
+
+    if exclude:
+        excluded: set[str] = {str(field) for field in exclude}
+        return JSONResponse([row.model_dump(exclude=excluded, mode="json") for row in out])
     return out
 
 

@@ -153,3 +153,125 @@ class TestPassagesSearchRoute:
         app.dependency_overrides[get_repository] = _no_repo
         resp = await http_client.get("/passages/search?q=test")
         assert resp.status_code == 503
+
+
+def _brief_row(pid: str, snippet: str) -> LexicalPassageRow:
+    return LexicalPassageRow(
+        passage=PassageRow(
+            nbk_id="NBK1",
+            passage_id=pid,
+            chapter_section="management",
+            heading_path="Management > X",
+            section_level=2,
+            chunk_index=1,
+            text="full text here",
+            chapter_title="Chapter",
+            chapter_last_updated=None,
+            gene_symbols=("TG",),
+        ),
+        phrase_rank=1.0,
+        strict_rank=0.5,
+        recall_rank=0.4,
+        recall_overlap_count=1,
+        lexical_rank=1.0,
+        gene_symbols=("TG",),
+        snippet=snippet,
+    )
+
+
+def _make_brief_app(repo: Any) -> FastAPI:
+    """Build a minimal FastAPI app wired to ``repo`` for the new mode tests."""
+    from genereview_link.api.routes import passages as passages_routes
+
+    app = FastAPI()
+    app.include_router(passages_routes.router)
+    app.state.repository = repo
+    app.state.embedder = FakeEmbeddingProvider(dim=384)
+    return app
+
+
+def _make_brief_repo(rows: int = 7) -> Any:
+    from unittest.mock import MagicMock
+
+    repo = MagicMock()
+    repo.search_passages = AsyncMock(
+        return_value=[_brief_row(f"NBK1:000{i}", f"**bold{i}**") for i in range(rows)]
+    )
+    repo.active_embedding_table = AsyncMock(return_value="t")
+    repo.dense_scores_for_passages = AsyncMock(return_value={})
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_search_default_mode_is_brief_and_limit_is_5() -> None:
+    """Default response has snippet populated, text null, and <=5 rows."""
+    repo = _make_brief_repo(rows=7)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 5
+    assert body[0]["snippet"] is not None
+    assert body[0]["text"] is None
+    assert body[0]["chapter_title"] == "Chapter"
+
+
+@pytest.mark.asyncio
+async def test_search_mode_full_populates_text() -> None:
+    """mode=full returns text, snippet null."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "mode": "full"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body[0]["text"] == "full text here"
+    assert body[0]["snippet"] is None
+
+
+@pytest.mark.asyncio
+async def test_search_exclude_drops_field() -> None:
+    """exclude=score_breakdown removes that key from each row."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "exclude": "score_breakdown"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "score_breakdown" not in body[0]
+
+
+@pytest.mark.asyncio
+async def test_search_exclude_bogus_returns_422() -> None:
+    """Unknown exclude value rejected by FastAPI validation."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "exclude": "bogus"},
+        )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_search_filter_uses_nbk_id_not_nbk() -> None:
+    """The route accepts ?nbk_id= and forwards it to the repository."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "nbk_id": "NBK1247"},
+        )
+    assert resp.status_code == 200
+    assert repo.search_passages.call_args.kwargs["nbk_id"] == "NBK1247"
