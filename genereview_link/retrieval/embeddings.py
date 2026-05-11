@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 from typing import Any, Protocol, cast
+
+logger = logging.getLogger(__name__)
 
 BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
 
@@ -106,4 +109,11 @@ class SentenceTransformerEmbeddingProvider:
         self._np = np
         device = None if self.device == "auto" else self.device
         self._model = SentenceTransformer(self.model_name, device=device)
+        resolved = getattr(self._model, "device", None)
+        logger.info(
+            "loaded embedding model %s on device=%s (requested=%s)",
+            self.model_name,
+            resolved,
+            self.device,
+        )
         return self._model, self._np
