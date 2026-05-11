@@ -5,7 +5,6 @@ Orchestrates data retrieval and processing workflows.
 """
 
 from datetime import timedelta
-from typing import Optional
 
 from async_lru import alru_cache
 
@@ -13,12 +12,12 @@ from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.config import settings
 from genereview_link.logging_config import get_logger
 from genereview_link.models.genereview_models import (
-    GeneReview,
-    GeneReviewSection,
     AbstractData,
-    LinkData,
     FullTextData,
     FullTextMetadata,
+    GeneReview,
+    GeneReviewSection,
+    LinkData,
 )
 
 logger = get_logger(__name__)
@@ -33,7 +32,7 @@ class DataNotFoundError(Exception):
 class GeneReviewService:
     """Service layer for fetching and processing GeneReviews data."""
 
-    def __init__(self, client: Optional[EutilsClient] = None):
+    def __init__(self, client: EutilsClient | None = None):
         """Initialize the GeneReview service.
 
         Args:
@@ -43,9 +42,7 @@ class GeneReviewService:
         self.cache_ttl = timedelta(hours=settings.CACHE_TTL_HOURS)
 
         # Apply the cache decorator to both implementation methods
-        self.get_genereview = alru_cache(maxsize=settings.CACHE_SIZE)(
-            self._get_genereview_impl
-        )
+        self.get_genereview = alru_cache(maxsize=settings.CACHE_SIZE)(self._get_genereview_impl)
         self.get_genereview_comprehensive = alru_cache(maxsize=settings.CACHE_SIZE)(
             self._get_genereview_comprehensive_impl
         )
@@ -60,9 +57,7 @@ class GeneReviewService:
         # 2. Get the Bookshelf URL
         book_url = await self.client.get_book_url_from_pmid(pubmed_id)
         if not book_url:
-            raise DataNotFoundError(
-                f"Could not find NCBI Bookshelf link for PMID: {pubmed_id}"
-            )
+            raise DataNotFoundError(f"Could not find NCBI Bookshelf link for PMID: {pubmed_id}")
 
         # 3. Scrape the content
         scraped_data = await self.client.scrape_genereview_book(book_url)
@@ -127,9 +122,7 @@ class GeneReviewService:
                 all_links = LinkData(**links_result)
                 # Extract book URLs from all URLs
                 book_urls = [
-                    url
-                    for url in links_result.get("urls", [])
-                    if "ncbi.nlm.nih.gov/books/" in url
+                    url for url in links_result.get("urls", []) if "ncbi.nlm.nih.gov/books/" in url
                 ]
             except Exception as e:
                 logger.warning(f"Could not fetch links for PMID {pubmed_id}: {e}")
@@ -141,9 +134,7 @@ class GeneReviewService:
                 book_urls = [book_url]
 
         if not book_urls:
-            raise DataNotFoundError(
-                f"Could not find NCBI Bookshelf link for PMID: {pubmed_id}"
-            )
+            raise DataNotFoundError(f"Could not find NCBI Bookshelf link for PMID: {pubmed_id}")
 
         # Use the first book URL
         book_url = book_urls[0]
@@ -155,15 +146,11 @@ class GeneReviewService:
 
         if include_fulltext:
             try:
-                fulltext_result = await self.client.scrape_genereview_comprehensive(
-                    book_url
-                )
+                fulltext_result = await self.client.scrape_genereview_comprehensive(book_url)
                 if not fulltext_result.get("error"):
                     # Convert sections
                     sections_data = {}
-                    for key, section_data in fulltext_result.get(
-                        "sections", {}
-                    ).items():
+                    for key, section_data in fulltext_result.get("sections", {}).items():
                         sections_data[key] = GeneReviewSection(
                             title=section_data["title"],
                             content=section_data["content"],

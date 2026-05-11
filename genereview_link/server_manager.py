@@ -1,8 +1,9 @@
 """Unified server manager for GeneReview Link with multiple transports."""
 
 import asyncio
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Optional, AsyncGenerator, Any
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
@@ -38,8 +39,8 @@ class UnifiedServerManager:
 
     def __init__(self) -> None:
         """Initialize the unified server manager."""
-        self.app: Optional[FastAPI] = None
-        self.mcp: Optional[FastMCP] = None
+        self.app: FastAPI | None = None
+        self.mcp: FastMCP | None = None
         self.shutdown_event = asyncio.Event()
         self._current_transport = "unknown"
 
@@ -67,8 +68,7 @@ class UnifiedServerManager:
         app = FastAPI(
             title="GeneReview Link Server",
             description=(
-                "A comprehensive API for searching, fetching, and "
-                "scraping NCBI GeneReviews data."
+                "A comprehensive API for searching, fetching, and scraping NCBI GeneReviews data."
             ),
             version="2.0.0",
             lifespan=self.lifespan,
@@ -79,9 +79,7 @@ class UnifiedServerManager:
         app.add_middleware(RequestLoggingMiddleware)
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=[
-                origin.strip() for origin in settings.CORS_ORIGINS.split(",")
-            ],
+            allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",")],
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],

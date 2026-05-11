@@ -5,10 +5,11 @@ These tests verify the full scraping pipeline from HTTP request to parsed conten
 using recorded responses to ensure reproducible testing without network dependencies.
 """
 
+from pathlib import Path
+
 import pytest
 import respx
 from httpx import Response
-from pathlib import Path
 
 from genereview_link.api.eutils_client import EutilsClient
 
@@ -119,9 +120,7 @@ class TestErrorHandling:
         nbk_id = "NBK1247"
         expected_url = f"https://www.ncbi.nlm.nih.gov/books/{nbk_id}/"
 
-        respx.get(expected_url).mock(
-            return_value=Response(500, content=b"Internal Server Error")
-        )
+        respx.get(expected_url).mock(return_value=Response(500, content=b"Internal Server Error"))
 
         # Execute the scraping workflow - should handle 500 gracefully
         result = await client.scrape_genereview_book(expected_url)

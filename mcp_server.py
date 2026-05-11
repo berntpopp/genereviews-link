@@ -5,8 +5,8 @@ import asyncio
 import sys
 
 from genereview_link.config import ServerConfig
-from genereview_link.server_manager import UnifiedServerManager
 from genereview_link.logging_config import configure_structlog
+from genereview_link.server_manager import UnifiedServerManager
 
 
 def main() -> None:
@@ -19,7 +19,8 @@ def main() -> None:
         manager = UnifiedServerManager()
         asyncio.run(manager.start_stdio_server(config))
     except Exception as e:
-        print(f"MCP server error: {e}", file=sys.stderr)
+        # stderr-only diagnostic: stdout is reserved for MCP protocol frames
+        print(f"MCP server error: {e}", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
 

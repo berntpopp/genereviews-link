@@ -1,10 +1,11 @@
 """Client lifecycle management for EutilsClient with singleton pattern and distributed rate limiting."""
 
 import asyncio
-import time
-from typing import Optional, Dict, Union, Any, AsyncGenerator
 import threading
+import time
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any, Optional
 
 from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.config import settings
@@ -22,7 +23,7 @@ class DistributedRateLimiter:
     def __init__(
         self,
         requests_per_second: float,
-        shared_state_file: Optional[str] = None,
+        shared_state_file: str | None = None,
     ):
         """Initialize the distributed rate limiter.
 
@@ -58,18 +59,14 @@ class DistributedRateLimiter:
 
                 if time_since_last < self.delay:
                     wait_time = self.delay - time_since_last
-                    logger.debug(
-                        f"Rate limiting (distributed): waiting {wait_time:.3f}s"
-                    )
+                    logger.debug(f"Rate limiting (distributed): waiting {wait_time:.3f}s")
                     await asyncio.sleep(wait_time)
 
                 # Update shared state with current time
                 self._write_shared_state(time.time())
 
             except Exception as e:
-                logger.warning(
-                    f"Distributed rate limiting failed, falling back to local: {e}"
-                )
+                logger.warning(f"Distributed rate limiting failed, falling back to local: {e}")
                 # Fallback to local timing
                 time_since_last = current_time - self._local_last_request
                 if time_since_last < self.delay:
@@ -82,7 +79,7 @@ class DistributedRateLimiter:
         if not self.shared_state_file:
             return 0.0
         try:
-            with open(self.shared_state_file, "r") as f:
+            with open(self.shared_state_file) as f:
                 return float(f.read().strip())
         except (FileNotFoundError, ValueError):
             return 0.0
@@ -118,7 +115,7 @@ class ClientManager:
             return
 
         self._initialized = True
-        self._client: Optional[EutilsClient] = None
+        self._client: EutilsClient | None = None
         self._client_lock = asyncio.Lock()
         self._shutdown_event = asyncio.Event()
 
@@ -150,8 +147,8 @@ class ClientManager:
                     # Create client with rate limiter injection
                     self._client = EutilsClient()
                     # Replace the client's rate limiting with our distributed version
-                    setattr(self._client, "_rate_limiter", self._rate_limiter)
-                    setattr(self._client, "_distributed_wait", self._rate_limiter.wait_if_needed)
+                    self._client._rate_limiter = self._rate_limiter
+                    self._client._distributed_wait = self._rate_limiter.wait_if_needed
 
         return self._client
 
@@ -175,7 +172,7 @@ class ClientManager:
 
         self._shutdown_event.set()
 
-    async def health_check(self, test_connection: bool = False) -> Dict[str, Any]:
+    async def health_check(self, test_connection: bool = False) -> dict[str, Any]:
         """Check the health of the client connection."""
         try:
             client = await self.get_client()
@@ -225,7 +222,7 @@ class ClientManager:
 
 
 # Global instance (lazily initialized)
-_client_manager: Optional[ClientManager] = None
+_client_manager: ClientManager | None = None
 
 
 async def get_managed_client() -> AsyncGenerator[EutilsClient, None]:

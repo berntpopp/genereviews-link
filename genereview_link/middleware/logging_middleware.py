@@ -2,7 +2,8 @@
 
 import time
 import uuid
-from typing import Callable, Optional, List, Any
+from collections.abc import Callable
+from typing import Any
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -13,7 +14,7 @@ from genereview_link.logging_config import get_logger, log_api_metrics
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Middleware for request logging with correlation IDs and performance metrics."""
 
-    def __init__(self, app: Any, exclude_paths: Optional[List[str]] = None) -> None:
+    def __init__(self, app: Any, exclude_paths: list[str] | None = None) -> None:
         """Initialize the logging middleware.
 
         Args:

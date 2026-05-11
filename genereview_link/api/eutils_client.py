@@ -8,14 +8,14 @@ section extraction.
 import asyncio
 import re
 import warnings
-from typing import Any, List, Dict, Optional, Union
+from typing import Any
 from xml.etree import ElementTree as ET
 
 import httpx
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 from genereview_link.config import settings
-from genereview_link.logging_config import get_logger, PerformanceLogger
+from genereview_link.logging_config import PerformanceLogger, get_logger
 
 # Suppress XML parsing warnings when using BeautifulSoup on HTML content
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
@@ -38,8 +38,7 @@ class EutilsClient:
                 "Chrome/120.0.0.0 Safari/537.36"
             ),
             "Accept": (
-                "text/html,application/xhtml+xml,application/xml;q=0.9,"
-                "image/webp,*/*;q=0.8"
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
             ),
             "Accept-Language": "en-US,en;q=0.5",
             "Accept-Encoding": "gzip, deflate, br",
@@ -73,9 +72,7 @@ class EutilsClient:
             # limits
 
         try:
-            response = await self.client.get(
-                f"{self.base_url}/{endpoint}", params=params
-            )
+            response = await self.client.get(f"{self.base_url}/{endpoint}", params=params)
             response.raise_for_status()
             return response.json()  # type: ignore[no-any-return]
         except httpx.ConnectError as e:
@@ -86,9 +83,8 @@ class EutilsClient:
                 error=str(e),
             )
             raise ConnectionError(
-                "Unable to connect to NCBI E-utilities. "
-                "Please check your internet connection."
-            )
+                "Unable to connect to NCBI E-utilities. Please check your internet connection."
+            ) from e
         except httpx.TimeoutException as e:
             logger.error(
                 "Request timeout to NCBI E-utils",
@@ -96,9 +92,7 @@ class EutilsClient:
                 base_url=self.base_url,
                 error=str(e),
             )
-            raise TimeoutError(
-                "Request to NCBI E-utilities timed out. Please try again."
-            )
+            raise TimeoutError("Request to NCBI E-utilities timed out. Please try again.") from e
         except httpx.HTTPStatusError as e:
             logger.error(
                 "HTTP error from NCBI E-utils",
@@ -109,13 +103,12 @@ class EutilsClient:
             )
             if e.response.status_code == 429:
                 raise Exception(
-                    "Rate limit exceeded. Please wait before making more " "requests."
-                )
+                    "Rate limit exceeded. Please wait before making more requests."
+                ) from e
             elif e.response.status_code == 403:
                 raise Exception(
-                    "Access forbidden. Please check your API key or request "
-                    "parameters."
-                )
+                    "Access forbidden. Please check your API key or request parameters."
+                ) from e
             raise
         except Exception as e:
             logger.error(
@@ -146,8 +139,7 @@ class EutilsClient:
                     # Exponential backoff for 403 errors
                     wait_time = (2**attempt) * self.rate_limit_delay * 5
                     logger.warning(
-                        f"403 error on attempt {attempt + 1}, "
-                        f"retrying in {wait_time:.2f}s"
+                        f"403 error on attempt {attempt + 1}, retrying in {wait_time:.2f}s"
                     )
                     await asyncio.sleep(wait_time)
                     continue
@@ -179,9 +171,7 @@ class EutilsClient:
             # limits
 
         try:
-            response = await self.client.get(
-                f"{self.base_url}/{endpoint}", params=params
-            )
+            response = await self.client.get(f"{self.base_url}/{endpoint}", params=params)
             response.raise_for_status()
             return ET.fromstring(response.text)
         except httpx.ConnectError as e:
@@ -192,9 +182,8 @@ class EutilsClient:
                 error=str(e),
             )
             raise ConnectionError(
-                "Unable to connect to NCBI E-utilities. "
-                "Please check your internet connection."
-            )
+                "Unable to connect to NCBI E-utilities. Please check your internet connection."
+            ) from e
         except httpx.TimeoutException as e:
             logger.error(
                 "Request timeout to NCBI E-utils XML endpoint",
@@ -202,9 +191,7 @@ class EutilsClient:
                 base_url=self.base_url,
                 error=str(e),
             )
-            raise TimeoutError(
-                "Request to NCBI E-utilities timed out. Please try again."
-            )
+            raise TimeoutError("Request to NCBI E-utilities timed out. Please try again.") from e
         except httpx.HTTPStatusError as e:
             logger.error(
                 "HTTP error from NCBI E-utils XML endpoint",
@@ -215,13 +202,12 @@ class EutilsClient:
             )
             if e.response.status_code == 429:
                 raise Exception(
-                    "Rate limit exceeded. Please wait before making more " "requests."
-                )
+                    "Rate limit exceeded. Please wait before making more requests."
+                ) from e
             elif e.response.status_code == 403:
                 raise Exception(
-                    "Access forbidden. Please check your API key or request "
-                    "parameters."
-                )
+                    "Access forbidden. Please check your API key or request parameters."
+                ) from e
             raise
         except Exception as e:
             logger.error(
@@ -232,7 +218,7 @@ class EutilsClient:
             )
             raise
 
-    async def search_genereview_pmid(self, gene_symbol: str) -> Optional[str]:
+    async def search_genereview_pmid(self, gene_symbol: str) -> str | None:
         """Search for a GeneReview PubMed ID using a gene symbol."""
         params = {
             "db": "pubmed",
@@ -243,7 +229,7 @@ class EutilsClient:
         id_list = data.get("esearchresult", {}).get("idlist", [])
         return id_list[0] if id_list else None
 
-    async def get_book_url_from_pmid(self, pubmed_id: str) -> Optional[str]:
+    async def get_book_url_from_pmid(self, pubmed_id: str) -> str | None:
         """Get the NCBI Bookshelf URL from a PubMed ID."""
         params = {
             "dbfrom": "pubmed",
@@ -260,14 +246,10 @@ class EutilsClient:
         for db in linksetdbs:
             if db.get("dbto") == "books":
                 links = db.get("links", [])
-                return (
-                    f"https://www.ncbi.nlm.nih.gov/books/NBK{links[0]}/"
-                    if links
-                    else None
-                )
+                return f"https://www.ncbi.nlm.nih.gov/books/NBK{links[0]}/" if links else None
         return None
 
-    async def scrape_genereview_book(self, book_url: str) -> Dict[str, Any]:
+    async def scrape_genereview_book(self, book_url: str) -> dict[str, Any]:
         """Scrape the main sections of a GeneReview book page using enhanced parsing."""
         scrape_logger = logger.bind(url=book_url, operation="enhanced_scrape")
 
@@ -275,21 +257,17 @@ class EutilsClient:
             try:
                 scrape_logger.debug("Starting enhanced book scraping")
                 response = await self._make_web_request(book_url)
-                perf.log_milestone(
-                    "response_received", response_size=len(response.text)
-                )
+                perf.log_milestone("response_received", response_size=len(response.text))
 
                 soup = BeautifulSoup(response.text, "lxml")
 
                 # Use enhanced content finding strategy
                 content_div = self._find_main_content(soup)
                 if not content_div:
-                    scrape_logger.warning(
-                        "No main content found with enhanced strategies"
-                    )
+                    scrape_logger.warning("No main content found with enhanced strategies")
                     return {}
 
-                results: Dict[str, Any] = {}
+                results: dict[str, Any] = {}
 
                 # Extract title using enhanced strategy
                 title = self._extract_title(soup, content_div)
@@ -301,17 +279,13 @@ class EutilsClient:
                 sections = self._extract_hierarchical_sections(content_div)
                 if sections:
                     results["content"] = sections
-                    perf.log_milestone(
-                        "sections_extracted", section_count=len(sections)
-                    )
+                    perf.log_milestone("sections_extracted", section_count=len(sections))
 
                 # Extract metadata using enhanced strategy
                 metadata = self._extract_metadata(soup, content_div)
                 if metadata:
                     results["metadata"] = metadata
-                    perf.log_milestone(
-                        "metadata_extracted", metadata_fields=len(metadata)
-                    )
+                    perf.log_milestone("metadata_extracted", metadata_fields=len(metadata))
 
                 sections_found = len(sections) if sections else 0
                 perf.add_context(
@@ -339,9 +313,7 @@ class EutilsClient:
                 )
                 return {"error": str(e)}
 
-    async def search_genereviews(
-        self, gene_symbol: str, retmax: int = 20
-    ) -> Dict[str, Any]:
+    async def search_genereviews(self, gene_symbol: str, retmax: int = 20) -> dict[str, Any]:
         """Enhanced search for GeneReviews returning multiple results with metadata."""
         params = {
             "db": "pubmed",
@@ -362,7 +334,7 @@ class EutilsClient:
             "querykey": result.get("querykey", ""),
         }
 
-    async def fetch_abstract(self, pubmed_id: str) -> Dict[str, Any]:
+    async def fetch_abstract(self, pubmed_id: str) -> dict[str, Any]:
         """Fetch abstract and metadata from PubMed using efetch."""
         params = {
             "db": "pubmed",
@@ -390,9 +362,7 @@ class EutilsClient:
 
         return article_data
 
-    def _parse_regular_article(
-        self, article: ET.Element, pubmed_id: str
-    ) -> Dict[str, Any]:
+    def _parse_regular_article(self, article: ET.Element, pubmed_id: str) -> dict[str, Any]:
         """Parse regular PubmedArticle XML structure."""
         article_data = {"pmid": pubmed_id}
 
@@ -458,15 +428,11 @@ class EutilsClient:
                 if day is not None and day.text:
                     date_parts.append(day.text)
 
-                article_data["publication_date"] = (
-                    "-".join(date_parts) if date_parts else ""
-                )
+                article_data["publication_date"] = "-".join(date_parts) if date_parts else ""
 
         return article_data
 
-    def _parse_book_article(
-        self, book_article: ET.Element, pubmed_id: str
-    ) -> Dict[str, Any]:
+    def _parse_book_article(self, book_article: ET.Element, pubmed_id: str) -> dict[str, Any]:
         """Parse PubmedBookArticle XML structure (for GeneReviews)."""
         article_data = {"pmid": pubmed_id}
 
@@ -535,9 +501,7 @@ class EutilsClient:
             if day is not None and day.text:
                 date_parts.append(day.text)
 
-            article_data["publication_date"] = (
-                "-".join(date_parts) if date_parts else ""
-            )
+            article_data["publication_date"] = "-".join(date_parts) if date_parts else ""
         else:
             # Fallback to book publication date
             book_pub_date = book_document.find(".//Book/PubDate")
@@ -548,7 +512,7 @@ class EutilsClient:
 
         return article_data
 
-    async def get_all_links(self, pubmed_id: str) -> Dict[str, List[str]]:
+    async def get_all_links(self, pubmed_id: str) -> dict[str, list[str]]:
         """Get all available links from a PubMed ID using elink."""
         params = {"dbfrom": "pubmed", "id": pubmed_id, "cmd": "prlinks"}
         root = await self._make_xml_request("elink.fcgi", params)
@@ -563,7 +527,7 @@ class EutilsClient:
 
         return {"urls": urls}
 
-    async def scrape_genereview_comprehensive(self, book_url: str) -> Dict[str, Any]:
+    async def scrape_genereview_comprehensive(self, book_url: str) -> dict[str, Any]:
         """Comprehensive scraping of a GeneReview book page with improved structure and fault tolerance."""
         try:
             response = await self._make_web_request(book_url)
@@ -573,7 +537,7 @@ class EutilsClient:
             nbk_match = re.search(r"NBK(\d+)", book_url)
             nbk_id = nbk_match.group(1) if nbk_match else None
 
-            results: Dict[str, Any] = {
+            results: dict[str, Any] = {
                 "nbk_id": nbk_id,
                 "url": book_url,
                 "title": "",
@@ -604,7 +568,7 @@ class EutilsClient:
             logger.error(f"Error scraping comprehensive content from {book_url}: {e}")
             return {"error": str(e)}
 
-    def _find_main_content(self, soup: BeautifulSoup) -> Optional[BeautifulSoup]:
+    def _find_main_content(self, soup: BeautifulSoup) -> BeautifulSoup | None:
         """Find the main content container using GeneReviews-specific strategies."""
         # Strategy 1: Look for the standard GeneReviews main content container
         main_content = soup.find("div", {"class": "main-content lit-style"})
@@ -652,9 +616,7 @@ class EutilsClient:
         all_containers = soup.find_all(["div", "section", "article"])
         for container in all_containers:
             headings = container.find_all(["h2", "h3"])
-            if (
-                len(headings) >= 3
-            ):  # Likely the main content if it has multiple sections
+            if len(headings) >= 3:  # Likely the main content if it has multiple sections
                 return container
 
         # Strategy 7: Use the body as fallback
@@ -726,9 +688,7 @@ class EutilsClient:
 
         return "Unknown Document"
 
-    def _extract_metadata(
-        self, soup: BeautifulSoup, content_div: BeautifulSoup
-    ) -> Dict[str, Any]:
+    def _extract_metadata(self, soup: BeautifulSoup, content_div: BeautifulSoup) -> dict[str, Any]:
         """Extract comprehensive metadata from the document."""
         metadata = {}
 
@@ -759,7 +719,7 @@ class EutilsClient:
 
         return metadata
 
-    def _extract_authors(self, content_div: BeautifulSoup) -> Optional[str]:
+    def _extract_authors(self, content_div: BeautifulSoup) -> str | None:
         """Extract author information."""
         patterns = [
             re.compile(r"Author[s]?\s*:", re.I),
@@ -782,7 +742,7 @@ class EutilsClient:
 
         return None
 
-    def _extract_update_info(self, content_div: BeautifulSoup) -> Optional[str]:
+    def _extract_update_info(self, content_div: BeautifulSoup) -> str | None:
         """Extract update information."""
         patterns = [
             re.compile(r"Last\s*(Updated?|Revision)", re.I),
@@ -800,7 +760,7 @@ class EutilsClient:
 
         return None
 
-    def _extract_publication_info(self, content_div: BeautifulSoup) -> Optional[str]:
+    def _extract_publication_info(self, content_div: BeautifulSoup) -> str | None:
         """Extract publication and copyright information."""
         patterns = [
             re.compile(r"Copyright", re.I),
@@ -817,7 +777,7 @@ class EutilsClient:
 
         return None
 
-    def _extract_last_updated(self, content_div: BeautifulSoup) -> Optional[str]:
+    def _extract_last_updated(self, content_div: BeautifulSoup) -> str | None:
         """Extract last updated date."""
         # Look for date patterns
         date_pattern = re.compile(
@@ -826,9 +786,7 @@ class EutilsClient:
             re.I,
         )
 
-        update_elements = content_div.find_all(
-            string=re.compile(r"updated?|revised?", re.I)
-        )
+        update_elements = content_div.find_all(string=re.compile(r"updated?|revised?", re.I))
         for elem in update_elements:
             parent = elem.parent
             if parent:
@@ -839,9 +797,9 @@ class EutilsClient:
 
         return None
 
-    def _extract_references(self, content_div: BeautifulSoup) -> List[str]:
+    def _extract_references(self, content_div: BeautifulSoup) -> list[str]:
         """Extract and parse references section as a list of strings."""
-        references: List[str] = []
+        references: list[str] = []
 
         # Find references section
         ref_headings = content_div.find_all(
@@ -899,15 +857,11 @@ class EutilsClient:
                         ref = re.sub(r"\s+", " ", ref)  # Normalize whitespace
                         ref = re.sub(r"^\d+\.\s*", "", ref)  # Remove leading numbers
                         ref = ref.strip()
-                        if ref and not ref.lower().startswith(
-                            ("http", "www", "doi:", "pmid:")
-                        ):
+                        if ref and not ref.lower().startswith(("http", "www", "doi:", "pmid:")):
                             references.append(ref)
 
         # If the above didn't work well, try a simpler approach
-        if (
-            len(references) < 5
-        ):  # If we didn't get many references, try alternative method
+        if len(references) < 5:  # If we didn't get many references, try alternative method
             references = []
 
             # Get all text after references heading and split on common patterns
@@ -951,7 +905,7 @@ class EutilsClient:
 
         return unique_refs[:50]  # Limit to 50 references max
 
-    def _parse_reference(self, ref_text: str) -> Dict[str, Any]:
+    def _parse_reference(self, ref_text: str) -> dict[str, Any]:
         """Parse a single reference into structured data."""
         ref_data = {"text": ref_text}
 
@@ -1006,7 +960,7 @@ class EutilsClient:
 
     def _extract_hierarchical_sections(
         self, content_div: BeautifulSoup
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         """Extract sections with hierarchical structure optimized for GeneReviews."""
         sections = {}
 
@@ -1046,9 +1000,7 @@ class EutilsClient:
                         continue
 
                     # Extract content for this subsection
-                    subsection_content = self._extract_subsection_content(
-                        h3, section_div
-                    )
+                    subsection_content = self._extract_subsection_content(h3, section_div)
 
                     if subsection_content and len(subsection_content) > 30:
                         subsection_key = self._normalize_section_key(subsection_title)
@@ -1102,7 +1054,7 @@ class EutilsClient:
 
     def _extract_sections_by_headings(
         self, content_div: BeautifulSoup
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         """Fallback method: extract sections based on h2/h3 heading structure."""
         sections = {}
 
@@ -1139,13 +1091,9 @@ class EutilsClient:
                     # Process h3 as subsection
                     subsection_title = current.get_text().strip()
                     if subsection_title and len(subsection_title) >= 3:
-                        subsection_content = self._extract_heading_content(
-                            current, ["h2", "h3"]
-                        )
+                        subsection_content = self._extract_heading_content(current, ["h2", "h3"])
                         if subsection_content and len(subsection_content) > 30:
-                            subsection_key = self._normalize_section_key(
-                                subsection_title
-                            )
+                            subsection_key = self._normalize_section_key(subsection_title)
                             subsections[subsection_key] = {
                                 "title": subsection_title,
                                 "content": subsection_content,
@@ -1213,11 +1161,7 @@ class EutilsClient:
             "email:",
         ]
 
-        for phrase in unwanted_phrases:
-            if phrase in text_lower:
-                return False
-
-        return True
+        return all(phrase not in text_lower for phrase in unwanted_phrases)
 
     def _clean_content(self, content: str) -> str:
         """Clean and normalize content text."""

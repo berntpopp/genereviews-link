@@ -3,10 +3,10 @@
 import logging
 import sys
 import time
-from typing import Any, Optional
+from typing import Any
 
-import structlog
 import orjson
+import structlog
 from structlog.types import EventDict, Processor
 
 from genereview_link.config import settings
@@ -25,9 +25,7 @@ def add_log_level(logger: Any, method_name: str, event_dict: EventDict) -> Event
     return event_dict
 
 
-def add_service_context(
-    logger: Any, method_name: str, event_dict: EventDict
-) -> EventDict:
+def add_service_context(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
     """Add service context information."""
     event_dict.update(
         {
@@ -68,12 +66,14 @@ def configure_structlog() -> None:
 
     if use_json:
         # Production: JSON logging
-        processors = common_processors + [
-            structlog.processors.JSONRenderer(serializer=json_serializer)
+        processors = [
+            *common_processors,
+            structlog.processors.JSONRenderer(serializer=json_serializer),
         ]
     else:
         # Development: Console logging with colors
-        processors = common_processors + [
+        processors = [
+            *common_processors,
             structlog.processors.add_log_level,
             structlog.dev.ConsoleRenderer(colors=True),
         ]
@@ -124,7 +124,7 @@ class LogContext:
         """
         self.logger = logger
         self.context = context
-        self.bound_logger: Optional[structlog.stdlib.BoundLogger] = None
+        self.bound_logger: structlog.stdlib.BoundLogger | None = None
 
     def __enter__(self) -> structlog.stdlib.BoundLogger:
         """Enter the context and return bound logger."""
@@ -233,7 +233,7 @@ class PerformanceLogger:
         """
         self.logger = logger.bind(operation=operation, **context)
         self.operation = operation
-        self.start_time: Optional[float] = None
+        self.start_time: float | None = None
 
     def __enter__(self) -> "PerformanceLogger":
         """Enter the context and start timing."""

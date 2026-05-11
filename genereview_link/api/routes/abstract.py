@@ -5,11 +5,13 @@ for PubMed articles by ID.
 """
 
 import logging
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 
-from genereview_link.models.genereview_models import AbstractData
-from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.eutils_client import EutilsClient
+from genereview_link.models.genereview_models import AbstractData
 
 router = APIRouter(prefix="/abstract", tags=["Abstract"])
 
@@ -22,7 +24,7 @@ router = APIRouter(prefix="/abstract", tags=["Abstract"])
 )
 async def get_abstract(
     pubmed_id: str,
-    client: EutilsClient = Depends(get_managed_client),
+    client: Annotated[EutilsClient, Depends(get_managed_client)],
 ) -> AbstractData:
     """
     Fetch abstract and metadata from PubMed using NCBI E-utils efetch.
@@ -50,10 +52,8 @@ async def get_abstract(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(
-            f"Error fetching abstract for PMID {pubmed_id}: {e}", exc_info=True
-        )
+        logging.error(f"Error fetching abstract for PMID {pubmed_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="An error occurred while fetching the abstract.",
-        )
+        ) from e

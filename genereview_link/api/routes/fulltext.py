@@ -5,15 +5,17 @@ Provides REST API endpoint for retrieving comprehensive content from NCBI Booksh
 
 import logging
 import re
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 
+from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.models.genereview_models import (
     FullTextData,
-    GeneReviewSection,
     FullTextMetadata,
+    GeneReviewSection,
 )
-from genereview_link.api.eutils_client import EutilsClient
-from genereview_link.api.client_manager import get_managed_client
 
 router = APIRouter(prefix="/fulltext", tags=["Full Text"])
 
@@ -26,7 +28,7 @@ router = APIRouter(prefix="/fulltext", tags=["Full Text"])
 )
 async def get_fulltext(
     nbk_id: str,
-    client: EutilsClient = Depends(get_managed_client),
+    client: Annotated[EutilsClient, Depends(get_managed_client)],
 ) -> FullTextData:
     """
     Scrape comprehensive content from an NCBI Bookshelf page.
@@ -38,9 +40,7 @@ async def get_fulltext(
         # Clean up NBK ID - remove NBK prefix if present and ensure it's valid
         clean_id = re.sub(r"^NBK", "", nbk_id)
         if not clean_id.isdigit():
-            raise HTTPException(
-                status_code=400, detail=f"Invalid NBK ID format: {nbk_id}"
-            )
+            raise HTTPException(status_code=400, detail=f"Invalid NBK ID format: {nbk_id}")
 
         # Construct the URL
         book_url = f"https://www.ncbi.nlm.nih.gov/books/NBK{clean_id}/"
@@ -84,4 +84,4 @@ async def get_fulltext(
         raise HTTPException(
             status_code=500,
             detail="An error occurred while scraping the full text.",
-        )
+        ) from e

@@ -1,6 +1,7 @@
 """Command line interface for the GeneReview Link unified server."""
 
 import argparse
+
 from .config import ServerConfig
 
 
@@ -22,12 +23,8 @@ def create_parser() -> argparse.ArgumentParser:
         default="INFO",
         help="Log level",
     )
-    parser.add_argument(
-        "--disable-docs", action="store_true", help="Disable API documentation"
-    )
-    parser.add_argument(
-        "--dev", action="store_true", help="Development mode with auto-reload"
-    )
+    parser.add_argument("--disable-docs", action="store_true", help="Disable API documentation")
+    parser.add_argument("--dev", action="store_true", help="Development mode with auto-reload")
     return parser
 
 

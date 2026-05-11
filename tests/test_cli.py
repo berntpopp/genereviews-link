@@ -5,10 +5,11 @@ These tests ensure the command-line interface works correctly
 with various argument combinations and configurations.
 """
 
-import pytest
 import argparse
 
-from genereview_link.cli import create_parser, create_config_from_args
+import pytest
+
+from genereview_link.cli import create_config_from_args, create_parser
 from genereview_link.config import ServerConfig
 
 
@@ -59,9 +60,9 @@ class TestCLIParser:
     def test_parse_custom_host_port(self):
         """Test parsing custom host and port."""
         parser = create_parser()
-        args = parser.parse_args(["--host", "0.0.0.0", "--port", "9000"])
+        args = parser.parse_args(["--host", "0.0.0.0", "--port", "9000"])  # noqa: S104
 
-        assert args.host == "0.0.0.0"
+        assert args.host == "0.0.0.0"  # noqa: S104
         assert args.port == 9000
 
     def test_parse_custom_mcp_path(self):
@@ -168,7 +169,7 @@ class TestConfigFromArgs:
                 "--transport",
                 "stdio",
                 "--host",
-                "0.0.0.0",
+                "0.0.0.0",  # noqa: S104
                 "--port",
                 "9000",
                 "--mcp-path",
@@ -181,7 +182,7 @@ class TestConfigFromArgs:
         config = create_config_from_args(args)
 
         assert config.transport == "stdio"
-        assert config.host == "0.0.0.0"
+        assert config.host == "0.0.0.0"  # noqa: S104
         assert config.port == 9000
         assert config.mcp_path == "/api/mcp"
         assert config.enable_docs is False

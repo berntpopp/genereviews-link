@@ -3,12 +3,14 @@
 Provides REST API endpoint for searching NCBI database.
 """
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from genereview_link.models.genereview_models import SearchResult
-from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.api.client_manager import get_managed_client
-from genereview_link.logging_config import get_logger, PerformanceLogger
+from genereview_link.api.eutils_client import EutilsClient
+from genereview_link.logging_config import PerformanceLogger, get_logger
+from genereview_link.models.genereview_models import SearchResult
 
 router = APIRouter(prefix="/search", tags=["Search"])
 logger = get_logger(__name__)
@@ -23,10 +25,8 @@ logger = get_logger(__name__)
 async def search_genereviews(
     request: Request,
     gene_symbol: str,
-    retmax: int = Query(
-        20, description="Maximum number of results to return", ge=1, le=100
-    ),
-    client: EutilsClient = Depends(get_managed_client),
+    client: Annotated[EutilsClient, Depends(get_managed_client)],
+    retmax: int = Query(20, description="Maximum number of results to return", ge=1, le=100),
 ) -> SearchResult:
     """Search for GeneReviews associated with the given gene symbol.
 
@@ -69,4 +69,4 @@ async def search_genereviews(
             raise HTTPException(
                 status_code=500,
                 detail="An error occurred while searching for GeneReviews.",
-            )
+            ) from e

@@ -4,11 +4,13 @@ Provides REST API endpoint for retrieving all available links for PubMed article
 """
 
 import logging
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 
-from genereview_link.models.genereview_models import LinkData
-from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.eutils_client import EutilsClient
+from genereview_link.models.genereview_models import LinkData
 
 router = APIRouter(prefix="/links", tags=["Links"])
 
@@ -21,7 +23,7 @@ router = APIRouter(prefix="/links", tags=["Links"])
 )
 async def get_links(
     pubmed_id: str,
-    client: EutilsClient = Depends(get_managed_client),
+    client: Annotated[EutilsClient, Depends(get_managed_client)],
 ) -> LinkData:
     """
     Get all available links from a PubMed ID using NCBI E-utils elink.
@@ -36,4 +38,4 @@ async def get_links(
         logging.error(f"Error fetching links for PMID {pubmed_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500, detail="An error occurred while fetching links."
-        )
+        ) from e

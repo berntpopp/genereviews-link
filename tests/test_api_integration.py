@@ -5,14 +5,15 @@ These tests validate the REST API endpoints and ensure they work correctly
 with the enhanced scraping system.
 """
 
+import asyncio
+
 import pytest
 import pytest_asyncio
-import asyncio
-from httpx import AsyncClient
 from fastapi import FastAPI
+from httpx import AsyncClient
 
-from genereview_link.server_manager import UnifiedServerManager
 from genereview_link.config import ServerConfig
+from genereview_link.server_manager import UnifiedServerManager
 
 
 @pytest.fixture(scope="session")
@@ -139,8 +140,7 @@ class TestAPIEndpoints:
             # Content should be substantial
             content_length = len(section_data["content"])
             assert content_length > 100, (
-                f"Section {section_key} should have substantial content: "
-                f"{content_length}"
+                f"Section {section_key} should have substantial content: {content_length}"
             )
 
     @pytest.mark.asyncio
@@ -160,7 +160,7 @@ class TestAPIEndpoints:
         assert "title" in data
 
         # Should have comprehensive data
-        if "full_text_data" in data and data["full_text_data"]:
+        if data.get("full_text_data"):
             full_text = data["full_text_data"]
             assert "sections" in full_text
             assert len(full_text["sections"]) >= 5, "Should have multiple sections"
@@ -259,9 +259,7 @@ class TestAPIPerformance:
         data = response.json()
         if "sections" in data:
             section_count = len(data["sections"])
-            assert (
-                section_count >= 5
-            ), f"Should return substantial data: {section_count} sections"
+            assert section_count >= 5, f"Should return substantial data: {section_count} sections"
 
 
 class TestAPIDataConsistency:
@@ -298,9 +296,9 @@ class TestAPIDataConsistency:
                     abs_words = set(abs_title.split())
                     common_words = comp_words & abs_words
 
-                    assert (
-                        len(common_words) >= 2
-                    ), f"Titles should share keywords: '{comp_title}' vs '{abs_title}'"
+                    assert len(common_words) >= 2, (
+                        f"Titles should share keywords: '{comp_title}' vs '{abs_title}'"
+                    )
 
         # Extract NBK ID from book URL
         if book_url and "NBK" in book_url:
@@ -351,15 +349,15 @@ class TestAPICaching:
         first_response = responses[0]
         for i, response in enumerate(responses[1:], 1):
             # Compare key structure and data
-            assert (
-                response.keys() == first_response.keys()
-            ), f"Response {i} has different keys than first response"
-            assert (
-                response["count"] == first_response["count"]
-            ), f"Response {i} has different count than first response"
-            assert (
-                response["ids"] == first_response["ids"]
-            ), f"Response {i} has different ids than first response"
+            assert response.keys() == first_response.keys(), (
+                f"Response {i} has different keys than first response"
+            )
+            assert response["count"] == first_response["count"], (
+                f"Response {i} has different count than first response"
+            )
+            assert response["ids"] == first_response["ids"], (
+                f"Response {i} has different ids than first response"
+            )
 
     @pytest.mark.asyncio
     async def test_different_genes_different_results(self, client: AsyncClient):
@@ -380,9 +378,9 @@ class TestAPICaching:
             result2 = results[gene2]
 
             # Results should be different (at least in IDs)
-            assert (
-                result1["ids"] != result2["ids"]
-            ), f"Different genes should have different results: {gene1} vs {gene2}"
+            assert result1["ids"] != result2["ids"], (
+                f"Different genes should have different results: {gene1} vs {gene2}"
+            )
 
 
 class TestAPIDocumentation:

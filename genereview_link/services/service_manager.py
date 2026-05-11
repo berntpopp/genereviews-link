@@ -2,12 +2,13 @@
 
 import asyncio
 import threading
-from typing import Optional, Union, AsyncGenerator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Optional
 
-from genereview_link.services.genereview_service import GeneReviewService
 from genereview_link.api.client_manager import get_client_manager
 from genereview_link.logging_config import get_logger
+from genereview_link.services.genereview_service import GeneReviewService
 
 logger = get_logger(__name__)
 
@@ -32,7 +33,7 @@ class ServiceManager:
             return
 
         self._initialized = True
-        self._service: Optional[GeneReviewService] = None
+        self._service: GeneReviewService | None = None
         self._service_lock = asyncio.Lock()
 
         logger.info("ServiceManager initialized")
@@ -70,7 +71,7 @@ class ServiceManager:
 
 
 # Global instance (lazily initialized)
-_service_manager: Optional[ServiceManager] = None
+_service_manager: ServiceManager | None = None
 
 
 async def get_managed_service() -> AsyncGenerator[GeneReviewService, None]:

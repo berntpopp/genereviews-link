@@ -5,6 +5,7 @@ Manages environment variables and application settings using Pydantic.
 
 from dataclasses import dataclass
 from typing import Literal
+
 from pydantic_settings import BaseSettings
 
 

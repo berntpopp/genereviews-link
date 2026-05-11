@@ -5,10 +5,11 @@ These tests validate the parsing methods independently of network requests,
 using saved HTML fixtures from actual GeneReviews pages.
 """
 
-import pytest
 import warnings
-from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 from pathlib import Path
+
+import pytest
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 from genereview_link.api.eutils_client import EutilsClient
 
@@ -44,9 +45,7 @@ class TestMainContentExtraction:
         assert content_div.name == "div", "Main content should be a div element"
         # Should contain multiple h2 headings for sections
         h2_headings = content_div.find_all("h2")
-        assert (
-            len(h2_headings) >= 3
-        ), f"Should have multiple sections, found {len(h2_headings)}"
+        assert len(h2_headings) >= 3, f"Should have multiple sections, found {len(h2_headings)}"
 
     def test_find_main_content_li_fraumeni(self, client):
         """Test main content extraction from Li-Fraumeni syndrome fixture."""
@@ -58,9 +57,7 @@ class TestMainContentExtraction:
         assert content_div is not None, "Should find main content div"
         # Verify it contains substantial content
         text_length = len(content_div.get_text().strip())
-        assert (
-            text_length > 1000
-        ), f"Main content should be substantial, got {text_length} chars"
+        assert text_length > 1000, f"Main content should be substantial, got {text_length} chars"
 
 
 class TestTitleExtraction:
@@ -78,9 +75,7 @@ class TestTitleExtraction:
         assert "BRCA" in title, f"Title should mention BRCA, got: {title}"
         assert len(title) > 10, f"Title should be substantial, got: {title}"
         # Should not contain generic terms
-        assert (
-            "Bookshelf" not in title
-        ), f"Title should not contain 'Bookshelf': {title}"
+        assert "Bookshelf" not in title, f"Title should not contain 'Bookshelf': {title}"
 
     def test_extract_title_li_fraumeni(self, client):
         """Test title extraction from Li-Fraumeni syndrome fixture."""
@@ -91,9 +86,9 @@ class TestTitleExtraction:
         title = client._extract_title(soup, content_div)
 
         assert title, "Should extract a non-empty title"
-        assert any(
-            term in title.lower() for term in ["li-fraumeni", "syndrome", "cancer"]
-        ), f"Title should be relevant to Li-Fraumeni syndrome, got: {title}"
+        assert any(term in title.lower() for term in ["li-fraumeni", "syndrome", "cancer"]), (
+            f"Title should be relevant to Li-Fraumeni syndrome, got: {title}"
+        )
 
 
 class TestMetadataExtraction:
@@ -109,9 +104,7 @@ class TestMetadataExtraction:
 
         if authors:  # Authors might not always be present
             assert isinstance(authors, str), "Authors should be a string"
-            assert (
-                len(authors) > 5
-            ), f"Authors should be substantial if present: {authors}"
+            assert len(authors) > 5, f"Authors should be substantial if present: {authors}"
 
     def test_extract_update_info_brca1(self, client):
         """Test update info extraction from BRCA1 fixture."""
@@ -123,9 +116,9 @@ class TestMetadataExtraction:
 
         if update_info:  # Update info might not always be present
             assert isinstance(update_info, str), "Update info should be a string"
-            assert any(
-                term in update_info.lower() for term in ["update", "revised", "initial"]
-            ), f"Update info should contain relevant terms: {update_info}"
+            assert any(term in update_info.lower() for term in ["update", "revised", "initial"]), (
+                f"Update info should contain relevant terms: {update_info}"
+            )
 
 
 class TestHierarchicalSectionExtraction:
@@ -140,28 +133,20 @@ class TestHierarchicalSectionExtraction:
         sections = client._extract_hierarchical_sections(content_div)
 
         assert isinstance(sections, dict), "Sections should be a dictionary"
-        assert (
-            len(sections) >= 3
-        ), f"Should extract multiple sections, got {len(sections)}"
+        assert len(sections) >= 3, f"Should extract multiple sections, got {len(sections)}"
 
         # Check that sections have expected structure
         for section_key, section_data in sections.items():
-            assert isinstance(
-                section_data, dict
-            ), f"Section {section_key} should be a dict"
+            assert isinstance(section_data, dict), f"Section {section_key} should be a dict"
             assert "title" in section_data, f"Section {section_key} should have title"
-            assert (
-                "content" in section_data
-            ), f"Section {section_key} should have content"
+            assert "content" in section_data, f"Section {section_key} should have content"
             assert "level" in section_data, f"Section {section_key} should have level"
-            assert (
-                "subsections" in section_data
-            ), f"Section {section_key} should have subsections"
+            assert "subsections" in section_data, f"Section {section_key} should have subsections"
 
             # Content should be substantial
-            assert (
-                len(section_data["content"]) > 50
-            ), f"Section {section_key} content should be substantial"
+            assert len(section_data["content"]) > 50, (
+                f"Section {section_key} content should be substantial"
+            )
 
     def test_extract_hierarchical_sections_li_fraumeni(self, client):
         """Test hierarchical section extraction from Li-Fraumeni syndrome fixture."""
@@ -172,12 +157,10 @@ class TestHierarchicalSectionExtraction:
         sections = client._extract_hierarchical_sections(content_div)
 
         assert isinstance(sections, dict), "Sections should be a dictionary"
-        assert (
-            len(sections) >= 2
-        ), f"Should extract multiple sections, got {len(sections)}"
+        assert len(sections) >= 2, f"Should extract multiple sections, got {len(sections)}"
 
         # Look for common GeneReview sections
-        section_keys = [key.lower() for key in sections.keys()]
+        section_keys = [key.lower() for key in sections]
         expected_sections = [
             "summary",
             "diagnosis",
@@ -186,13 +169,11 @@ class TestHierarchicalSectionExtraction:
         ]
 
         found_expected = sum(
-            1
-            for expected in expected_sections
-            if any(expected in key for key in section_keys)
+            1 for expected in expected_sections if any(expected in key for key in section_keys)
         )
-        assert (
-            found_expected >= 2
-        ), f"Should find at least 2 common sections, found {found_expected} in {section_keys}"
+        assert found_expected >= 2, (
+            f"Should find at least 2 common sections, found {found_expected} in {section_keys}"
+        )
 
 
 class TestContentQuality:
@@ -215,9 +196,9 @@ class TestContentQuality:
             total_content_length += len(section_data.get("content", ""))
 
         # Should capture substantial content (at least 5KB of text)
-        assert (
-            total_content_length > 5000
-        ), f"Total content should be substantial, got {total_content_length} chars"
+        assert total_content_length > 5000, (
+            f"Total content should be substantial, got {total_content_length} chars"
+        )
 
         # Should have meaningful metadata
         assert isinstance(metadata, dict), "Metadata should be a dictionary"
@@ -232,9 +213,9 @@ class TestContentQuality:
 
         for section_key, section_data in sections.items():
             content = section_data.get("content", "").strip()
-            assert (
-                len(content) > 10
-            ), f"Section '{section_key}' should not be empty or trivial: '{content[:100]}...'"
+            assert len(content) > 10, (
+                f"Section '{section_key}' should not be empty or trivial: '{content[:100]}...'"
+            )
 
     def test_section_titles_meaningful(self, client):
         """Test that section titles are meaningful and not generic."""
@@ -246,14 +227,14 @@ class TestContentQuality:
 
         generic_titles = {"menu", "navigation", "skip", "search", "bookshelf"}
 
-        for section_key, section_data in sections.items():
+        for _section_key, section_data in sections.items():
             title = section_data.get("title", "").lower()
-            assert not any(
-                generic in title for generic in generic_titles
-            ), f"Section title should not be generic: '{section_data.get('title')}'"
-            assert (
-                len(title) > 2
-            ), f"Section title should be meaningful: '{section_data.get('title')}'"
+            assert not any(generic in title for generic in generic_titles), (
+                f"Section title should not be generic: '{section_data.get('title')}'"
+            )
+            assert len(title) > 2, (
+                f"Section title should be meaningful: '{section_data.get('title')}'"
+            )
 
 
 class TestErrorHandling:
@@ -312,6 +293,6 @@ class TestRegressionValidation:
                 total_words = len(set(content1.split()) | set(content2.split()))
                 overlap_ratio = overlap / total_words if total_words > 0 else 0
 
-                assert (
-                    overlap_ratio < 0.9
-                ), f"Sections {i} and {j} have too much overlap ({overlap_ratio:.2f})"
+                assert overlap_ratio < 0.9, (
+                    f"Sections {i} and {j} have too much overlap ({overlap_ratio:.2f})"
+                )
