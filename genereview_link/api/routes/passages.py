@@ -11,6 +11,7 @@ from typing import Annotated, Literal, cast
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 
+from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.models.genereview_models import (
     PassageDetail,
     PassageSearchResponse,
@@ -233,7 +234,19 @@ async def get_passage(
 ) -> PassageDetail:
     row = await repo.get_passage(passage_id)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"passage {passage_id!r} not found")
+        raise StructuredHTTPException(
+            status_code=404,
+            code="passage_not_found",
+            message=f"passage {passage_id!r} not found",
+            recovery_hint=(
+                "passage_id has the form NBKxxxx:NNNN. Use search_passages "
+                "to discover valid passage_ids, or get_chapter_section to "
+                "list all passages in a section."
+            ),
+            next_commands=[
+                {"tool": "search_passages", "arguments": {"q": "<your query>"}},
+            ],
+        )
     return PassageDetail(
         passage_id=row.passage_id,
         nbk_id=row.nbk_id,

@@ -63,3 +63,15 @@ async def test_get_passage_rejects_malformed_id_with_422():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get("/passages/not-a-passage-id")
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_unknown_passage_returns_structured_404():
+    app = _build_app(passage=None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK9999:9999")
+    assert resp.status_code == 404
+    detail = resp.json()["detail"]
+    assert detail["code"] == "passage_not_found"
+    assert "NBKxxxx:NNNN" in detail["recovery_hint"]
+    assert detail["next_commands"][0]["tool"] == "search_passages"
