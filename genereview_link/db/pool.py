@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 import asyncpg
 import pgvector.asyncpg
 
@@ -9,8 +11,15 @@ from genereview_link import config
 
 
 async def _init_conn(conn: asyncpg.Connection) -> None:
-    """Register pgvector codec on each new connection."""
-    await pgvector.asyncpg.register_vector(conn)
+    """Register pgvector codec on each new connection.
+
+    Tolerant of the pre-migration state where the ``vector`` extension does
+    not yet exist (e.g. the very first ``db migrate`` invocation on a fresh
+    database). Subsequent connections — after the data migrations have
+    installed the extension — will register the codec successfully.
+    """
+    with contextlib.suppress(ValueError):
+        await pgvector.asyncpg.register_vector(conn)
 
 
 async def create_pool() -> asyncpg.Pool:

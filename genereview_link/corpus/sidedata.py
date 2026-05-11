@@ -51,12 +51,17 @@ def load_sidedata(directory: Path) -> SideData:
                 if omim and omim not in omim_ids[nbk]:
                     omim_ids[nbk].append(omim)
 
+    # GRtitle_shortname_NBKid.txt columns:
+    #   GR_shortname \t GR_Title \t NBK_id \t PMID
+    # This file is the authoritative short_name <-> NBK_id mapping; use it to
+    # OVERWRITE any provisional values from the genesymbol file.
     title_path = directory / TITLE_FILE
     if title_path.exists():
         for row in _rows(title_path):
             if len(row) >= 3:
-                _title, short, nbk = row[0], row[1], row[2]
-                short_name_by_nbk.setdefault(nbk, short)
+                short, _title, nbk = row[0], row[1], row[2]
+                if short and nbk.startswith("NBK"):
+                    short_name_by_nbk[nbk] = short
 
     return SideData(
         gene_symbols={k: tuple(v) for k, v in gene_symbols.items()},
@@ -66,9 +71,21 @@ def load_sidedata(directory: Path) -> SideData:
 
 
 def _rows(path: Path) -> list[list[str]]:
+    """Tab-split each non-comment line from *path*.
+
+    NCBI's sidedata TSVs are mostly ASCII but ``GRtitle_shortname_NBKid.txt``
+    occasionally contains Latin-1 bytes (chapter titles with non-ASCII
+    characters). Try UTF-8 first; fall back to Latin-1 (which decodes any
+    byte sequence) so a single odd byte never aborts the whole ingest.
+    """
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
     result = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         result.append(line.split("\t"))

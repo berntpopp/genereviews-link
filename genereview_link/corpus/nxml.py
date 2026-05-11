@@ -41,7 +41,17 @@ def parse_and_chunk_one(
     except etree.XMLSyntaxError as exc:
         raise NxmlParseError(f"XML syntax error in {nbk_id}: {exc}") from exc
 
-    meta = root.find("book-part-meta")
+    # Real NCBI NXMLs use <book-part-wrapper> as root with the chapter
+    # <book-part> nested inside; the plan's hand-written fixtures use
+    # <book-part> as the root. Handle both shapes by searching for the
+    # first <book-part-meta> anywhere in the tree.
+    chapter_root = root
+    if root.find("book-part-meta") is None:
+        nested = root.find(".//book-part")
+        if nested is not None and nested.find("book-part-meta") is not None:
+            chapter_root = nested
+
+    meta = chapter_root.find("book-part-meta")
     if meta is None:
         raise NxmlParseError(f"{nbk_id}: missing <book-part-meta>")
 
@@ -68,7 +78,7 @@ def parse_and_chunk_one(
         raw_metadata={},
     )
 
-    body = root.find("body")
+    body = chapter_root.find("body")
     passages: list[PassageRecord] = []
     if body is not None:
         global_chunk = 0
@@ -162,7 +172,7 @@ def _walk_section(
         yield passages, global_chunk
 
     for sub in section.findall("sec"):
-        yield from _walk_section(
+        for sub_passages, sub_next in _walk_section(
             sub,
             nbk_id=nbk_id,
             ancestor_titles=titles,
@@ -170,4 +180,9 @@ def _walk_section(
             global_chunk=global_chunk,
             max_tokens=max_tokens,
             overlap_tokens=overlap_tokens,
-        )
+        ):
+            yield sub_passages, sub_next
+            # Carry the running chunk index forward so the next sibling
+            # section starts numbering after the most recent yielded passage,
+            # not at the parent's pre-recursion value.
+            global_chunk = sub_next

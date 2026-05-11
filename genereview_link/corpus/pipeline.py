@@ -88,7 +88,25 @@ async def atomic_swap(
         if existing:
             target = f"genereview_old_{existing.replace('-', '_').replace('.', '_')}"
             await conn.execute(f'alter schema genereview rename to "{target}"')
+        else:
+            # First ingest: drop the empty genereview schema that `db migrate`
+            # provisioned so the staging rename below can land on a clean name.
+            # Also clear its data-migration records — apply_data_migrations is
+            # idempotent by qualified version, and we just dropped the schema.
+            await conn.execute("drop schema if exists genereview cascade")
+            await conn.execute(
+                "delete from public.schema_migrations "
+                "where namespace = 'data' and version like 'genereview:%'"
+            )
         await conn.execute("alter schema genereview_staging rename to genereview")
+        # The newly-active schema's data-migration records still say
+        # 'genereview_staging:*'; rewrite them so future apply_data_migrations
+        # invocations against 'genereview' see them as applied.
+        await conn.execute(
+            "update public.schema_migrations "
+            "set version = replace(version, 'genereview_staging:', 'genereview:') "
+            "where namespace = 'data' and version like 'genereview_staging:%'"
+        )
         await conn.execute(
             "update public.genereview_corpus_version set is_active = false where is_active"
         )
@@ -203,7 +221,12 @@ async def _flush(
     passages: list[PassageRecord],
     version: str,
 ) -> None:
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
+        # ``set local`` only takes effect inside a transaction. Without the
+        # transaction wrapper, the COPY targets fall back to the connection's
+        # default search_path (the user's own ``genereview`` schema), and the
+        # subsequent atomic_swap drops that schema thinking it is the empty
+        # migrate-bootstrap state — destroying the freshly-ingested rows.
         await conn.execute("set local search_path to genereview_staging, public")
         await copy_chapters(conn, chapters, corpus_version=version)
         await copy_passages(conn, passages, corpus_version=version)

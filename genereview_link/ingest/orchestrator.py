@@ -26,8 +26,14 @@ async def iter_passages_missing_embedding(
     schema: str,
     batch_size: int,
 ) -> AsyncIterator[list[tuple[str, str, str]]]:
-    """Yield batches of (nbk_id, passage_id, text) lacking an embedding row."""
-    offset = 0
+    """Yield batches of (nbk_id, passage_id, text) lacking an embedding row.
+
+    Uses a keyset (>(nbk_id, passage_id)) cursor instead of OFFSET so newly
+    inserted embedding rows do not shift the result window — every passage
+    is visited exactly once.
+    """
+    last_nbk = ""
+    last_pid = ""
     while True:
         async with pool.acquire() as conn:
             await conn.execute(f'set search_path to "{schema}", public')
@@ -40,17 +46,20 @@ async def iter_passages_missing_embedding(
                    and e.passage_id = p.passage_id
                    and e.model_name = $1
                  where e.passage_id is null
+                   and (p.nbk_id, p.passage_id) > ($2, $3)
                  order by p.nbk_id, p.passage_id
-                 limit $2 offset $3
+                 limit $4
                 """,
                 model_name,
+                last_nbk,
+                last_pid,
                 batch_size,
-                offset,
             )
         if not rows:
             return
         yield [(r["nbk_id"], r["passage_id"], r["text"]) for r in rows]
-        offset += batch_size
+        last_nbk = rows[-1]["nbk_id"]
+        last_pid = rows[-1]["passage_id"]
 
 
 async def backfill_embeddings(
