@@ -234,6 +234,19 @@ class PassageSearchResponse(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class PassageWindowResponse(BaseModel):
+    """Response shape for /passages/{id} (always wrapped, even when neighbors=0)."""
+
+    passage: PassageDetail
+    neighbors_before: list[PassageDetail] = Field(default_factory=list)
+    neighbors_after: list[PassageDetail] = Field(default_factory=list)
+    has_more_before: bool = False
+    has_more_after: bool = False
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}
+
+
 class PassageInSection(BaseModel):
     """A passage as returned in a chapter section response."""
 

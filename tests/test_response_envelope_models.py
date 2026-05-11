@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from genereview_link.models.genereview_models import (
     ATTRIBUTION_TEXT,
     COPYRIGHT_LINE,
     ChapterSectionResponse,
     LicenseNotice,
+    PassageDetail,
     PassageSearchResponse,
+    PassageWindowResponse,
     ResponseMeta,
 )
 
@@ -48,6 +52,29 @@ def test_chapter_section_response_meta_alias_is_underscore_meta() -> None:
     dumped = r.model_dump(by_alias=True)
     assert "_meta" in dumped
     assert "meta" not in dumped
+
+
+def test_passage_window_response_meta_alias_is_underscore_meta() -> None:
+    detail = PassageDetail(
+        passage_id="p1",
+        nbk_id="NBK1",
+        chapter_title="Test",
+        chapter_last_updated=date(2024, 1, 1),
+        chapter_section="management",
+        heading_path=None,
+        section_level=1,
+        chunk_index=0,
+        text="hello",
+        char_count=5,
+    )
+    r = PassageWindowResponse(passage=detail)
+    dumped = r.model_dump(by_alias=True)
+    assert "_meta" in dumped
+    assert "meta" not in dumped
+    assert dumped["neighbors_before"] == []
+    assert dumped["neighbors_after"] == []
+    assert dumped["has_more_before"] is False
+    assert dumped["has_more_after"] is False
 
 
 def test_license_notice_and_attribution_share_copyright_year():
