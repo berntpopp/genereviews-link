@@ -296,3 +296,16 @@ class TestRegressionValidation:
                 assert overlap_ratio < 0.9, (
                     f"Sections {i} and {j} have too much overlap ({overlap_ratio:.2f})"
                 )
+
+
+def test_eutils_client_uses_defusedxml() -> None:
+    """Verify the eutils client imports XML parsing from defusedxml, not stdlib."""
+    import inspect
+
+    from genereview_link.api import eutils_client
+
+    source = inspect.getsource(eutils_client)
+    assert "from defusedxml" in source, "eutils_client must import from defusedxml"
+    assert "from xml.etree" not in source, (
+        "eutils_client must not import from xml.etree (XXE attack surface)"
+    )

@@ -8,11 +8,12 @@ section extraction.
 import asyncio
 import re
 import warnings
+import xml.etree.ElementTree as _StdET  # type-only import; parsing uses defusedxml
 from typing import Any
-from xml.etree import ElementTree as ET
 
 import httpx
 from bs4 import BeautifulSoup, Tag, XMLParsedAsHTMLWarning
+from defusedxml import ElementTree as ET  # noqa: N817 - drop-in replacement for stdlib ET
 
 from genereview_link.config import settings
 from genereview_link.logging_config import PerformanceLogger, get_logger
@@ -160,7 +161,7 @@ class EutilsClient:
         # Should be unreachable: every loop iteration either returns or raises.
         raise RuntimeError(f"Request to {url} exhausted retries without response")
 
-    async def _make_xml_request(self, endpoint: str, params: dict[str, Any]) -> ET.Element:
+    async def _make_xml_request(self, endpoint: str, params: dict[str, Any]) -> _StdET.Element:
         """Centralized request maker for XML responses."""
         if settings.NCBI_API_KEY:
             params["api_key"] = settings.NCBI_API_KEY
@@ -365,7 +366,7 @@ class EutilsClient:
 
         return article_data
 
-    def _parse_regular_article(self, article: ET.Element, pubmed_id: str) -> dict[str, Any]:
+    def _parse_regular_article(self, article: _StdET.Element, pubmed_id: str) -> dict[str, Any]:
         """Parse regular PubmedArticle XML structure."""
         article_data = {"pmid": pubmed_id}
 
@@ -435,7 +436,7 @@ class EutilsClient:
 
         return article_data
 
-    def _parse_book_article(self, book_article: ET.Element, pubmed_id: str) -> dict[str, Any]:
+    def _parse_book_article(self, book_article: _StdET.Element, pubmed_id: str) -> dict[str, Any]:
         """Parse PubmedBookArticle XML structure (for GeneReviews)."""
         article_data = {"pmid": pubmed_id}
 
