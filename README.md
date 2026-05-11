@@ -71,6 +71,7 @@ The REST API provides:
 - **`GET /abstract/{pubmed_id}`** - Get abstract and metadata for PubMed articles
 - **`GET /links/{pubmed_id}`** - Get all available links (Bookshelf, PMC, external)
 - **`GET /fulltext/{nbk_id}`** - Get comprehensive scraped content with hierarchical sections
+  - Query params: `sections` (optional, comma-separated section keys for selective retrieval; fuzzy substring matching, e.g. `summary` matches both `summary` and `clinical_summary`)
 - **`GET /health`** - System health check with optional connection testing
 
 ### Example Usage
@@ -93,6 +94,9 @@ curl "http://localhost:8000/links/20301552"
 
 # Get full text content from NCBI Bookshelf
 curl "http://localhost:8000/fulltext/NBK1246"
+
+# Get only the summary and diagnosis sections (fuzzy substring match)
+curl "http://localhost:8000/fulltext/NBK1246?sections=summary,diagnosis"
 
 # Health check with connection testing
 curl "http://localhost:8000/health?test_connection=true"

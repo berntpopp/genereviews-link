@@ -211,6 +211,180 @@ class TestFulltextRoute:
         resp = await http_client.get("/fulltext/NBK99999")
         assert resp.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_fulltext_returns_all_sections_when_no_filter(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = {
+            "nbk_id": "1247",
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "title": "T",
+            "sections": {
+                "summary": {"title": "Summary", "content": "s"},
+                "diagnosis": {"title": "Diagnosis", "content": "d"},
+                "management": {"title": "Management", "content": "m"},
+            },
+            "metadata": {},
+        }
+        resp = await http_client.get("/fulltext/NBK1247")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body["sections"].keys()) == {"summary", "diagnosis", "management"}
+
+    @pytest.mark.asyncio
+    async def test_fulltext_filter_single_section(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = {
+            "nbk_id": "1247",
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "title": "T",
+            "sections": {
+                "summary": {"title": "Summary", "content": "s"},
+                "diagnosis": {"title": "Diagnosis", "content": "d"},
+                "management": {"title": "Management", "content": "m"},
+            },
+            "metadata": {},
+        }
+        resp = await http_client.get("/fulltext/NBK1247?sections=diagnosis")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert list(body["sections"].keys()) == ["diagnosis"]
+
+    @pytest.mark.asyncio
+    async def test_fulltext_filter_multiple_sections(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = {
+            "nbk_id": "1247",
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "title": "T",
+            "sections": {
+                "summary": {"title": "Summary", "content": "s"},
+                "diagnosis": {"title": "Diagnosis", "content": "d"},
+                "management": {"title": "Management", "content": "m"},
+            },
+            "metadata": {},
+        }
+        resp = await http_client.get("/fulltext/NBK1247?sections=summary,diagnosis")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body["sections"].keys()) == {"summary", "diagnosis"}
+
+    @pytest.mark.asyncio
+    async def test_fulltext_filter_fuzzy_substring_match(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = {
+            "nbk_id": "1247",
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "title": "T",
+            "sections": {
+                "summary": {"title": "Summary", "content": "s"},
+                "clinical_summary": {"title": "Clinical Summary", "content": "cs"},
+                "diagnosis": {"title": "Diagnosis", "content": "d"},
+            },
+            "metadata": {},
+        }
+        resp = await http_client.get("/fulltext/NBK1247?sections=summary")
+        assert resp.status_code == 200
+        body = resp.json()
+        # 'summary' matches its exact key AND 'clinical_summary' via substring
+        assert set(body["sections"].keys()) == {"summary", "clinical_summary"}
+
+    @pytest.mark.asyncio
+    async def test_fulltext_filter_unknown_section_returns_empty(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = {
+            "nbk_id": "1247",
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "title": "T",
+            "sections": {
+                "summary": {"title": "Summary", "content": "s"},
+                "diagnosis": {"title": "Diagnosis", "content": "d"},
+            },
+            "metadata": {},
+        }
+        resp = await http_client.get("/fulltext/NBK1247?sections=nope_does_not_exist")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["sections"] == {}
+
+    @pytest.mark.asyncio
+    async def test_fulltext_empty_sections_param_returns_all(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = {
+            "nbk_id": "1247",
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "title": "T",
+            "sections": {
+                "summary": {"title": "Summary", "content": "s"},
+                "diagnosis": {"title": "Diagnosis", "content": "d"},
+            },
+            "metadata": {},
+        }
+        resp = await http_client.get("/fulltext/NBK1247?sections=")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body["sections"].keys()) == {"summary", "diagnosis"}
+
+    @pytest.mark.asyncio
+    async def test_fulltext_propagates_level_and_subsections(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = {
+            "nbk_id": "1247",
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "title": "T",
+            "sections": {
+                "diagnosis": {
+                    "title": "Diagnosis",
+                    "content": "d",
+                    "level": 2,
+                    "subsections": {
+                        "clinical_features": {
+                            "title": "Clinical Features",
+                            "content": "cf",
+                            "level": 3,
+                            "subsections": {},
+                        }
+                    },
+                }
+            },
+            "metadata": {},
+        }
+        resp = await http_client.get("/fulltext/NBK1247")
+        assert resp.status_code == 200
+        body = resp.json()
+        diagnosis = body["sections"]["diagnosis"]
+        assert diagnosis["level"] == 2
+        assert "clinical_features" in diagnosis["subsections"]
+        sub = diagnosis["subsections"]["clinical_features"]
+        assert sub["level"] == 3
+        assert sub["title"] == "Clinical Features"
+        assert sub["content"] == "cf"
+        assert sub["subsections"] == {}
+
+    @pytest.mark.asyncio
+    async def test_fulltext_defaults_level_when_missing(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        # Confirms legacy scraper payloads without level/subsections still work.
+        fake_client._fulltext = {
+            "nbk_id": "1247",
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "title": "T",
+            "sections": {"summary": {"title": "Summary", "content": "s"}},
+            "metadata": {},
+        }
+        resp = await http_client.get("/fulltext/NBK1247")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["sections"]["summary"]["level"] == 1
+        assert body["sections"]["summary"]["subsections"] == {}
+
 
 class TestGenereviewRoute:
     @pytest.mark.asyncio

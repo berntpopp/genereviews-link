@@ -5,9 +5,9 @@ Provides REST API endpoint for retrieving comprehensive content from NCBI Booksh
 
 import logging
 import re
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.eutils_client import EutilsClient
@@ -20,6 +20,47 @@ from genereview_link.models.genereview_models import (
 router = APIRouter(prefix="/fulltext", tags=["Full Text"])
 
 
+def _build_section(section_data: dict[str, Any]) -> GeneReviewSection:
+    """Recursively convert a raw section dict from the scraper into a GeneReviewSection.
+
+    The scraper produces sections with optional ``level`` and ``subsections`` keys.
+    Subsections are themselves raw dicts and must be converted recursively. Depth is
+    bounded by the scraper (level 2 sections contain level 3 subsections whose
+    ``subsections`` field is always an empty dict), so recursion terminates quickly.
+    """
+    raw_subsections = section_data.get("subsections") or {}
+    subsections: dict[str, GeneReviewSection] = {
+        key: _build_section(value) for key, value in raw_subsections.items()
+    }
+    return GeneReviewSection(
+        title=section_data["title"],
+        content=section_data["content"],
+        level=section_data.get("level", 1),
+        subsections=subsections,
+    )
+
+
+def _filter_sections(
+    sections: dict[str, GeneReviewSection], requested: str | None
+) -> dict[str, GeneReviewSection]:
+    """Filter ``sections`` by a comma-separated ``requested`` query string.
+
+    Matching is fuzzy: a section is kept when its key (lowercased) equals any
+    requested token OR contains a requested token as a substring. When
+    ``requested`` is ``None`` or empty, all sections are returned unchanged.
+    """
+    if not requested:
+        return sections
+    tokens = [tok.strip().lower() for tok in requested.split(",") if tok.strip()]
+    if not tokens:
+        return sections
+    return {
+        key: section
+        for key, section in sections.items()
+        if key.lower() in tokens or any(tok in key.lower() for tok in tokens)
+    }
+
+
 @router.get(
     "/{nbk_id}",
     response_model=FullTextData,
@@ -29,12 +70,25 @@ router = APIRouter(prefix="/fulltext", tags=["Full Text"])
 async def get_fulltext(
     nbk_id: str,
     client: Annotated[EutilsClient, Depends(get_managed_client)],
+    sections: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Optional comma-separated list of section keys to return "
+                "(e.g. 'summary,diagnosis,management'). Matching is fuzzy: "
+                "tokens match exact keys or any key containing the token as "
+                "a substring. When omitted, all sections are returned."
+            ),
+            examples=["summary,diagnosis,management"],
+        ),
+    ] = None,
 ) -> FullTextData:
-    """
-    Scrape comprehensive content from an NCBI Bookshelf page.
+    """Scrape comprehensive content from an NCBI Bookshelf page.
 
     The NBK ID can be provided with or without the 'NBK' prefix.
     Returns structured sections, metadata, and the complete document content.
+    When ``sections`` is supplied, only matching sections are included in the
+    response.
     """
     try:
         # Clean up NBK ID - remove NBK prefix if present and ensure it's valid
@@ -53,12 +107,14 @@ async def get_fulltext(
                 detail=f"Could not scrape content: {result['error']}",
             )
 
-        # Convert sections to GeneReviewSection objects
-        sections = {}
-        for key, section_data in result.get("sections", {}).items():
-            sections[key] = GeneReviewSection(
-                title=section_data["title"], content=section_data["content"]
-            )
+        # Convert sections to GeneReviewSection objects (propagating level/subsections)
+        all_sections: dict[str, GeneReviewSection] = {
+            key: _build_section(section_data)
+            for key, section_data in result.get("sections", {}).items()
+        }
+
+        # Filter sections when the caller requested a specific subset
+        filtered_sections = _filter_sections(all_sections, sections)
 
         # Convert metadata
         metadata_dict = result.get("metadata", {})
@@ -74,7 +130,7 @@ async def get_fulltext(
             nbk_id=result.get("nbk_id", clean_id),
             url=result.get("url", book_url),
             title=result.get("title", ""),
-            sections=sections,
+            sections=filtered_sections,
             metadata=metadata,
         )
     except HTTPException:
