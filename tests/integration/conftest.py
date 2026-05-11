@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
+from urllib.parse import urlparse
 
 import asyncpg
 import pgvector.asyncpg
@@ -18,10 +19,33 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(pytest.mark.integration)
 
 
+def _assert_test_database(url: str) -> None:
+    """Refuse to run destructive integration fixtures against a non-test DB.
+
+    The ``pool`` fixture drops the ``genereview`` schema before and after each
+    test. If ``GENEREVIEW_TEST_DATABASE_URL`` is ever pointed at a populated
+    dev/prod database, that wipe destroys real data. Require the database name
+    to contain ``test`` (or an explicit override env) so this cannot happen by
+    accident.
+    """
+    if os.environ.get("GENEREVIEW_TEST_ALLOW_NON_TEST_DB") == "1":
+        return
+    dbname = urlparse(url).path.lstrip("/")
+    if "test" not in dbname.lower():
+        pytest.fail(
+            f"Refusing to run destructive integration fixtures against database "
+            f"{dbname!r} — its name does not contain 'test'. Point "
+            f"GENEREVIEW_TEST_DATABASE_URL at a dedicated test database, or set "
+            f"GENEREVIEW_TEST_ALLOW_NON_TEST_DB=1 to override (not recommended).",
+            pytrace=False,
+        )
+
+
 def _database_url() -> str:
     url = os.environ.get("GENEREVIEW_TEST_DATABASE_URL")
     if not url:
         pytest.skip("GENEREVIEW_TEST_DATABASE_URL not set; integration test skipped")
+    _assert_test_database(url)
     return url
 
 
