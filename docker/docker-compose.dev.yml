@@ -23,7 +23,7 @@ services:
       sh -c "
         cd /home/app/web &&
         pip install -e . &&
-        uvicorn server:app --host 0.0.0.0 --port 8000 --reload --reload-dir genereview_link
+        genereview-link serve --transport unified --host 0.0.0.0 --port 8000
       "
 
     user: root
