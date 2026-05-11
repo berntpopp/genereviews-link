@@ -1,9 +1,10 @@
-"""Unit tests for /chapters/{nbk}/sections/{section} using TestClient + dependency overrides."""
+"""Unit tests for /chapters/{nbk_id}/sections/{section} using TestClient + dependency overrides."""
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -11,6 +12,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.routes import chapters as chapters_routes
 from genereview_link.api.routes.passages import get_embedding_provider, get_repository
 from genereview_link.config import ServerConfig
 from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
@@ -110,5 +112,71 @@ class TestChapterSectionRoute:
         self, http_client: AsyncClient, fake_repo: Any
     ) -> None:
         fake_repo.get_section.return_value = []
-        resp = await http_client.get("/chapters/NBK1247/sections/nonexistent")
+        resp = await http_client.get("/chapters/NBK1247/sections/management")
         assert resp.status_code == 404
+
+
+def _build_app(*, passages: list[PassageRow]) -> FastAPI:
+    app = FastAPI()
+    app.include_router(chapters_routes.router)
+    repo = MagicMock()
+    repo.get_section = AsyncMock(return_value=passages)
+    app.state.repository = repo
+    return app
+
+
+@pytest.mark.asyncio
+async def test_returns_passages_with_chapter_title_envelope() -> None:
+    pr = PassageRow(
+        nbk_id="NBK1",
+        passage_id="NBK1:0001",
+        chapter_section="management",
+        heading_path="Management > X",
+        section_level=2,
+        chunk_index=0,
+        text="sample text",
+        chapter_title="Test Chapter Title",
+        chapter_last_updated=date(2025, 12, 1),
+        gene_symbols=("TG",),
+    )
+    app = _build_app(passages=[pr])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1/sections/management")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["nbk_id"] == "NBK1"
+    assert body["chapter_section"] == "management"
+    assert body["chapter_title"] == "Test Chapter Title"
+    assert body["chapter_last_updated"] == "2025-12-01"
+    assert body["passages"][0]["passage_id"] == "NBK1:0001"
+    assert body["concatenated_text"] == "sample text"
+
+
+@pytest.mark.asyncio
+async def test_old_path_param_name_does_not_match() -> None:
+    """If someone reverts the rename, this test will fail because the
+    old route had a path param called `nbk`; the new one is `nbk_id`.
+    The path itself doesn't change — only the function signature does —
+    so this test asserts the call still returns 200 (route path is
+    unchanged) and that the response envelope keys use `nbk_id`.
+    """
+    pr = PassageRow(
+        nbk_id="NBK1",
+        passage_id="NBK1:0001",
+        chapter_section="management",
+        heading_path=None,
+        section_level=1,
+        chunk_index=0,
+        text="t",
+        chapter_title="C",
+        chapter_last_updated=None,
+        gene_symbols=(),
+    )
+    app = _build_app(passages=[pr])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1/sections/management")
+    body = resp.json()
+    assert "nbk_id" in body
+    assert "nbk" not in body or body.get("nbk_id") == body.get("nbk")

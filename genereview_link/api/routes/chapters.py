@@ -1,25 +1,38 @@
-"""Chapter-level routes: /chapters/{nbk}/sections/{section}."""
+"""Chapter-level routes: /chapters/{nbk_id}/sections/{section}."""
 
 from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 
 from genereview_link.api.routes.passages import get_repository
+from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.repository import GeneReviewRepository
 
 router = APIRouter(tags=["Chapters"])
 
 
 @router.get(
-    "/chapters/{nbk}/sections/{section}",
+    "/chapters/{nbk_id}/sections/{section}",
     operation_id="get_chapter_section",
     summary="Fetch all passages for a section of a GeneReview chapter",
 )
 async def get_chapter_section(
-    nbk: str,
-    section: str,
+    nbk_id: Annotated[
+        str,
+        Path(
+            description="Bare NCBI Bookshelf ID, e.g. 'NBK1247'.",
+        ),
+    ],
+    section: Annotated[
+        SectionName,
+        Path(
+            description=(
+                "Canonical section name; valid values listed in this parameter's JSONSchema enum."
+            ),
+        ),
+    ],
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
 ) -> dict[str, object]:
     """Return all passages for a specific section of a GeneReview chapter.
@@ -27,12 +40,17 @@ async def get_chapter_section(
     Concatenates all passage texts in chunk order and returns both the
     individual passages and the combined text.
     """
-    passages = await repo.get_section(nbk, section)
+    passages = await repo.get_section(nbk_id, section)
     if not passages:
         raise HTTPException(status_code=404, detail="section not found")
+    head = passages[0]
     return {
-        "nbk_id": nbk,
+        "nbk_id": nbk_id,
+        "chapter_title": head.chapter_title or "",
         "chapter_section": section,
+        "chapter_last_updated": (
+            head.chapter_last_updated.isoformat() if head.chapter_last_updated else None
+        ),
         "passages": [
             {
                 "passage_id": p.passage_id,
