@@ -440,3 +440,108 @@ async def test_search_exclude_score_breakdown_is_noop_after_default_flip() -> No
     body = resp.json()
     assert body["results"]
     assert "score_breakdown" not in body["results"][0]
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics tests (Task 14)
+# ---------------------------------------------------------------------------
+
+
+def _make_empty_repo() -> Any:
+    """Repo whose search_passages always returns an empty list."""
+    from unittest.mock import MagicMock
+
+    repo = MagicMock()
+    repo.search_passages = AsyncMock(return_value=[])
+    repo.active_embedding_table = AsyncMock(return_value="t")
+    repo.dense_scores_for_passages = AsyncMock(return_value={})
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_search_zero_results_emits_diagnostics() -> None:
+    """Empty results with a sections filter produce _meta.diagnostics with suggestions."""
+    repo = _make_empty_repo()
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "xyzzy_definitely_not_in_corpus_zzz", "sections": "management"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["results"] == []
+    diag = data["_meta"].get("diagnostics")
+    assert diag is not None
+    assert "suggestions" in diag
+
+
+@pytest.mark.asyncio
+async def test_search_zero_results_long_query_emits_broaden_suggestion() -> None:
+    """A very long query triggers the 'broaden q' suggestion."""
+    repo = _make_empty_repo()
+    app = _make_brief_app(repo)
+    long_q = "this is a very long query with more than eight words in total to test broadening"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": long_q})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["results"] == []
+    diag = data["_meta"].get("diagnostics")
+    assert diag is not None
+    assert any("broaden" in s for s in diag["suggestions"])
+
+
+@pytest.mark.asyncio
+async def test_search_nonzero_results_omits_diagnostics() -> None:
+    """When results are returned, _meta.diagnostics is absent (None serialises to null/absent)."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["results"]) > 0
+    assert data["_meta"].get("diagnostics") is None
+
+
+@pytest.mark.asyncio
+async def test_search_diagnostics_shape() -> None:
+    """Diagnostics object carries the expected keys."""
+    repo = _make_empty_repo()
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "short query", "sections": "management"},
+        )
+    assert resp.status_code == 200
+    diag = resp.json()["_meta"]["diagnostics"]
+    assert diag is not None
+    for key in ("lexical_hits", "lexical_hits_after_filters", "applied_filters", "suggestions"):
+        assert key in diag, f"Missing diagnostics key: {key}"
+    assert isinstance(diag["applied_filters"], list)
+    assert isinstance(diag["suggestions"], list)
+
+
+@pytest.mark.asyncio
+async def test_search_diagnostics_via_exclude_path() -> None:
+    """Diagnostics are present even when the JSONResponse (exclude) branch is taken."""
+    repo = _make_empty_repo()
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "xyzzy_long_query_to_trigger_broaden_suggestion_here", "exclude": "heading_path"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["results"] == []
+    diag = data["_meta"].get("diagnostics")
+    assert diag is not None
+    assert "suggestions" in diag

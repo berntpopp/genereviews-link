@@ -11,6 +11,7 @@ from typing import Annotated, Literal, cast
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 
+from genereview_link.api.diagnostics import build_search_diagnostics
 from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.models.genereview_models import (
     PassageDetail,
@@ -19,6 +20,7 @@ from genereview_link.models.genereview_models import (
     RankedPassage,
     ResponseMeta,
     ScoreBreakdown,
+    SearchDiagnosticsModel,
 )
 from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.embeddings import EmbeddingProvider
@@ -227,7 +229,30 @@ async def search_passages(
         )
 
     corpus = _get_corpus_version(request)
-    meta = ResponseMeta(corpus_version=corpus)
+
+    diagnostics_model: SearchDiagnosticsModel | None = None
+    if not out:
+        applied: list[str] = []
+        if gene:
+            applied.append(f"gene={gene}")
+        if sections:
+            applied.append(f"sections={','.join(sections)}")
+        if nbk_id:
+            applied.append(f"nbk_id={nbk_id}")
+        diag = build_search_diagnostics(
+            query=q,
+            applied_filters=applied,
+            lexical_hits=len(lex),
+            lexical_hits_after_filters=len(out),
+        )
+        diagnostics_model = SearchDiagnosticsModel(
+            lexical_hits=diag.lexical_hits,
+            lexical_hits_after_filters=diag.lexical_hits_after_filters,
+            applied_filters=diag.applied_filters,
+            suggestions=diag.suggestions,
+        )
+
+    meta = ResponseMeta(corpus_version=corpus, diagnostics=diagnostics_model)
 
     # score_breakdown is opt-in (absent by default). Always exclude it from
     # model_dump, then re-inject only when the caller requested it.

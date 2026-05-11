@@ -219,11 +219,21 @@ class PassageDetail(BaseModel):
     gene_symbols: list[str] = []
 
 
+class SearchDiagnosticsModel(BaseModel):
+    """Diagnostics emitted under ``_meta.diagnostics`` when a search returns zero results."""
+
+    lexical_hits: int
+    lexical_hits_after_filters: int
+    applied_filters: list[str]
+    suggestions: list[str]
+
+
 class ResponseMeta(BaseModel):
     """Per-response metadata (attribution, corpus version) emitted under ``_meta``."""
 
     attribution: str = Field(default=ATTRIBUTION_TEXT)
     corpus_version: str | None = None
+    diagnostics: SearchDiagnosticsModel | None = None
 
 
 class PassageSearchResponse(BaseModel):
