@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     MCP_PORT: int = 8000
     MCP_PATH: str = "/mcp"
 
+    # Ingest parallelism
+    INGEST_PARSE_WORKERS: int = 8
+    INGEST_DB_WRITERS: int = 4
+    INGEST_EMBED_BATCH_SIZE: int = 256
+    INGEST_EMBED_WRITERS: int = 2
+    INGEST_EMBED_DEVICE: str = "auto"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
