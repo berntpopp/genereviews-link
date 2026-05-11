@@ -84,7 +84,7 @@ test-all: test-cov ## Alias for full test run with coverage
 
 check: format lint ## Format and lint
 
-ci-local: format-check lint-ci typecheck-fast test-fast ## Run fast local CI-equivalent checks
+ci-local: format-check lint-ci typecheck-fast test-unit ## Run fast local CI-equivalent checks (unit tests only)
 
 precommit: ci-local ## Run checks expected before commit
 

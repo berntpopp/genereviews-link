@@ -70,6 +70,7 @@ class TestAPIEndpoints:
         response = await client.get("/")
         assert response.status_code == 200
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_search_endpoint(self, client: AsyncClient):
         """Test the search endpoint."""
@@ -82,6 +83,7 @@ class TestAPIEndpoints:
         assert "ids" in data
         assert isinstance(data["ids"], list)
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_abstract_endpoint(self, client: AsyncClient):
         """Test the abstract endpoint with a known PubMed ID."""
@@ -97,6 +99,7 @@ class TestAPIEndpoints:
         assert "title" in data
         assert data["pmid"] == pubmed_id
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_links_endpoint(self, client: AsyncClient):
         """Test the links endpoint."""
@@ -110,6 +113,7 @@ class TestAPIEndpoints:
         assert "urls" in data
         assert isinstance(data["urls"], list)
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_fulltext_endpoint(self, client: AsyncClient):
         """Test the fulltext endpoint with enhanced scraping."""
@@ -143,6 +147,7 @@ class TestAPIEndpoints:
                 f"Section {section_key} should have substantial content: {content_length}"
             )
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_genereview_comprehensive_endpoint(self, client: AsyncClient):
         """Test the comprehensive GeneReview endpoint."""
@@ -169,6 +174,7 @@ class TestAPIEndpoints:
 class TestAPIErrorHandling:
     """Test API error handling and edge cases."""
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_invalid_gene_search(self, client: AsyncClient):
         """Test search with invalid gene symbol."""
@@ -179,6 +185,7 @@ class TestAPIErrorHandling:
         assert data["count"] == 0
         assert len(data["ids"]) == 0
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_invalid_pubmed_id(self, client: AsyncClient):
         """Test abstract endpoint with invalid PubMed ID."""
@@ -191,6 +198,7 @@ class TestAPIErrorHandling:
             # Should return empty or error structure
             assert isinstance(data, dict)
 
+    @pytest.mark.integration
     @pytest.mark.asyncio
     async def test_invalid_nbk_id(self, client: AsyncClient):
         """Test fulltext endpoint with invalid NBK ID."""
@@ -215,6 +223,7 @@ class TestAPIErrorHandling:
         assert response.status_code == 404  # Should be not found
 
 
+@pytest.mark.integration
 class TestAPIPerformance:
     """Test API performance characteristics."""
 
@@ -262,6 +271,7 @@ class TestAPIPerformance:
             assert section_count >= 5, f"Should return substantial data: {section_count} sections"
 
 
+@pytest.mark.integration
 class TestAPIDataConsistency:
     """Test data consistency across different API endpoints."""
 
@@ -330,6 +340,7 @@ class TestAPIDataConsistency:
                         ), f"Titles should match: '{comp_title}' vs '{full_title}'"
 
 
+@pytest.mark.integration
 class TestAPICaching:
     """Test API caching behavior."""
 

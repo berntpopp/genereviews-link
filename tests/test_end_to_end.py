@@ -10,6 +10,10 @@ import pytest
 from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.services.genereview_service import GeneReviewService
 
+# All tests in this module hit live NCBI E-utilities / NCBI Bookshelf; mark them
+# as integration tests so they are skipped by the default unit-test run.
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def client():
