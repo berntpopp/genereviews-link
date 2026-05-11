@@ -19,8 +19,7 @@ def find_in_section(
         SectionName,
         Field(
             description=(
-                "Canonical GeneReviews section. Valid values: "
-                f"{', '.join(SECTION_NAMES)}."
+                f"Canonical GeneReviews section. Valid values: {', '.join(SECTION_NAMES)}."
             )
         ),
     ],

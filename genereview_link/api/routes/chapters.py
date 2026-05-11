@@ -69,7 +69,7 @@ async def get_chapter_section(
             ],
         )
     head = passages[0]
-    return ChapterSectionResponse(
+    return ChapterSectionResponse(  # type: ignore[call-arg]
         nbk_id=nbk_id,
         chapter_title=head.chapter_title or "",
         chapter_section=section,

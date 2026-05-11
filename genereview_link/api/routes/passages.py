@@ -217,7 +217,7 @@ async def search_passages(
                 "_meta": meta.model_dump(),
             }
         )
-    return PassageSearchResponse(results=out, meta=meta)
+    return PassageSearchResponse(results=out, meta=meta)  # type: ignore[call-arg]
 
 
 @router.get(
