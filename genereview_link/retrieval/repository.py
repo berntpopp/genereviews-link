@@ -119,14 +119,15 @@ class GeneReviewRepository:
         sections_param = sections if sections else None
 
         async with self._acquire() as conn:
-            await conn.execute("set local search_path to genereview, public")
+            await conn.execute("set search_path to genereview, public")
             rows = await conn.fetch(
                 """
                 with q as (
                     select
                         phraseto_tsquery('english', $2) as phrase_query,
                         websearch_to_tsquery('english', $2) as strict_query,
-                        to_tsquery('english', $7) as recall_query
+                        to_tsquery('english', $7) as recall_query,
+                        $1::text as _ignored
                 ),
                 cand as (
                     select
@@ -205,7 +206,7 @@ class GeneReviewRepository:
 
     async def get_chapter_by_gene(self, gene_symbol: str) -> ChapterRow | None:
         async with self._acquire() as conn:
-            await conn.execute("set local search_path to genereview, public")
+            await conn.execute("set search_path to genereview, public")
             row = await conn.fetchrow(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
@@ -221,7 +222,7 @@ class GeneReviewRepository:
 
     async def get_chapter_by_nbk(self, nbk_id: str) -> ChapterRow | None:
         async with self._acquire() as conn:
-            await conn.execute("set local search_path to genereview, public")
+            await conn.execute("set search_path to genereview, public")
             row = await conn.fetchrow(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
@@ -235,7 +236,7 @@ class GeneReviewRepository:
 
     async def get_chapter_by_pmid(self, pmid: str) -> ChapterRow | None:
         async with self._acquire() as conn:
-            await conn.execute("set local search_path to genereview, public")
+            await conn.execute("set search_path to genereview, public")
             row = await conn.fetchrow(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
@@ -249,7 +250,7 @@ class GeneReviewRepository:
 
     async def get_section(self, nbk_id: str, chapter_section: str) -> list[PassageRow]:
         async with self._acquire() as conn:
-            await conn.execute("set local search_path to genereview, public")
+            await conn.execute("set search_path to genereview, public")
             rows = await conn.fetch(
                 """
                 select nbk_id, passage_id, chapter_section, heading_path,
@@ -286,7 +287,7 @@ class GeneReviewRepository:
         nbks = [n for n, _ in passage_ids]
         pids = [p for _, p in passage_ids]
         async with self._acquire() as conn:
-            await conn.execute("set local search_path to genereview, public")
+            await conn.execute("set search_path to genereview, public")
             rows = await conn.fetch(
                 f"""
                 select passage_id, 1 - (embedding <=> $1::vector) as score
