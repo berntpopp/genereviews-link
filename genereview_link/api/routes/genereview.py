@@ -10,7 +10,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from genereview_link.models.genereview_models import GeneReview, LicenseNotice
+from genereview_link.models.genereview_models import GeneReview
 from genereview_link.services.genereview_service import (
     DataNotFoundError,
     GeneReviewService,
@@ -54,7 +54,6 @@ async def get_genereview(
             include_links=include_links,
             include_fulltext=include_fulltext,
         )
-        result.license = LicenseNotice()
         if fresh:
             result.corpus_version = f"live:{datetime.now(UTC).isoformat()}"
         return result

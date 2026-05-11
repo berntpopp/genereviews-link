@@ -483,8 +483,8 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
-        assert body["license"] is not None
-        assert "copyright" in body["license"]
+        # License is NOT inlined on per-record responses; callers fetch /license once.
+        assert "license" not in body
 
     @pytest.mark.asyncio
     async def test_abstract_fresh_sets_corpus_version(
@@ -503,7 +503,7 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
-        assert body["license"] is not None
+        assert "license" not in body
 
     @pytest.mark.asyncio
     async def test_links_fresh_sets_corpus_version(
@@ -515,7 +515,7 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
-        assert body["license"] is not None
+        assert "license" not in body
 
     @pytest.mark.asyncio
     async def test_fulltext_fresh_sets_corpus_version(
@@ -533,7 +533,7 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
-        assert body["license"] is not None
+        assert "license" not in body
 
     @pytest.mark.asyncio
     async def test_search_no_fresh_has_null_corpus_version(
@@ -552,5 +552,5 @@ class TestFreshParam:
         assert resp.status_code == 200
         body = resp.json()
         assert body["corpus_version"] is None
-        # license is always set
-        assert body["license"] is not None
+        # License never appears on per-record responses (dedicated /license endpoint).
+        assert "license" not in body

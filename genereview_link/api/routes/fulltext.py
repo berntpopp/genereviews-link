@@ -16,7 +16,6 @@ from genereview_link.models.genereview_models import (
     FullTextData,
     FullTextMetadata,
     GeneReviewSection,
-    LicenseNotice,
 )
 
 router = APIRouter(prefix="/fulltext", tags=["Full Text"])
@@ -140,7 +139,6 @@ async def get_fulltext(
             sections=filtered_sections,
             metadata=metadata,
         )
-        out.license = LicenseNotice()
         if fresh:
             out.corpus_version = f"live:{datetime.now(UTC).isoformat()}"
         return out

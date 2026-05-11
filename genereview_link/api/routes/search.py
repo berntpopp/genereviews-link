@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.logging_config import PerformanceLogger, get_logger
-from genereview_link.models.genereview_models import LicenseNotice, SearchResult
+from genereview_link.models.genereview_models import SearchResult
 
 router = APIRouter(prefix="/search", tags=["Search"])
 logger = get_logger(__name__)
@@ -64,7 +64,6 @@ async def search_genereviews(
             )
 
             out = SearchResult(**result)
-            out.license = LicenseNotice()
             if fresh:
                 out.corpus_version = f"live:{datetime.now(UTC).isoformat()}"
             return out

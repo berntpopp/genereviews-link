@@ -7,7 +7,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from genereview_link.api.routes.passages import get_repository
-from genereview_link.models.genereview_models import LicenseNotice
 from genereview_link.retrieval.repository import GeneReviewRepository
 
 router = APIRouter(tags=["Chapters"])
@@ -41,5 +40,4 @@ async def get_chapter_section(
             for p in passages
         ],
         "concatenated_text": "\n\n".join(p.text for p in passages),
-        "license": LicenseNotice().model_dump(),
     }

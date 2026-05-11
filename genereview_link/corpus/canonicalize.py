@@ -34,7 +34,10 @@ _RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"differential\s+diagnos", re.I), "clinical_features"),
     (re.compile(r"clinical\s+(description|characteristics|features)", re.I), "clinical_features"),
     (re.compile(r"diagnos", re.I), "diagnosis"),
-    (re.compile(r"^\s*(treatment|surveillance|management|therapy|prevention)\b", re.I), "management"),
+    (
+        re.compile(r"^\s*(treatment|surveillance|management|therapy|prevention)\b", re.I),
+        "management",
+    ),
 )
 
 

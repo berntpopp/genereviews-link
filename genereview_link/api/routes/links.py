@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.eutils_client import EutilsClient
-from genereview_link.models.genereview_models import LicenseNotice, LinkData
+from genereview_link.models.genereview_models import LinkData
 
 router = APIRouter(prefix="/links", tags=["Links"])
 
@@ -40,7 +40,6 @@ async def get_links(
     try:
         result = await client.get_all_links(pubmed_id)
         out = LinkData(urls=result.get("urls", []))
-        out.license = LicenseNotice()
         if fresh:
             out.corpus_version = f"live:{datetime.now(UTC).isoformat()}"
         return out

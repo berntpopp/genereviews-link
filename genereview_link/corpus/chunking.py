@@ -41,9 +41,7 @@ def chunk_section_text(
 
     token_ids = encode_to_token_ids(text)
     if len(token_ids) <= max_tokens:
-        return [
-            TextChunk(chunk_index=0, text=text, token_count=len(token_ids))
-        ]
+        return [TextChunk(chunk_index=0, text=text, token_count=len(token_ids))]
 
     stride = max_tokens - overlap_tokens
     if stride <= 0:

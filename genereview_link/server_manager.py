@@ -29,6 +29,7 @@ from genereview_link.api.routes import (
 )
 from genereview_link.api.routes import chapters as chapters_routes
 from genereview_link.api.routes import debug as debug_routes
+from genereview_link.api.routes import license as license_routes
 from genereview_link.api.routes import passages as passages_routes
 from genereview_link.config import ServerConfig, settings
 from genereview_link.logging_config import get_logger
@@ -313,6 +314,7 @@ class UnifiedServerManager:
         app.include_router(passages_routes.router)
         app.include_router(chapters_routes.router)
         app.include_router(debug_routes.router)
+        app.include_router(license_routes.router)
         self._add_utility_endpoints(app)
 
         return app
@@ -346,6 +348,7 @@ class UnifiedServerManager:
             "get_fulltext": "get_fulltext",
             "search_passages": "search_passages",
             "get_chapter_section": "get_chapter_section",
+            "get_license": "get_license",
         }
 
         mcp_route_maps = [

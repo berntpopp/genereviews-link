@@ -33,7 +33,6 @@ class SearchResult(BaseModel):
     webenv: str = Field(description="Web environment string for history server.")
     querykey: str = Field(description="Query key for history server.")
     corpus_version: str | None = None
-    license: "LicenseNotice | None" = None
 
 
 class AbstractData(BaseModel):
@@ -46,7 +45,6 @@ class AbstractData(BaseModel):
     journal: str = Field(description="Journal name.")
     publication_date: str = Field(description="Publication date.")
     corpus_version: str | None = None
-    license: "LicenseNotice | None" = None
 
 
 class LinkData(BaseModel):
@@ -57,7 +55,6 @@ class LinkData(BaseModel):
         description="All available URLs for the publication.",
     )
     corpus_version: str | None = None
-    license: "LicenseNotice | None" = None
 
 
 class Reference(BaseModel):
@@ -97,7 +94,6 @@ class FullTextData(BaseModel):
     )
     error: str | None = Field(default=None, description="Error message if scraping failed.")
     corpus_version: str | None = None
-    license: "LicenseNotice | None" = None
 
 
 class GeneReview(BaseModel):
@@ -128,7 +124,6 @@ class GeneReview(BaseModel):
         default=None, description="Comprehensive scraped content."
     )
     corpus_version: str | None = None
-    license: "LicenseNotice | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -145,10 +140,21 @@ class CorpusVersion(BaseModel):
 
 
 class LicenseNotice(BaseModel):
-    """License and copyright notice attached to all API responses."""
+    """License and copyright notice for the GeneReviews data source.
+
+    Returned by the dedicated GET /license endpoint. Kept off per-record
+    responses to minimize payload size and downstream context cost — callers
+    fetch this once and apply it to all consumed data.
+    """
 
     copyright: str = "(c) 1993-2026 University of Washington"
     terms_url: str = "https://www.ncbi.nlm.nih.gov/books/NBK138602/"
+    data_source: str = "NCBI Bookshelf — GeneReviews"
+    data_source_url: str = "https://www.ncbi.nlm.nih.gov/books/NBK1116/"
+    notes: str = (
+        "GeneReviews(R) is a copyrighted resource. Attribute the University of "
+        "Washington when redistributing. See terms_url for the full notice."
+    )
 
 
 class ScoreBreakdown(BaseModel):
@@ -176,11 +182,3 @@ class RankedPassage(BaseModel):
     text: str
     char_count: int
     score_breakdown: ScoreBreakdown
-
-
-# Resolve forward references for models that mention LicenseNotice
-SearchResult.model_rebuild()
-AbstractData.model_rebuild()
-LinkData.model_rebuild()
-FullTextData.model_rebuild()
-GeneReview.model_rebuild()

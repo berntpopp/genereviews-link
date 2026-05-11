@@ -35,7 +35,9 @@ def test_typical_chapter_yields_record_and_passages() -> None:
 @pytest.mark.slow
 def test_missing_pubdate_does_not_crash() -> None:
     raw = (FIXTURES / "missing_pubdate.nxml").read_bytes()
-    chapter, _ = parse_and_chunk_one(raw, nbk_id="NBK9999", short_name="nopub", nxml_relpath="x.nxml")
+    chapter, _ = parse_and_chunk_one(
+        raw, nbk_id="NBK9999", short_name="nopub", nxml_relpath="x.nxml"
+    )
     assert chapter.last_updated_date is None
     assert chapter.initial_pub_date is None
 

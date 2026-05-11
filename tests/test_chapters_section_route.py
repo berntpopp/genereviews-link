@@ -102,8 +102,8 @@ class TestChapterSectionRoute:
         assert "concatenated_text" in body
         assert "First chunk" in body["concatenated_text"]
         assert "Second chunk" in body["concatenated_text"]
-        assert "license" in body
-        assert body["license"]["copyright"].startswith("(c)")
+        # License lives at the dedicated /license endpoint, not inlined here.
+        assert "license" not in body
 
     @pytest.mark.asyncio
     async def test_returns_404_when_section_not_found(
