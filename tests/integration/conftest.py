@@ -29,12 +29,8 @@ def database_url() -> str:
     return _database_url()
 
 
-@pytest_asyncio.fixture
-async def pool() -> AsyncIterator[asyncpg.Pool]:
-    """Yield a pool against the test Postgres; drop genereview schemas after."""
-    url = _database_url()
-    pool = await asyncpg.create_pool(url, min_size=1, max_size=4)
-    yield pool
+async def _wipe(pool: asyncpg.Pool) -> None:
+    """Drop all genereview-related state so each test starts clean."""
     async with pool.acquire() as conn:
         await conn.execute("drop schema if exists genereview cascade")
         await conn.execute("drop schema if exists genereview_staging cascade")
@@ -44,4 +40,18 @@ async def pool() -> AsyncIterator[asyncpg.Pool]:
         )
         for row in rows:
             await conn.execute(f"drop schema if exists {row['schema_name']} cascade")
+        await conn.execute("drop table if exists public.schema_migrations cascade")
+        await conn.execute("drop table if exists public.genereview_corpus_version cascade")
+        await conn.execute("drop table if exists public.genereview_refresh_log cascade")
+        await conn.execute("drop table if exists public.genereview_active_embedding cascade")
+
+
+@pytest_asyncio.fixture
+async def pool() -> AsyncIterator[asyncpg.Pool]:
+    """Yield a pool against the test Postgres; wipe genereview state before and after."""
+    url = _database_url()
+    pool = await asyncpg.create_pool(url, min_size=1, max_size=4)
+    await _wipe(pool)
+    yield pool
+    await _wipe(pool)
     await pool.close()

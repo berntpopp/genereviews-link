@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib.resources as pkg_resources
 import logging
+from types import ModuleType
 from typing import Literal
 
 import asyncpg
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 Namespace = Literal["control", "data"]
 
 
-def _list_sql(pkg: object) -> list[tuple[str, str]]:
+def _list_sql(pkg: ModuleType) -> list[tuple[str, str]]:
     root = pkg_resources.files(pkg)
     files = sorted(f.name for f in root.iterdir() if f.is_file() and f.name.endswith(".sql"))
     return [
@@ -112,8 +113,7 @@ async def apply_data_migrations(pool: asyncpg.Pool, *, schema: str) -> list[str]
                 await conn.execute(f'set local search_path to "{schema}", public')
                 await conn.execute(sql)
                 await conn.execute(
-                    "insert into public.schema_migrations (namespace, version) "
-                    "values ('data', $1)",
+                    "insert into public.schema_migrations (namespace, version) values ('data', $1)",
                     qualified,
                 )
             applied.append(qualified)
