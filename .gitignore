@@ -181,5 +181,8 @@ cython_debug/
 .cursorindexingignore
 
 # CLAUDE files
-.claude/
-CLAUDE.md
+# Track CLAUDE.md (delegates to AGENTS.md) and .claude/skills/ (repo workflows);
+# keep developer-local Claude Code state out of version control.
+.claude/*
+!.claude/skills/
+!.claude/skills/**
