@@ -1,5 +1,6 @@
 """Tests for the Typer-based CLI."""
 
+from typer.main import get_command
 from typer.testing import CliRunner
 
 from genereview_link.cli import LogLevel, Transport, app, build_config
@@ -10,13 +11,17 @@ runner = CliRunner()
 
 class TestServeHelp:
     def test_help_lists_serve_command(self) -> None:
-        result = runner.invoke(app, ["--help"])
-        assert result.exit_code == 0
-        assert "serve" in result.stdout
+        # Inspect the registered Click command instead of the rendered help
+        # text. Help rendering goes through Rich, whose ANSI styling and
+        # terminal-width-dependent wrapping make substring assertions brittle
+        # across platforms (this test was previously flaky on Linux CI).
+        command = get_command(app)
+        assert "serve" in command.commands  # type: ignore[attr-defined]
 
     def test_serve_help_lists_all_flags(self) -> None:
-        result = runner.invoke(app, ["serve", "--help"])
-        assert result.exit_code == 0
+        command = get_command(app)
+        serve = command.commands["serve"]  # type: ignore[attr-defined]
+        registered_flags = {opt for param in serve.params for opt in param.opts}
         for flag in (
             "--transport",
             "--host",
@@ -26,7 +31,7 @@ class TestServeHelp:
             "--log-level",
             "--dev",
         ):
-            assert flag in result.stdout
+            assert flag in registered_flags
 
 
 class TestBuildConfig:
