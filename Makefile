@@ -123,3 +123,6 @@ db-shell: ## psql shell into the docker-compose postgres
 
 db-reset: ## DROP and recreate genereview schemas (dev only)
 	uv run genereview-link db reset --yes
+
+ingest: ## Run full ingest pipeline (download → parse → write → swap)
+	uv run genereview-link ingest

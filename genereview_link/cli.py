@@ -186,5 +186,36 @@ def db_reset(
     asyncio.run(run())
 
 
+@app.command("ingest")
+def ingest_cmd(
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Download + parse only; do not write to DB."),
+    ] = False,
+) -> None:
+    """Run the full ingest pipeline against DATABASE_URL."""
+    import asyncio
+
+    from genereview_link.corpus.pipeline import run_full_ingest
+    from genereview_link.db.pool import create_pool
+
+    async def run() -> None:
+        pool = await create_pool()
+        try:
+            if dry_run:
+                typer.echo("dry-run not yet implemented; aborting")
+                raise typer.Exit(2)
+            result = await run_full_ingest(pool)
+            typer.echo(
+                f"ingested {result.chapter_count} chapters / "
+                f"{result.passage_count} passages "
+                f"as corpus_version={result.corpus_version}"
+            )
+        finally:
+            await pool.close()
+
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     app()
