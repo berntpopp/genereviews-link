@@ -1,4 +1,4 @@
-.PHONY: help install lock upgrade sync format format-check lint lint-ci lint-fix typecheck typecheck-fast typecheck-stop typecheck-fresh test test-fast test-unit test-integration test-cov test-all check ci-local precommit clean dev mcp-serve mcp-serve-http docker-build docker-up docker-down docker-logs
+.PHONY: help install lock upgrade sync format format-check lint lint-ci lint-fix typecheck typecheck-fast typecheck-stop typecheck-fresh test test-fast test-unit test-integration test-cov test-cov-all test-all check ci-local precommit clean dev mcp-serve mcp-serve-http docker-build docker-up docker-down docker-logs
 
 DOCKER_COMPOSE := $(shell if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then echo "docker compose"; elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "docker compose"; fi)
 
@@ -77,7 +77,10 @@ test-unit: ## Run unit tests in parallel
 test-integration: ## Run integration tests serially
 	uv run pytest tests -q -m "integration"
 
-test-cov: ## Run tests with coverage
+test-cov: ## Run unit tests with coverage (matches ci-local's selection)
+	uv run pytest tests -m "not integration and not slow" --cov=genereview_link --cov-report=term-missing --cov-report=html --cov-report=xml
+
+test-cov-all: ## Run full test suite with coverage (includes integration; needs NCBI access)
 	uv run pytest tests --cov=genereview_link --cov-report=term-missing --cov-report=html --cov-report=xml
 
 test-all: test-cov ## Alias for full test run with coverage
