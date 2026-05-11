@@ -114,5 +114,77 @@ def serve(
         sys.exit(0)
 
 
+db_app = typer.Typer(name="db", help="Database administration commands.")
+app.add_typer(db_app)
+
+
+@db_app.command("migrate")
+def db_migrate(
+    schema: Annotated[
+        str,
+        typer.Option("--schema", help="Data schema to apply data migrations into."),
+    ] = "genereview",
+) -> None:
+    """Apply control and data migrations against DATABASE_URL."""
+    from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
+    from genereview_link.db.pool import create_pool
+
+    async def run() -> None:
+        pool = await create_pool()
+        try:
+            control = await apply_control_migrations(pool)
+            data = await apply_data_migrations(pool, schema=schema)
+            for v in control:
+                typer.echo(f"control: {v}")
+            for v in data:
+                typer.echo(f"data: {v}")
+            if not control and not data:
+                typer.echo("nothing to apply (all migrations already applied)")
+        finally:
+            await pool.close()
+
+    asyncio.run(run())
+
+
+@db_app.command("reset")
+def db_reset(
+    confirm: Annotated[bool, typer.Option("--yes", help="Confirm destructive operation.")] = False,
+) -> None:
+    """DROP genereview/genereview_staging schemas and re-run migrations (dev only)."""
+    from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
+    from genereview_link.db.pool import create_pool
+
+    if not confirm:
+        typer.echo("Refusing to reset without --yes")
+        raise typer.Exit(1)
+
+    async def run() -> None:
+        pool = await create_pool()
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute("drop schema if exists genereview cascade")
+                await conn.execute("drop schema if exists genereview_staging cascade")
+                rows = await conn.fetch(
+                    "select schema_name from information_schema.schemata "
+                    "where schema_name like 'genereview_old_%'"
+                )
+                for row in rows:
+                    await conn.execute(f"drop schema {row['schema_name']} cascade")
+                # Clear stale data-migration records so the next apply re-creates tables.
+                await conn.execute(
+                    "delete from public.schema_migrations "
+                    "where namespace = 'data' "
+                    "and (version like 'genereview:%' or version like 'genereview_staging:%' "
+                    "     or version like 'genereview_old_%:%')"
+                )
+            await apply_control_migrations(pool)
+            await apply_data_migrations(pool, schema="genereview")
+            typer.echo("reset complete")
+        finally:
+            await pool.close()
+
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     app()

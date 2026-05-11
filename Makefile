@@ -114,3 +114,12 @@ docker-down: ## Stop Docker services
 
 docker-logs: ## Tail Docker service logs
 	$(DOCKER_COMPOSE) -f docker/docker-compose.yml logs -f
+
+db-migrate: ## Apply control + data migrations against $DATABASE_URL
+	uv run genereview-link db migrate
+
+db-shell: ## psql shell into the docker-compose postgres
+	$(DOCKER_COMPOSE) -f docker/docker-compose.yml -f docker/docker-compose.dev.yml exec postgres psql -U $${POSTGRES_USER:-genereview} -d genereview
+
+db-reset: ## DROP and recreate genereview schemas (dev only)
+	uv run genereview-link db reset --yes
