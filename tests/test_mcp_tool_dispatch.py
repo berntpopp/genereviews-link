@@ -187,3 +187,44 @@ async def test_get_passage_uses_app_state_repository() -> None:
         resp = await c.get("/passages/NBK1:0001")
     assert resp.status_code == 200, resp.text
     assert resp.json()["chapter_title"] == "Test"
+
+
+def test_server_instructions_are_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """create_mcp_server passes instructions to FastMCP via from_fastapi kwargs."""
+    import asyncio
+
+    from fastmcp import FastMCP
+
+    from genereview_link.server_manager import UnifiedServerManager
+
+    captured: dict[str, object] = {}
+
+    def fake_from_fastapi(*args: Any, **kwargs: Any) -> MagicMock:
+        captured["instructions"] = kwargs.get("instructions")
+        captured["name"] = kwargs.get("name")
+        return MagicMock()
+
+    monkeypatch.setattr(FastMCP, "from_fastapi", staticmethod(fake_from_fastapi))
+
+    from genereview_link.config import ServerConfig
+
+    mgr = UnifiedServerManager()
+    app = mgr.create_fastapi_app(ServerConfig())
+    asyncio.run(mgr.create_mcp_server(app, ServerConfig()))
+
+    assert captured["instructions"] is not None
+    instructions = captured["instructions"]
+    assert isinstance(instructions, str)
+    assert "Canonical pipeline" in instructions
+    assert "search_passages" in instructions
+    assert "Research use only" in instructions
+
+
+def test_find_in_section_prompt_is_registered() -> None:
+    """find_in_section returns a usable prompt string."""
+    from genereview_link.mcp.prompts import find_in_section
+
+    text = find_in_section(gene_symbol="BRCA1", section="management")
+    assert "BRCA1" in text
+    assert "management" in text
+    assert "search_passages" in text
