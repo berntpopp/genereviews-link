@@ -1,4 +1,4 @@
-create extension if not exists vector;
+create extension if not exists vector schema public;
 
 create table if not exists genereview_embeddings_bge384 (
     nbk_id              text not null,
