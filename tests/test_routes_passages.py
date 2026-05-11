@@ -108,9 +108,12 @@ class TestPassagesSearchRoute:
         resp = await http_client.get("/passages/search?q=BRCA1+diagnosis")
         assert resp.status_code == 200
         body = resp.json()
-        assert isinstance(body, list)
-        assert len(body) == 1
-        p = body[0]
+        assert isinstance(body, dict)
+        assert "_meta" in body
+        results = body["results"]
+        assert isinstance(results, list)
+        assert len(results) == 1
+        p = results[0]
         assert p["passage_id"] == "p1"
         assert p["nbk_id"] == "NBK1"
         assert p["chapter_section"] == "summary"
@@ -130,7 +133,7 @@ class TestPassagesSearchRoute:
         }
         resp = await http_client.get("/passages/search?q=test&limit=3")
         assert resp.status_code == 200
-        assert len(resp.json()) <= 3
+        assert len(resp.json()["results"]) <= 3
 
     @pytest.mark.asyncio
     async def test_rerank_lexical(self, http_client: AsyncClient) -> None:
@@ -212,10 +215,12 @@ async def test_search_default_mode_is_brief_and_limit_is_5() -> None:
         resp = await c.get("/passages/search", params={"q": "BRCA1"})
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body) == 5
-    assert body[0]["snippet"] is not None
-    assert body[0]["text"] is None
-    assert body[0]["chapter_title"] == "Chapter"
+    assert "_meta" in body
+    results = body["results"]
+    assert len(results) == 5
+    assert results[0]["snippet"] is not None
+    assert results[0]["text"] is None
+    assert results[0]["chapter_title"] == "Chapter"
 
 
 @pytest.mark.asyncio
@@ -228,8 +233,9 @@ async def test_search_mode_full_populates_text() -> None:
         resp = await c.get("/passages/search", params={"q": "BRCA1", "mode": "full"})
     assert resp.status_code == 200
     body = resp.json()
-    assert body[0]["text"] == "full text here"
-    assert body[0]["snippet"] is None
+    results = body["results"]
+    assert results[0]["text"] == "full text here"
+    assert results[0]["snippet"] is None
 
 
 @pytest.mark.asyncio
@@ -245,7 +251,8 @@ async def test_search_exclude_drops_field() -> None:
         )
     assert resp.status_code == 200
     body = resp.json()
-    assert "score_breakdown" not in body[0]
+    assert "_meta" in body
+    assert "score_breakdown" not in body["results"][0]
 
 
 @pytest.mark.asyncio
@@ -275,3 +282,20 @@ async def test_search_filter_uses_nbk_id_not_nbk() -> None:
         )
     assert resp.status_code == 200
     assert repo.search_passages.call_args.kwargs["nbk_id"] == "NBK1247"
+
+
+@pytest.mark.asyncio
+async def test_search_response_includes_meta_attribution() -> None:
+    """Search response wraps results in an envelope with _meta.attribution."""
+    repo = _make_brief_repo(rows=7)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "_meta" in body
+    assert body["_meta"]["attribution"].startswith("GeneReviews")
+    assert "results" in body
+    assert len(body["results"]) == 5

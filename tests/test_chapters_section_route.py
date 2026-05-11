@@ -180,3 +180,26 @@ async def test_old_path_param_name_does_not_match() -> None:
     body = resp.json()
     assert "nbk_id" in body
     assert "nbk" not in body or body.get("nbk_id") == body.get("nbk")
+
+
+@pytest.mark.asyncio
+async def test_section_response_includes_meta_attribution() -> None:
+    """Chapter section response wraps payload in an envelope with _meta.attribution."""
+    pr = PassageRow(
+        nbk_id="NBK1",
+        passage_id="NBK1:0001",
+        chapter_section="management",
+        heading_path="Management > X",
+        section_level=2,
+        chunk_index=0,
+        text="t",
+        chapter_title="Test",
+        chapter_last_updated=date(2025, 12, 1),
+        gene_symbols=("TG",),
+    )
+    app = _build_app(passages=[pr])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1/sections/management")
+    body = resp.json()
+    assert "_meta" in body
+    assert body["_meta"]["attribution"].startswith("GeneReviews")

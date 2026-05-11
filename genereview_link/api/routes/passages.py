@@ -13,7 +13,9 @@ from fastapi.responses import JSONResponse
 
 from genereview_link.models.genereview_models import (
     PassageDetail,
+    PassageSearchResponse,
     RankedPassage,
+    ResponseMeta,
     ScoreBreakdown,
 )
 from genereview_link.models.sections import SectionName
@@ -48,7 +50,8 @@ async def get_embedding_provider(request: Request) -> EmbeddingProvider:
 
 @router.get(
     "/passages/search",
-    response_model=list[RankedPassage],
+    response_model=PassageSearchResponse,
+    response_model_by_alias=True,
     operation_id="search_passages",
     summary="Hybrid lexical + dense RAG search across GeneReviews passages.",
     description=(
@@ -142,7 +145,7 @@ async def search_passages(
     ] = "rrf",
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     embedder: Annotated[EmbeddingProvider, Depends(get_embedding_provider)] = ...,  # type: ignore[assignment]
-) -> list[RankedPassage] | JSONResponse:
+) -> PassageSearchResponse | JSONResponse:
     lex = await repo.search_passages(
         q,
         gene_symbol=gene,
@@ -193,8 +196,19 @@ async def search_passages(
 
     if exclude:
         excluded: set[str] = {str(field) for field in exclude}
-        return JSONResponse([row.model_dump(exclude=excluded, mode="json") for row in out])
-    return out
+        return JSONResponse(
+            {
+                "results": [row.model_dump(exclude=excluded, mode="json") for row in out],
+                "_meta": ResponseMeta().model_dump(),
+            }
+        )
+    corpus: str | None = None  # later: await repo.active_corpus_version()
+    return PassageSearchResponse.model_validate(
+        {
+            "results": out,
+            "_meta": ResponseMeta(corpus_version=corpus),
+        }
+    )
 
 
 @router.get(

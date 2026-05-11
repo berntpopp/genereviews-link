@@ -33,14 +33,21 @@ def _build_app_with_state() -> FastAPI:
     fake_repo.search_passages = AsyncMock(return_value=[])
     fake_repo.active_embedding_table = AsyncMock(return_value="genereview_embeddings_bge384")
     fake_repo.dense_scores_for_passages = AsyncMock(return_value={})
+    from genereview_link.retrieval.repository import PassageRow
+
     fake_repo.get_section = AsyncMock(
         return_value=[
-            MagicMock(
+            PassageRow(
+                nbk_id="NBK1",
                 passage_id="NBK1:0001",
+                chapter_section="summary",
                 heading_path="Summary",
                 section_level=1,
                 chunk_index=0,
                 text="seeded",
+                chapter_title="Test",
+                chapter_last_updated=None,
+                gene_symbols=(),
             )
         ]
     )
@@ -58,7 +65,9 @@ async def test_passages_search_uses_app_state_repository() -> None:
             "/passages/search", params={"q": "anything", "limit": 5, "rerank": "off"}
         )
     assert resp.status_code == 200, resp.text
-    assert resp.json() == []
+    body = resp.json()
+    assert body["results"] == []
+    assert "_meta" in body
 
 
 @pytest.mark.asyncio

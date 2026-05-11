@@ -7,6 +7,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Path
 
 from genereview_link.api.routes.passages import get_repository
+from genereview_link.models.genereview_models import (
+    ChapterSectionResponse,
+    PassageInSection,
+)
 from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.repository import GeneReviewRepository
 
@@ -15,6 +19,8 @@ router = APIRouter(tags=["Chapters"])
 
 @router.get(
     "/chapters/{nbk_id}/sections/{section}",
+    response_model=ChapterSectionResponse,
+    response_model_by_alias=True,
     operation_id="get_chapter_section",
     summary="Fetch all passages for a section of a GeneReview chapter",
 )
@@ -34,7 +40,7 @@ async def get_chapter_section(
         ),
     ],
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
-) -> dict[str, object]:
+) -> ChapterSectionResponse:
     """Return all passages for a specific section of a GeneReview chapter.
 
     Concatenates all passage texts in chunk order and returns both the
@@ -44,22 +50,20 @@ async def get_chapter_section(
     if not passages:
         raise HTTPException(status_code=404, detail="section not found")
     head = passages[0]
-    return {
-        "nbk_id": nbk_id,
-        "chapter_title": head.chapter_title or "",
-        "chapter_section": section,
-        "chapter_last_updated": (
-            head.chapter_last_updated.isoformat() if head.chapter_last_updated else None
-        ),
-        "passages": [
-            {
-                "passage_id": p.passage_id,
-                "heading_path": p.heading_path,
-                "section_level": p.section_level,
-                "chunk_index": p.chunk_index,
-                "text": p.text,
-            }
+    return ChapterSectionResponse(
+        nbk_id=nbk_id,
+        chapter_title=head.chapter_title or "",
+        chapter_section=section,
+        chapter_last_updated=head.chapter_last_updated,
+        passages=[
+            PassageInSection(
+                passage_id=p.passage_id,
+                heading_path=p.heading_path,
+                section_level=p.section_level,
+                chunk_index=p.chunk_index,
+                text=p.text,
+            )
             for p in passages
         ],
-        "concatenated_text": "\n\n".join(p.text for p in passages),
-    }
+        concatenated_text="\n\n".join(p.text for p in passages),
+    )
