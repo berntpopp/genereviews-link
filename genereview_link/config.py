@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     # Correlation ID
     CORRELATION_ID_HEADER: str = "X-Request-ID"
 
+    # Metrics
+    ENABLE_METRICS: bool = True
+
     # Transport Configuration (for unified server)
     MCP_TRANSPORT: Literal["unified", "http", "stdio"] = "unified"
     MCP_HOST: str = "127.0.0.1"

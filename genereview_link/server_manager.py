@@ -1,6 +1,7 @@
 """Unified server manager for GeneReview Link with multiple transports."""
 
 import asyncio
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -10,6 +11,9 @@ from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastmcp import FastMCP
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 from genereview_link.api.client_manager import (
     get_client_manager,
@@ -30,6 +34,32 @@ from genereview_link.services.service_manager import (
 )
 
 logger = get_logger("server.manager")
+
+REQUEST_COUNTER = Counter(
+    "genereview_requests_total",
+    "Total HTTP requests",
+    labelnames=("method", "path", "status"),
+)
+REQUEST_LATENCY = Histogram(
+    "genereview_request_duration_seconds",
+    "HTTP request latency in seconds",
+    labelnames=("method", "path"),
+)
+
+
+class PrometheusMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
+        start = time.perf_counter()
+        response = await call_next(request)
+        elapsed = time.perf_counter() - start
+        path = request.url.path
+        REQUEST_LATENCY.labels(method=request.method, path=path).observe(elapsed)
+        REQUEST_COUNTER.labels(
+            method=request.method,
+            path=path,
+            status=str(response.status_code),
+        ).inc()
+        return response
 
 
 class UnifiedServerManager:
@@ -90,6 +120,9 @@ class UnifiedServerManager:
             update_request_header=True,
         )
 
+        if settings.ENABLE_METRICS:
+            app.add_middleware(PrometheusMiddleware)
+
         app.include_router(search.router)
         app.include_router(abstract.router)
         app.include_router(links.router)
@@ -111,6 +144,10 @@ class UnifiedServerManager:
             client_manager = await get_client_manager()
             health = await client_manager.health_check(test_connection=test_connection)
             return {"status": "healthy", "client_health": health}
+
+        @app.get("/metrics", tags=["Observability"], include_in_schema=False)
+        async def metrics() -> Response:
+            return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     async def create_mcp_server(self, app: FastAPI, config: ServerConfig) -> FastMCP:
         """Create a FastMCP server instance from the FastAPI app."""
