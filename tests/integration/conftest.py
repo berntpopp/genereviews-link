@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 import asyncpg
 import pytest
 import pytest_asyncio
+from pgvector.asyncpg import register_vector
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -50,7 +51,7 @@ async def _wipe(pool: asyncpg.Pool) -> None:
 async def pool() -> AsyncIterator[asyncpg.Pool]:
     """Yield a pool against the test Postgres; wipe genereview state before and after."""
     url = _database_url()
-    pool = await asyncpg.create_pool(url, min_size=1, max_size=4)
+    pool = await asyncpg.create_pool(url, min_size=1, max_size=4, init=register_vector)
     await _wipe(pool)
     yield pool
     await _wipe(pool)

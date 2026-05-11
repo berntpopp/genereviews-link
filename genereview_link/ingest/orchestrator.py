@@ -30,7 +30,7 @@ async def iter_passages_missing_embedding(
     offset = 0
     while True:
         async with pool.acquire() as conn:
-            await conn.execute(f'set local search_path to "{schema}", public')
+            await conn.execute(f'set search_path to "{schema}", public')
             rows = await conn.fetch(
                 """
                 select p.nbk_id, p.passage_id, p.text
@@ -96,7 +96,7 @@ async def backfill_embeddings(
             if records is None:
                 return
             async with pool.acquire() as conn:
-                await conn.execute(f'set local search_path to "{schema}", public')
+                await conn.execute(f'set search_path to "{schema}", public')
                 await conn.copy_records_to_table(
                     "genereview_embeddings_bge384",
                     records=records,
