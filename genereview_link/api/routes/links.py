@@ -39,7 +39,7 @@ async def get_links(
     # until repository is populated.
     try:
         result = await client.get_all_links(pubmed_id)
-        out = LinkData(**result)
+        out = LinkData(urls=result.get("urls", []))
         out.license = LicenseNotice()
         if fresh:
             out.corpus_version = f"live:{datetime.now(UTC).isoformat()}"

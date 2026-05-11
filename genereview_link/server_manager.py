@@ -27,9 +27,12 @@ from genereview_link.api.routes import (
     links,
     search,
 )
+from genereview_link.api.routes import chapters as chapters_routes
+from genereview_link.api.routes import debug as debug_routes
+from genereview_link.api.routes import passages as passages_routes
 from genereview_link.config import ServerConfig, settings
-from genereview_link.services.errors import NotYetIndexedError
 from genereview_link.logging_config import get_logger
+from genereview_link.services.errors import NotYetIndexedError
 from genereview_link.services.service_manager import (
     get_service_manager,
     shutdown_services,
@@ -87,10 +90,58 @@ class UnifiedServerManager:
         await client_manager.get_client()  # Initialize client
         await service_manager.get_service()  # Initialize service
         logger.info("Client and Service managers initialized.")
+
+        # --- Postgres pool + repository (graceful degradation when DATABASE_URL is empty) ---
+        pool = None
+        if settings.DATABASE_URL:
+            try:
+                import asyncpg
+
+                from genereview_link.retrieval.repository import GeneReviewRepository
+
+                pool = await asyncpg.create_pool(
+                    settings.DATABASE_URL,
+                    min_size=settings.DATABASE_POOL_MIN_SIZE,
+                    max_size=settings.DATABASE_POOL_MAX_SIZE,
+                )
+                app.state.pool = pool
+                app.state.repository = GeneReviewRepository(pool)
+                logger.info("Postgres pool and repository initialised.")
+            except Exception as exc:
+                logger.warning(
+                    "Failed to create Postgres pool; /passages/* will 503.", error=str(exc)
+                )
+                app.state.pool = None
+                app.state.repository = None
+        else:
+            logger.info("DATABASE_URL not set; skipping Postgres pool (repository unavailable).")
+            app.state.pool = None
+            app.state.repository = None
+
+        # --- Embedding provider ---
+        if settings.GENEREVIEW_EAGER_LOAD_BGE:
+            from genereview_link.retrieval.embeddings import SentenceTransformerEmbeddingProvider
+
+            app.state.embedder = SentenceTransformerEmbeddingProvider(
+                device=settings.INGEST_EMBED_DEVICE
+            )
+            logger.info("BGE SentenceTransformer embedding provider loaded.")
+        else:
+            from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
+
+            app.state.embedder = FakeEmbeddingProvider(dim=384)
+            logger.info(
+                "FakeEmbeddingProvider active (set GENEREVIEW_EAGER_LOAD_BGE=true for BGE)."
+            )
+
         yield
+
         logger.info("Shutting down GeneReview Link Server...")
         await shutdown_services()
         await shutdown_clients()
+        if pool is not None:
+            await pool.close()
+            logger.info("Postgres pool closed.")
         logger.info("Shutdown complete.")
 
     def create_fastapi_app(self, config: ServerConfig) -> FastAPI:
@@ -151,6 +202,9 @@ class UnifiedServerManager:
         app.include_router(links.router)
         app.include_router(fulltext.router)
         app.include_router(genereview.router)
+        app.include_router(passages_routes.router)
+        app.include_router(chapters_routes.router)
+        app.include_router(debug_routes.router)
         self._add_utility_endpoints(app)
 
         return app
@@ -182,9 +236,13 @@ class UnifiedServerManager:
             "get_abstract": "get_abstract",
             "get_links": "get_links",
             "get_fulltext": "get_fulltext",
+            "search_passages": "search_passages",
+            "get_chapter_section": "get_chapter_section",
         }
 
         mcp_route_maps = [
+            # Exclude debug routes from MCP tool exposure
+            RouteMap(pattern=r"^/debug/", mcp_type=MCPType.EXCLUDE),
             RouteMap(pattern=r"^/health$", mcp_type=MCPType.EXCLUDE),
             RouteMap(pattern=r"^/$", mcp_type=MCPType.EXCLUDE),
             RouteMap(pattern=r"^/docs$", mcp_type=MCPType.EXCLUDE),

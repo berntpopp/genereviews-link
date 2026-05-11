@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     INGEST_EMBED_WRITERS: int = 2
     INGEST_EMBED_DEVICE: str = "auto"
 
+    # Retrieval / RAG feature flags
+    # Set to True to load the BGE-small model at boot (adds ~130MB RAM).
+    # When False (default), FakeEmbeddingProvider is used so the server starts
+    # quickly in environments without Postgres/GPU resources.
+    GENEREVIEW_EAGER_LOAD_BGE: bool = False
+
+    # Set to True to enable the /debug/ranking diagnostic endpoint.
+    DEBUG_RANKING_ENABLED: bool = False
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

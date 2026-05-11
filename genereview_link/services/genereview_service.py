@@ -119,7 +119,7 @@ class GeneReviewService:
         if include_links:
             try:
                 links_result = await self.client.get_all_links(pubmed_id)
-                all_links = LinkData(**links_result)
+                all_links = LinkData(urls=links_result.get("urls", []))
                 # Extract book URLs from all URLs
                 book_urls = [
                     url for url in links_result.get("urls", []) if "ncbi.nlm.nih.gov/books/" in url

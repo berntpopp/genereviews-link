@@ -167,7 +167,8 @@ class TestLinksRoute:
         fake_client._links = {"urls": ["https://example.com/a"]}
         resp = await http_client.get("/links/1")
         assert resp.status_code == 200
-        assert resp.json() == {"urls": ["https://example.com/a"]}
+        body = resp.json()
+        assert body["urls"] == ["https://example.com/a"]
 
     @pytest.mark.asyncio
     async def test_links_500_on_error(
@@ -455,3 +456,101 @@ class TestGenereviewRoute:
             assert resp.status_code == 200
             body = resp.json()
             assert body["gene_symbol"] == "BRCA1"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: ?fresh=true tests — verify corpus_version and license fields
+# ---------------------------------------------------------------------------
+
+
+class TestFreshParam:
+    """Assert that ?fresh=true returns 200 with corpus_version set and license non-null."""
+
+    @pytest.mark.asyncio
+    async def test_search_fresh_sets_corpus_version(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._search_result = {
+            "count": 0,
+            "retmax": 20,
+            "retstart": 0,
+            "ids": [],
+            "webenv": "",
+            "querykey": "",
+        }
+        resp = await http_client.get("/search/BRCA1?fresh=true")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["corpus_version"] is not None
+        assert body["corpus_version"].startswith("live:")
+        assert body["license"] is not None
+        assert "copyright" in body["license"]
+
+    @pytest.mark.asyncio
+    async def test_abstract_fresh_sets_corpus_version(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._abstract = {
+            "pmid": "1",
+            "title": "T",
+            "abstract": "A",
+            "authors": [],
+            "journal": "J",
+            "publication_date": "2024",
+        }
+        resp = await http_client.get("/abstract/1?fresh=true")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["corpus_version"] is not None
+        assert body["corpus_version"].startswith("live:")
+        assert body["license"] is not None
+
+    @pytest.mark.asyncio
+    async def test_links_fresh_sets_corpus_version(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._links = {"urls": ["https://example.com"]}
+        resp = await http_client.get("/links/1?fresh=true")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["corpus_version"] is not None
+        assert body["corpus_version"].startswith("live:")
+        assert body["license"] is not None
+
+    @pytest.mark.asyncio
+    async def test_fulltext_fresh_sets_corpus_version(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = {
+            "nbk_id": "1247",
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "title": "T",
+            "sections": {},
+            "metadata": {},
+        }
+        resp = await http_client.get("/fulltext/NBK1247?fresh=true")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["corpus_version"] is not None
+        assert body["corpus_version"].startswith("live:")
+        assert body["license"] is not None
+
+    @pytest.mark.asyncio
+    async def test_search_no_fresh_has_null_corpus_version(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        """Without ?fresh the corpus_version should be None (index not yet populated)."""
+        fake_client._search_result = {
+            "count": 0,
+            "retmax": 20,
+            "retstart": 0,
+            "ids": [],
+            "webenv": "",
+            "querykey": "",
+        }
+        resp = await http_client.get("/search/BRCA1")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["corpus_version"] is None
+        # license is always set
+        assert body["license"] is not None
