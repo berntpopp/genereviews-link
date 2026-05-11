@@ -1,0 +1,153 @@
+"""Regression test: MCP tool dispatch must hit the same FastAPI app that serves HTTP.
+
+When FastMCP is constructed against a "discovery-only" FastAPI app whose
+lifespan never runs, ``app.state.repository`` stays ``None`` and the
+``search_passages`` / ``get_chapter_section`` routes return 503 — even though
+direct HTTP requests to the serving app return 200. This test pins the
+behaviour by simulating an MCP tool call through the same path FastMCP uses:
+an in-process HTTP call into the FastAPI app's router.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from genereview_link.api.routes import chapters as chapters_routes
+from genereview_link.api.routes import passages as passages_routes
+from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
+
+
+def _build_app_with_state() -> FastAPI:
+    """Stand up a tiny FastAPI app and seed app.state with a working repo
+    + embedder, simulating what the real lifespan would do."""
+    app = FastAPI()
+    app.include_router(passages_routes.router)
+    app.include_router(chapters_routes.router)
+
+    fake_repo = MagicMock()
+    fake_repo.search_passages = AsyncMock(return_value=[])
+    fake_repo.active_embedding_table = AsyncMock(return_value="genereview_embeddings_bge384")
+    fake_repo.dense_scores_for_passages = AsyncMock(return_value={})
+    fake_repo.get_section = AsyncMock(
+        return_value=[
+            MagicMock(
+                passage_id="NBK1:0001",
+                heading_path="Summary",
+                section_level=1,
+                chunk_index=0,
+                text="seeded",
+            )
+        ]
+    )
+    app.state.repository = fake_repo
+    app.state.embedder = FakeEmbeddingProvider(dim=384)
+    return app
+
+
+@pytest.mark.asyncio
+async def test_passages_search_uses_app_state_repository() -> None:
+    """/passages/search must read app.state.repository at request time."""
+    app = _build_app_with_state()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search", params={"q": "anything", "limit": 5, "rerank": "off"}
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_passages_search_503_when_repository_missing() -> None:
+    """When app.state.repository is None the route MUST 503, not crash."""
+    app = FastAPI()
+    app.include_router(passages_routes.router)
+    app.state.repository = None
+    app.state.embedder = FakeEmbeddingProvider(dim=384)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "x"})
+    assert resp.status_code == 503
+    assert "Postgres repository unavailable" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_chapter_section_uses_app_state_repository() -> None:
+    """/chapters/{nbk}/sections/{section} must read app.state.repository at request time."""
+    app = _build_app_with_state()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1/sections/summary")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["nbk_id"] == "NBK1"
+    assert body["chapter_section"] == "summary"
+    assert body["passages"][0]["text"] == "seeded"
+
+
+def test_unified_server_uses_single_app_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression for the 503-via-MCP bug: ``start_unified_server`` must build
+    FastMCP against the *same* FastAPI instance it serves on. If a separate
+    discovery app is used, FastMCP dispatches tool calls to it instead of the
+    one with the populated app.state — yielding 503s for repository routes.
+    """
+    from genereview_link.server_manager import UnifiedServerManager
+
+    mgr = UnifiedServerManager()
+    created_apps: list[FastAPI] = []
+    real_create = mgr.create_fastapi_app
+
+    def tracking_create(config: Any) -> FastAPI:
+        app = real_create(config)
+        created_apps.append(app)
+        return app
+
+    monkeypatch.setattr(mgr, "create_fastapi_app", tracking_create)
+
+    captured: dict[str, Any] = {}
+
+    async def fake_create_mcp(app: FastAPI, _config: Any) -> MagicMock:
+        captured["mcp_built_against"] = app
+        fake_mcp = MagicMock()
+        fake_mcp.http_app = MagicMock(
+            return_value=MagicMock(
+                lifespan=lambda _app: _DummyCtx(),
+            )
+        )
+        return fake_mcp
+
+    monkeypatch.setattr(mgr, "create_mcp_server", fake_create_mcp)
+
+    async def fake_serve() -> None:
+        return None
+
+    class _Server:
+        def __init__(self, *a: Any, **kw: Any) -> None: ...
+        async def serve(self) -> None:
+            return None
+
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "Server", _Server)
+
+    import asyncio
+
+    from genereview_link.config import ServerConfig
+
+    asyncio.run(mgr.start_unified_server(ServerConfig()))
+
+    # Exactly ONE FastAPI app must be created — and it must be the one
+    # passed to create_mcp_server (i.e. the serving app).
+    assert len(created_apps) == 1, f"Expected 1 FastAPI app, got {len(created_apps)}"
+    assert captured["mcp_built_against"] is created_apps[0], (
+        "FastMCP must be constructed against the serving FastAPI app so tool "
+        "calls hit the request-time app.state."
+    )
+    assert mgr.app is created_apps[0]
+
+
+class _DummyCtx:
+    async def __aenter__(self) -> None: ...
+    async def __aexit__(self, *_a: Any) -> None: ...

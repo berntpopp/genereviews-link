@@ -382,27 +382,27 @@ class UnifiedServerManager:
         self._current_transport = "unified"
         logger.info(f"Starting unified server on {config.host}:{config.port}")
 
-        # Stage 1: build a discovery-only FastAPI app so FastMCP can scan it.
-        discovery_app = self.create_fastapi_app(config)
-        self.mcp = await self.create_mcp_server(discovery_app, config)
+        # Build the FastAPI app once, then construct FastMCP against the SAME
+        # app instance. FastMCP captures a reference to the FastAPI app for
+        # dispatching tool calls — if we built a discovery-only app for the
+        # MCP and a separate serving app for HTTP, tool calls would land on
+        # the discovery app whose lifespan never ran (app.state.repository =
+        # None → 503 from /passages/search and /chapters/.../sections/...).
+        self.app = self.create_fastapi_app(config)
+        self.mcp = await self.create_mcp_server(self.app, config)
         mcp_app = self.mcp.http_app(path="/")
 
-        # Stage 2: rebuild the FastAPI app with a combined lifespan and mount
-        # the MCP app onto it. We swap out self.lifespan for a wrapper that
-        # runs both the MCP session manager and our existing lifespan.
-        original_lifespan = self.lifespan
+        # Chain mcp_app's lifespan into the existing app's lifespan so the
+        # FastMCP StreamableHTTPSessionManager starts at boot.
+        original_lifespan = self.app.router.lifespan_context
 
         @asynccontextmanager
         async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             async with mcp_app.lifespan(app), original_lifespan(app):
                 yield
 
-        self.lifespan = combined_lifespan  # type: ignore[assignment]
-        try:
-            self.app = self.create_fastapi_app(config)
-        finally:
-            self.lifespan = original_lifespan  # type: ignore[assignment]
-
+        self.app.router.lifespan_context = combined_lifespan
+        # Mount under config.mcp_path so the full path is /mcp (not /mcp/mcp).
         self.app.mount(config.mcp_path, mcp_app)
         logger.info(f"MCP HTTP interface mounted at {config.mcp_path}")
 
