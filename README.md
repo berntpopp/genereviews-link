@@ -265,6 +265,65 @@ This project is licensed under the MIT License.
 4. Run tests and linting
 5. Submit a pull request
 
+## Deployment modes
+
+GeneReview Link supports three corpus-loading modes, selected at startup via environment variables.
+
+### Mode 1 — Restore from release bundle (`BUNDLE_URL`)
+
+The fastest way to get a populated corpus. Set `BUNDLE_URL` to a `.tar.gz` asset URL from the
+GitHub Releases page, or to the special value `latest` to auto-resolve the newest release:
+
+```bash
+BUNDLE_URL=latest DATABASE_URL=postgresql://... genereview-link serve
+```
+
+On first boot the server downloads and integrity-verifies the bundle, restores the Postgres dump,
+and starts serving immediately. Subsequent boots detect the active corpus and skip the restore.
+
+Set `GITHUB_REPO=owner/repo` (default `berntpopp/genereviews-link`) when hosting your own releases.
+
+### Mode 2 — Build corpus locally (`BUILD_LOCAL=true`)
+
+Runs the full ingest pipeline (download from NCBI, parse, embed) on first boot:
+
+```bash
+BUILD_LOCAL=true DATABASE_URL=postgresql://... genereview-link serve
+```
+
+Expect 15-30 minutes on first boot. Requires an NCBI API key for reliable rate limits
+(`NCBI_API_KEY=...`). Subsequent boots are instant.
+
+### Mode 3 — External Postgres (no env vars)
+
+Point `DATABASE_URL` at a pre-populated database (e.g. managed RDS / Cloud SQL). The server
+assumes the corpus already exists and starts immediately:
+
+```bash
+DATABASE_URL=postgresql://user:pass@managed-host/genereview genereview-link serve
+```
+
+If the schema is empty, `/passages/search` returns 503 until the corpus is loaded externally.
+
+### Memory budget and worker tuning
+
+| Component | Approximate RAM |
+|---|---|
+| Python + FastAPI baseline | ~150 MB |
+| BGE-small-en-v1.5 model (`GENEREVIEW_EAGER_LOAD_BGE=true`) | ~130 MB |
+| asyncpg pool (10 connections) | ~50 MB |
+| Postgres shared_buffers (self-hosted) | ~1 GB |
+| **Total recommended** | **3 GB** |
+
+For production Gunicorn deployments, use 2 workers to stay within the memory budget:
+
+```bash
+GUNICORN_WORKERS=2 gunicorn -c gunicorn_conf.py server:app
+```
+
+Use `GENEREVIEW_EAGER_LOAD_BGE=true` only when semantic passage search is required;
+leave it `false` (default) for API-key-only or lite deployments.
+
 ## Support
 
 For issues and questions, please use the GitHub issue tracker.
