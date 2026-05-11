@@ -87,6 +87,18 @@ class ChapterMetadataRow:
     table_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class TableRow:
+    nbk_id: str
+    passage_id: str
+    section: str
+    heading_path: str | None
+    table_id: str
+    caption: str
+    header: list[str]
+    rows: list[list[str]]
+
+
 class GeneReviewRepository:
     """Read-mostly facade over Postgres."""
 
@@ -500,6 +512,56 @@ class GeneReviewRepository:
             sections=sections,
             table_count=0,  # placeholder; replaced in Phase 7
         )
+
+    async def get_table(self, nbk_id: str, table_id: str) -> TableRow | None:
+        """Fetch a single table passage by nbk_id + table_id."""
+        async with self._acquire() as conn:
+            await conn.execute("set search_path to genereview, public")
+            row = await conn.fetchrow(
+                """
+                select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
+                       p.table_id, p.table_data
+                  from genereview_passages p
+                 where p.nbk_id = $1
+                   and p.passage_type = 'table'
+                   and p.table_id = $2
+                """,
+                nbk_id,
+                table_id,
+            )
+        if row is None:
+            return None
+        data = row["table_data"]
+        if isinstance(data, str):
+            data = json.loads(data)
+        if data is None:
+            data = {}
+        return TableRow(
+            nbk_id=row["nbk_id"],
+            passage_id=row["passage_id"],
+            section=row["chapter_section"],
+            heading_path=row["heading_path"],
+            table_id=row["table_id"],
+            caption=data.get("caption", ""),
+            header=list(data.get("header", [])),
+            rows=[list(r) for r in data.get("rows", [])],
+        )
+
+    async def list_table_ids(self, nbk_id: str) -> list[str]:
+        """Return all table_ids for a chapter, ordered by chunk_index."""
+        async with self._acquire() as conn:
+            await conn.execute("set search_path to genereview, public")
+            rows = await conn.fetch(
+                """
+                select table_id
+                  from genereview_passages
+                 where nbk_id = $1
+                   and passage_type = 'table'
+                 order by chunk_index
+                """,
+                nbk_id,
+            )
+        return [r["table_id"] for r in rows]
 
     async def dense_scores_for_passages(
         self,

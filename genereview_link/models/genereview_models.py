@@ -299,3 +299,19 @@ class ChapterMetadataResponse(BaseModel):
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
 
     model_config = {"populate_by_name": True}
+
+
+class TableResponse(BaseModel):
+    """Envelope returned by GET /chapters/{nbk_id}/tables/{table_id}."""
+
+    nbk_id: str
+    table_id: str
+    caption: str
+    heading_path: str | None = None
+    section: str
+    header: list[str]
+    rows: list[list[str]]
+    passage_id: str
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}

@@ -31,6 +31,7 @@ from genereview_link.api.routes import chapters as chapters_routes
 from genereview_link.api.routes import debug as debug_routes
 from genereview_link.api.routes import license as license_routes
 from genereview_link.api.routes import passages as passages_routes
+from genereview_link.api.routes import tables as tables_routes
 from genereview_link.config import ServerConfig, settings
 from genereview_link.logging_config import get_logger
 from genereview_link.services.errors import NotYetIndexedError
@@ -327,6 +328,7 @@ class UnifiedServerManager:
         app.include_router(genereview.router)
         app.include_router(passages_routes.router)
         app.include_router(chapters_routes.router)
+        app.include_router(tables_routes.router)
         app.include_router(debug_routes.router)
         app.include_router(license_routes.router)
         self._add_utility_endpoints(app)
