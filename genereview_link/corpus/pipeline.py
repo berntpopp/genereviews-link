@@ -7,7 +7,6 @@ Stage 7 (embeddings) is in retrieval/embeddings.py + ingest/orchestrator.py.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,7 +17,7 @@ import asyncpg
 from genereview_link.corpus.archive import ArchiveListing, download_tarball, fetch_listing
 from genereview_link.corpus.parallel import copy_chapters, copy_passages, parse_pipeline
 from genereview_link.corpus.records import ChapterRecord, PassageRecord
-from genereview_link.corpus.sidedata import SideData, load_sidedata
+from genereview_link.corpus.sidedata import load_sidedata
 from genereview_link.db.migrate import apply_data_migrations
 
 logger = logging.getLogger(__name__)
@@ -159,7 +158,7 @@ async def run_full_ingest(
         passage_count = 0
         chapter_buf: list[ChapterRecord] = []
         passage_buf: list[PassageRecord] = []
-        BATCH = 50
+        batch_size = 50
 
         async for chapter, passages in parse_pipeline(tarball, sidedata):
             # apply sidedata joins
@@ -180,7 +179,7 @@ async def run_full_ingest(
             passage_buf.extend(passages)
             chapter_count += 1
             passage_count += len(passages)
-            if len(chapter_buf) >= BATCH:
+            if len(chapter_buf) >= batch_size:
                 await _flush(pool, chapter_buf, passage_buf, version)
                 chapter_buf.clear()
                 passage_buf.clear()
