@@ -1,4 +1,4 @@
-.PHONY: help install lock upgrade sync format format-check lint lint-ci lint-fix typecheck typecheck-fast typecheck-stop typecheck-fresh test test-fast test-unit test-integration test-cov test-cov-all test-all check ci-local precommit clean dev mcp-serve mcp-serve-http docker-build docker-up docker-down docker-logs
+.PHONY: help install lock upgrade sync format format-check lint lint-ci lint-fix typecheck typecheck-fast typecheck-stop typecheck-fresh test test-fast test-unit test-integration test-cov test-cov-all test-all check ci-local precommit clean dev mcp-serve mcp-serve-http docker-build docker-up docker-down docker-logs eval eval-baseline
 
 DOCKER_COMPOSE := $(shell if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then echo "docker compose"; elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "docker compose"; fi)
 
@@ -129,3 +129,10 @@ ingest: ## Run full ingest pipeline (download → parse → write → swap)
 
 embed: ## Backfill embeddings + build HNSW index
 	uv run genereview-link embed
+
+eval: ## Run MRR@10 / section-precision@5 against tests/eval/
+	uv run python -m tests.eval.run_eval
+
+eval-baseline: ## Re-capture baseline.json (requires explicit operator confirmation)
+	@echo "Refusing — edit tests/eval/baseline.json by hand or via a tracked PR."
+	@exit 1
