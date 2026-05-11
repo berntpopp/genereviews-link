@@ -141,6 +141,12 @@ class CorpusVersion(BaseModel):
     is_active: bool
 
 
+ATTRIBUTION_TEXT = (
+    "GeneReviews® content © 1993–present University of Washington; "  # noqa: RUF001
+    "sourced from NCBI Bookshelf. Full terms via the get_license tool."
+)
+
+
 class LicenseNotice(BaseModel):
     """License and copyright notice for the GeneReviews data source.
 
@@ -149,7 +155,7 @@ class LicenseNotice(BaseModel):
     fetch this once and apply it to all consumed data.
     """
 
-    copyright: str = "(c) 1993-2026 University of Washington"
+    copyright: str = "© 1993–present University of Washington"  # noqa: RUF001
     terms_url: str = "https://www.ncbi.nlm.nih.gov/books/NBK138602/"
     data_source: str = "NCBI Bookshelf — GeneReviews"
     data_source_url: str = "https://www.ncbi.nlm.nih.gov/books/NBK1116/"
@@ -209,3 +215,41 @@ class PassageDetail(BaseModel):
     text: str
     char_count: int
     gene_symbols: list[str] = []
+
+
+class ResponseMeta(BaseModel):
+    """Per-response metadata (attribution, corpus version) emitted under ``_meta``."""
+
+    attribution: str = Field(default=ATTRIBUTION_TEXT)
+    corpus_version: str | None = None
+
+
+class PassageSearchResponse(BaseModel):
+    """Envelope returned by GET /passages/search."""
+
+    results: list[RankedPassage]
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+    model_config = {"populate_by_name": True}
+
+
+class PassageInSection(BaseModel):
+    """A passage as returned in a chapter section response."""
+
+    passage_id: str
+    heading_path: str | None = None
+    section_level: int
+    chunk_index: int
+    text: str
+
+
+class ChapterSectionResponse(BaseModel):
+    """Envelope returned by GET /chapters/{nbk_id}/sections/{section}."""
+
+    nbk_id: str
+    chapter_title: str
+    chapter_section: SectionName
+    chapter_last_updated: date | None = None
+    passages: list[PassageInSection]
+    concatenated_text: str
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+    model_config = {"populate_by_name": True}
