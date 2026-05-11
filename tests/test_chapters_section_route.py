@@ -189,13 +189,10 @@ async def test_section_not_found_returns_structured_payload():
         resp = await c.get("/chapters/NBK1247/sections/management")
     assert resp.status_code == 404
     detail = resp.json()["detail"]
-    assert detail["code"] == "section_not_found"
+    assert detail["code"] == "section_empty_for_chapter"
     assert detail["recovery_hint"]
-    # field_errors must enumerate the section enum so an LLM can self-correct:
-    fe = detail["field_errors"][0]
-    assert fe["field"] == "section"
-    assert "management" in fe["valid_values"]
-    assert "summary" in fe["valid_values"]
+    assert "no rows" in detail["recovery_hint"]
+    assert "no passages" in detail["message"]
     # next_commands suggests search_passages:
     nc = detail["next_commands"][0]
     assert nc["tool"] == "search_passages"

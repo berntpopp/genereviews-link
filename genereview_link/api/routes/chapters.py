@@ -6,13 +6,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
 
-from genereview_link.api.errors import FieldError, StructuredHTTPException
+from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.routes.passages import get_repository
 from genereview_link.models.genereview_models import (
     ChapterSectionResponse,
     PassageInSection,
 )
-from genereview_link.models.sections import SECTION_NAMES, SectionName
+from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.repository import GeneReviewRepository
 
 router = APIRouter(tags=["Chapters"])
@@ -51,20 +51,14 @@ async def get_chapter_section(
     if not passages:
         raise StructuredHTTPException(
             status_code=404,
-            code="section_not_found",
-            message=f"section {section!r} not found for chapter {nbk_id}",
+            code="section_empty_for_chapter",
+            message=f"chapter {nbk_id!r} has no passages in section {section!r}",
             recovery_hint=(
-                "valid section names are listed in the section parameter's "
-                "JSONSchema enum; use search_passages without a section "
-                "filter to discover which sections exist for this chapter."
+                "the chapter exists but this section has no rows. Use "
+                "search_passages with nbk_id=<chapter> to discover which "
+                "sections this chapter actually populates, or try a different "
+                "section."
             ),
-            field_errors=[
-                FieldError(
-                    field="section",
-                    reason="unknown_value",
-                    valid_values=list(SECTION_NAMES),
-                )
-            ],
             next_commands=[
                 {
                     "tool": "search_passages",
