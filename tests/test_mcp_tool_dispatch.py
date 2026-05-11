@@ -151,3 +151,30 @@ def test_unified_server_uses_single_app_instance(monkeypatch: pytest.MonkeyPatch
 class _DummyCtx:
     async def __aenter__(self) -> None: ...
     async def __aexit__(self, *_a: Any) -> None: ...
+
+
+@pytest.mark.asyncio
+async def test_get_passage_uses_app_state_repository() -> None:
+    """GET /passages/{passage_id} reads app.state.repository at request time."""
+    from datetime import date
+
+    from genereview_link.retrieval.repository import PassageRow
+
+    app = _build_app_with_state()
+    pr = PassageRow(
+        nbk_id="NBK1",
+        passage_id="NBK1:0001",
+        chapter_section="management",
+        heading_path="Management > X",
+        section_level=2,
+        chunk_index=1,
+        text="seeded passage",
+        chapter_title="Test",
+        chapter_last_updated=date(2025, 12, 1),
+        gene_symbols=("TG",),
+    )
+    app.state.repository.get_passage = AsyncMock(return_value=pr)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1:0001")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["chapter_title"] == "Test"

@@ -346,6 +346,7 @@ class UnifiedServerManager:
             "get_fulltext": "get_fulltext",
             "search_passages": "search_passages",
             "get_chapter_section": "get_chapter_section",
+            "get_passage": "get_passage",
             "get_license": "get_license",
         }
 

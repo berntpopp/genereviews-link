@@ -8,9 +8,13 @@ from __future__ import annotations
 
 from typing import Annotated, Literal, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
-from genereview_link.models.genereview_models import RankedPassage, ScoreBreakdown
+from genereview_link.models.genereview_models import (
+    PassageDetail,
+    RankedPassage,
+    ScoreBreakdown,
+)
 from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.embeddings import EmbeddingProvider
 from genereview_link.retrieval.repository import GeneReviewRepository
@@ -109,3 +113,41 @@ async def search_passages(
             )
         )
     return out
+
+
+@router.get(
+    "/passages/{passage_id}",
+    response_model=PassageDetail,
+    operation_id="get_passage",
+    summary="Fetch a single GeneReviews passage by its passage_id.",
+)
+async def get_passage(
+    passage_id: Annotated[
+        str,
+        Path(
+            description=(
+                "Globally unique passage identifier of the form "
+                "'NBKxxxx:NNNN' (e.g. 'NBK1247:0022'). NBKxxxx is the "
+                "chapter; NNNN is the 4-digit chunk index within the chapter."
+            ),
+            pattern=r"^NBK\d+:\d{4}$",
+        ),
+    ],
+    repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
+) -> PassageDetail:
+    row = await repo.get_passage(passage_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"passage {passage_id!r} not found")
+    return PassageDetail(
+        passage_id=row.passage_id,
+        nbk_id=row.nbk_id,
+        chapter_title=row.chapter_title or "",
+        chapter_last_updated=row.chapter_last_updated,
+        chapter_section=cast(SectionName, row.chapter_section),
+        heading_path=row.heading_path,
+        section_level=row.section_level,
+        chunk_index=row.chunk_index,
+        text=row.text,
+        char_count=len(row.text),
+        gene_symbols=list(row.gene_symbols),
+    )
