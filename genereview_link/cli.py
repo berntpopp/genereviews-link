@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from enum import Enum
+from enum import StrEnum
+from typing import Annotated
 
 import typer
 import uvicorn
@@ -28,7 +29,7 @@ def _main() -> None:
     """GeneReview Link Unified Server."""
 
 
-class Transport(str, Enum):
+class Transport(StrEnum):
     """Transport mode for the server."""
 
     unified = "unified"
@@ -36,7 +37,7 @@ class Transport(str, Enum):
     stdio = "stdio"
 
 
-class LogLevel(str, Enum):
+class LogLevel(StrEnum):
     """Supported log levels."""
 
     debug = "DEBUG"
@@ -66,21 +67,18 @@ def build_config(
 
 @app.command()
 def serve(
-    transport: Transport = typer.Option(
-        Transport.unified, "--transport", help="Transport mode"
-    ),
-    host: str = typer.Option("127.0.0.1", "--host", help="Host to bind to"),
-    port: int = typer.Option(8000, "--port", help="Port to bind to"),
-    mcp_path: str = typer.Option("/mcp", "--mcp-path", help="MCP endpoint path"),
-    disable_docs: bool = typer.Option(
-        False, "--disable-docs", help="Disable API documentation endpoints"
-    ),
-    log_level: LogLevel = typer.Option(
-        LogLevel.info, "--log-level", help="Log level"
-    ),
-    dev: bool = typer.Option(
-        False, "--dev", help="Development mode with auto-reload"
-    ),
+    transport: Annotated[
+        Transport, typer.Option("--transport", help="Transport mode")
+    ] = Transport.unified,
+    host: Annotated[str, typer.Option("--host", help="Host to bind to")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Port to bind to")] = 8000,
+    mcp_path: Annotated[str, typer.Option("--mcp-path", help="MCP endpoint path")] = "/mcp",
+    disable_docs: Annotated[
+        bool,
+        typer.Option("--disable-docs", help="Disable API documentation endpoints"),
+    ] = False,
+    log_level: Annotated[LogLevel, typer.Option("--log-level", help="Log level")] = LogLevel.info,
+    dev: Annotated[bool, typer.Option("--dev", help="Development mode with auto-reload")] = False,
 ) -> None:
     """Start the GeneReview Link unified server."""
     from genereview_link.server_manager import UnifiedServerManager
