@@ -1,0 +1,95 @@
+name: Build corpus bundle
+
+on:
+  schedule:
+    - cron: "0 6 * * MON"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force build even if file_list.csv unchanged"
+        type: boolean
+        default: false
+
+concurrency:
+  group: build-corpus
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      corpus_version: ${{ steps.check.outputs.corpus_version }}
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          curl -sf https://ftp.ncbi.nlm.nih.gov/pub/litarch/file_list.csv \
+            | awk -F, '$5=="NBK1116" {print $6}' > /tmp/last_updated.txt
+          LU=$(cat /tmp/last_updated.txt | head -1)
+          CV=$(echo "$LU" | cut -d' ' -f1)
+          echo "corpus_version=$CV" >> $GITHUB_OUTPUT
+          # Compare to latest release tag
+          LATEST=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
+          if [ "${{ inputs.force }}" = "true" ] || [ "corpus-$CV" != "$LATEST" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build:
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg18
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: genereview
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:ci@localhost:5432/genereview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --frozen
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-BAAI_bge-small-en-v1.5-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            hf-BAAI_bge-small-en-v1.5-
+      - run: uv run genereview-link db migrate
+      - run: uv run genereview-link ingest
+      - run: uv run genereview-link embed
+      - run: |
+          mkdir -p dist
+          pg_dump -Fc -f dist/corpus.dump $DATABASE_URL
+          # build manifest + tarball via CLI
+          uv run genereview-link bundle build --output dist/genereview-corpus-${{ needs.check.outputs.corpus_version }}-bge384.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle
+          path: dist/
+
+  release:
+    needs: [check, build]
+    if: needs.check.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: corpus-${{ needs.check.outputs.corpus_version }}
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
