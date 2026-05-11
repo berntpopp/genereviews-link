@@ -141,8 +141,10 @@ class CorpusVersion(BaseModel):
     is_active: bool
 
 
+COPYRIGHT_LINE = "© 1993–present University of Washington"  # noqa: RUF001 — canonical typography
+
 ATTRIBUTION_TEXT = (
-    "GeneReviews® content © 1993–present University of Washington; "  # noqa: RUF001
+    f"GeneReviews® content {COPYRIGHT_LINE}; "
     "sourced from NCBI Bookshelf. Full terms via the get_license tool."
 )
 
@@ -155,7 +157,7 @@ class LicenseNotice(BaseModel):
     fetch this once and apply it to all consumed data.
     """
 
-    copyright: str = "© 1993–present University of Washington"  # noqa: RUF001
+    copyright: str = COPYRIGHT_LINE
     terms_url: str = "https://www.ncbi.nlm.nih.gov/books/NBK138602/"
     data_source: str = "NCBI Bookshelf — GeneReviews"
     data_source_url: str = "https://www.ncbi.nlm.nih.gov/books/NBK1116/"

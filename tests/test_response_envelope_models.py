@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from genereview_link.models.genereview_models import (
     ATTRIBUTION_TEXT,
-    ChapterSectionResponse,  # noqa: F401  # re-exported smoke import
+    COPYRIGHT_LINE,
+    ChapterSectionResponse,
     LicenseNotice,
     PassageSearchResponse,
     ResponseMeta,
@@ -21,8 +22,29 @@ def test_response_meta_default_attribution_matches_constant():
     assert m.corpus_version is None
 
 
+def test_response_meta_corpus_version_round_trip():
+    m = ResponseMeta(corpus_version="2026-04-01")
+    dumped = m.model_dump()
+    assert dumped["corpus_version"] == "2026-04-01"
+    assert dumped["attribution"] == ATTRIBUTION_TEXT
+
+
 def test_passage_search_response_meta_alias_is_underscore_meta():
     r = PassageSearchResponse(results=[])
+    dumped = r.model_dump(by_alias=True)
+    assert "_meta" in dumped
+    assert "meta" not in dumped
+
+
+def test_chapter_section_response_meta_alias_is_underscore_meta() -> None:
+    r = ChapterSectionResponse(
+        nbk_id="NBK1",
+        chapter_title="Test",
+        chapter_section="management",
+        chapter_last_updated=None,
+        passages=[],
+        concatenated_text="",
+    )
     dumped = r.model_dump(by_alias=True)
     assert "_meta" in dumped
     assert "meta" not in dumped
@@ -31,3 +53,5 @@ def test_passage_search_response_meta_alias_is_underscore_meta():
 def test_license_notice_and_attribution_share_copyright_year():
     notice = LicenseNotice()
     assert "1993" in notice.copyright
+    assert notice.copyright == COPYRIGHT_LINE
+    assert COPYRIGHT_LINE in ATTRIBUTION_TEXT
