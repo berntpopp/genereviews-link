@@ -130,7 +130,9 @@ async def test_get_passage_cross_sections_smoke() -> None:
     pr = _make_row()
     app = _build_app(focal=pr)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get("/passages/NBK1247:0022", params={"neighbors": 1, "cross_sections": "true"})
+        resp = await c.get(
+            "/passages/NBK1247:0022", params={"neighbors": 1, "cross_sections": "true"}
+        )
 
     assert resp.status_code == 200, resp.text
     data = resp.json()

@@ -83,9 +83,7 @@ async def get_chapter_section(
     head = passages[0]
     include_set = set(include or [])
     concatenated = (
-        "\n\n".join(p.text for p in passages)
-        if "concatenated_text" in include_set
-        else None
+        "\n\n".join(p.text for p in passages) if "concatenated_text" in include_set else None
     )
     response = ChapterSectionResponse(  # type: ignore[call-arg]
         nbk_id=nbk_id,
@@ -140,9 +138,7 @@ async def get_chapter_metadata(
             status_code=404,
             code="chapter_not_found",
             message=f"chapter {nbk_id!r} not in corpus",
-            recovery_hint=(
-                "check the NBK ID; use search_passages to discover indexed chapters"
-            ),
+            recovery_hint=("check the NBK ID; use search_passages to discover indexed chapters"),
             next_commands=[
                 {"tool": "search_passages", "arguments": {"q": "<gene symbol or term>"}}
             ],

@@ -278,7 +278,7 @@ async def search_passages(
     summary="Fetch a GeneReviews passage by its passage_id, with optional context window.",
     description=(
         "Returns the focal passage wrapped in a ``PassageWindowResponse`` envelope. "
-        "Use ``neighbors`` (0–5) to fetch adjacent chunks before and after the focal "
+        "Use ``neighbors`` (0-5) to fetch adjacent chunks before and after the focal "
         "passage within the same section. Set ``cross_sections=true`` to allow neighbors "
         "to span section boundaries within the same chapter.\n\n"
         "The ``_meta`` field carries attribution and the active corpus version."

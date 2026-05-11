@@ -537,7 +537,10 @@ async def test_search_diagnostics_via_exclude_path() -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get(
             "/passages/search",
-            params={"q": "xyzzy_long_query_to_trigger_broaden_suggestion_here", "exclude": "heading_path"},
+            params={
+                "q": "xyzzy_long_query_to_trigger_broaden_suggestion_here",
+                "exclude": "heading_path",
+            },
         )
     assert resp.status_code == 200
     data = resp.json()

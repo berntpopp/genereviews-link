@@ -458,9 +458,7 @@ class GeneReviewRepository:
 
         has_more_before = len(before_rows) > before
         has_more_after = len(after_rows) > after
-        before_clipped = list(
-            reversed([self._row_to_passage(r) for r in before_rows[:before]])
-        )
+        before_clipped = list(reversed([self._row_to_passage(r) for r in before_rows[:before]]))
         after_clipped = [self._row_to_passage(r) for r in after_rows[:after]]
         return focal, before_clipped, after_clipped, has_more_before, has_more_after
 

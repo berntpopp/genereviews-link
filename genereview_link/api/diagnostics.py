@@ -27,11 +27,7 @@ def build_search_diagnostics(
 
     # Rule 1: gene filter killed >90% of hits (gene assumed valid post-T4.6)
     gene_filter = next((f for f in applied_filters if f.startswith("gene=")), None)
-    if (
-        gene_filter
-        and lexical_hits > 0
-        and lexical_hits_after_filters < lexical_hits / 10
-    ):
+    if gene_filter and lexical_hits > 0 and lexical_hits_after_filters < lexical_hits / 10:
         symbol = gene_filter.split("=", 1)[1]
         suggestions.append(
             f"the gene {symbol!r} is indexed but no passages match within the current filters; "
@@ -44,11 +40,7 @@ def build_search_diagnostics(
 
     # Rule 3: sections filter drops everything
     section_filter = next((f for f in applied_filters if f.startswith("sections=")), None)
-    if (
-        section_filter
-        and lexical_hits > 0
-        and lexical_hits_after_filters == 0
-    ):
+    if section_filter and lexical_hits > 0 and lexical_hits_after_filters == 0:
         suggestions.append("try other sections — current sections filter excludes all hits")
 
     return SearchDiagnostics(

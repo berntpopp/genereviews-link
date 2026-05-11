@@ -55,7 +55,7 @@ async def test_get_passage_window_returns_focal(pool: asyncpg.Pool) -> None:
     """Focal passage is returned correctly."""
     await _seed(pool)
     repo = GeneReviewRepository(pool)
-    focal, before, after, more_before, more_after = await repo.get_passage_window(
+    focal, _before, _after, _more_before, _more_after = await repo.get_passage_window(
         "NBKWIN:0002", before=1, after=1, cross_sections=False
     )
     assert focal is not None
@@ -68,7 +68,7 @@ async def test_get_passage_window_section_bounded(pool: asyncpg.Pool) -> None:
     await _seed(pool)
     repo = GeneReviewRepository(pool)
     # NBKWIN:0002 is middle of 'summary' (chunk_index 1)
-    focal, before, after, more_before, more_after = await repo.get_passage_window(
+    focal, before, after, _more_before, _more_after = await repo.get_passage_window(
         "NBKWIN:0002", before=2, after=2, cross_sections=False
     )
     assert focal is not None
@@ -88,7 +88,7 @@ async def test_get_passage_window_before_in_ascending_order(pool: asyncpg.Pool) 
     await _seed(pool)
     repo = GeneReviewRepository(pool)
     # Use NBKWIN:0003 (chunk_index 2) — two predecessors in same section
-    focal, before, after, _, _ = await repo.get_passage_window(
+    focal, before, _after, _, _ = await repo.get_passage_window(
         "NBKWIN:0003", before=2, after=0, cross_sections=False
     )
     assert focal is not None
@@ -101,7 +101,7 @@ async def test_get_passage_window_at_section_boundary_has_more_false(pool: async
     """First passage in a section: before is empty and has_more_before is False."""
     await _seed(pool)
     repo = GeneReviewRepository(pool)
-    focal, before, after, more_before, more_after = await repo.get_passage_window(
+    focal, before, _after, more_before, _more_after = await repo.get_passage_window(
         "NBKWIN:0001", before=2, after=0, cross_sections=False
     )
     assert focal is not None
@@ -114,7 +114,7 @@ async def test_get_passage_window_has_more_after_true(pool: asyncpg.Pool) -> Non
     await _seed(pool)
     repo = GeneReviewRepository(pool)
     # NBKWIN:0004 (chunk_index 3, 'management') with after=1: NBKWIN:0005 fits, NBKWIN:0006 is extra
-    focal, before, after, more_before, more_after = await repo.get_passage_window(
+    focal, _before, after, _more_before, more_after = await repo.get_passage_window(
         "NBKWIN:0004", before=0, after=1, cross_sections=False
     )
     assert focal is not None
@@ -129,7 +129,7 @@ async def test_get_passage_window_cross_sections_sees_other_section(pool: asyncp
     repo = GeneReviewRepository(pool)
     # NBKWIN:0003 is last in 'summary' (chunk_index 2); with cross_sections=True
     # after should include NBKWIN:0004 (management, chunk_index 3)
-    focal, before, after, _, more_after = await repo.get_passage_window(
+    focal, _before, after, _, _more_after = await repo.get_passage_window(
         "NBKWIN:0003", before=0, after=1, cross_sections=True
     )
     assert focal is not None
