@@ -337,6 +337,11 @@ class GeneReviewRepository:
             )
         if row is None:
             return None
+        return self._row_to_passage(row)
+
+    @staticmethod
+    def _row_to_passage(row: asyncpg.Record) -> PassageRow:
+        """Convert a DB record (with chapter_last_updated alias) to PassageRow."""
         return PassageRow(
             nbk_id=row["nbk_id"],
             passage_id=row["passage_id"],
@@ -349,6 +354,98 @@ class GeneReviewRepository:
             chapter_last_updated=row["chapter_last_updated"],
             gene_symbols=tuple(row["gene_symbols"] or ()),
         )
+
+    async def _fetch_passage_row(
+        self,
+        conn: asyncpg.Connection,
+        passage_id: str,
+    ) -> PassageRow | None:
+        """Fetch a single passage by passage_id using an existing connection."""
+        row = await conn.fetchrow(
+            """
+            select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
+                   p.section_level, p.chunk_index, p.text,
+                   c.title as chapter_title,
+                   c.last_updated_date as chapter_last_updated,
+                   c.gene_symbols
+              from genereview_passages p
+              join genereview_chapters c on c.nbk_id = p.nbk_id
+             where p.passage_id = $1
+            """,
+            passage_id,
+        )
+        return self._row_to_passage(row) if row is not None else None
+
+    async def get_passage_window(
+        self,
+        passage_id: str,
+        *,
+        before: int,
+        after: int,
+        cross_sections: bool,
+    ) -> tuple[PassageRow | None, list[PassageRow], list[PassageRow], bool, bool]:
+        """Fetch a passage plus its neighbors within the same chapter.
+
+        Neighbors stop at the section boundary unless cross_sections=True.
+        Always stops at chapter boundary regardless. Returns (focal,
+        before_rows, after_rows, has_more_before, has_more_after).
+        """
+        async with self._acquire() as conn:
+            await conn.execute("set search_path to genereview, public")
+            focal = await self._fetch_passage_row(conn, passage_id)
+            if focal is None:
+                return None, [], [], False, False
+
+            if cross_sections:
+                section_filter = ""
+                params: list[object] = [focal.nbk_id, focal.chunk_index]
+            else:
+                section_filter = "and p.chapter_section = $3"
+                params = [focal.nbk_id, focal.chunk_index, focal.chapter_section]
+
+            # Fetch one extra each side to compute has_more_*
+            before_rows = await conn.fetch(
+                f"""
+                select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
+                       p.section_level, p.chunk_index, p.text,
+                       c.title as chapter_title,
+                       c.last_updated_date as chapter_last_updated,
+                       c.gene_symbols
+                  from genereview_passages p
+                  join genereview_chapters c on c.nbk_id = p.nbk_id
+                 where p.nbk_id = $1
+                   and p.chunk_index < $2
+                   {section_filter}
+                 order by p.chunk_index desc
+                 limit {before + 1}
+                """,  # noqa: S608
+                *params,
+            )
+            after_rows = await conn.fetch(
+                f"""
+                select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
+                       p.section_level, p.chunk_index, p.text,
+                       c.title as chapter_title,
+                       c.last_updated_date as chapter_last_updated,
+                       c.gene_symbols
+                  from genereview_passages p
+                  join genereview_chapters c on c.nbk_id = p.nbk_id
+                 where p.nbk_id = $1
+                   and p.chunk_index > $2
+                   {section_filter}
+                 order by p.chunk_index asc
+                 limit {after + 1}
+                """,  # noqa: S608
+                *params,
+            )
+
+        has_more_before = len(before_rows) > before
+        has_more_after = len(after_rows) > after
+        before_clipped = list(
+            reversed([self._row_to_passage(r) for r in before_rows[:before]])
+        )
+        after_clipped = [self._row_to_passage(r) for r in after_rows[:after]]
+        return focal, before_clipped, after_clipped, has_more_before, has_more_after
 
     async def dense_scores_for_passages(
         self,
