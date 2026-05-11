@@ -348,3 +348,33 @@ async def test_search_response_includes_meta_attribution() -> None:
     assert body["_meta"]["attribution"].startswith("GeneReviews")
     assert "results" in body
     assert len(body["results"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_search_response_includes_corpus_version_from_app_state() -> None:
+    """`_meta.corpus_version` is wired through from app.state.corpus_version."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+    app.state.corpus_version = "2026-01-15"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+    body = resp.json()
+    assert body["_meta"]["corpus_version"] == "2026-01-15"
+
+
+@pytest.mark.asyncio
+async def test_search_exclude_path_includes_corpus_version() -> None:
+    """JSONResponse fallback path also exposes _meta.corpus_version."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+    app.state.corpus_version = "2026-02-01"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "exclude": "score_breakdown"},
+        )
+    body = resp.json()
+    assert body["_meta"]["corpus_version"] == "2026-02-01"
+    assert "score_breakdown" not in body["results"][0]

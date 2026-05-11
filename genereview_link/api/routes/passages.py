@@ -49,6 +49,11 @@ async def get_embedding_provider(request: Request) -> EmbeddingProvider:
     return embedder
 
 
+def _get_corpus_version(request: Request) -> str | None:
+    """Read the active corpus version cached on app.state during lifespan."""
+    return getattr(request.app.state, "corpus_version", None)
+
+
 @router.get(
     "/passages/search",
     response_model=PassageSearchResponse,
@@ -147,6 +152,7 @@ async def search_passages(
     ] = "rrf",
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     embedder: Annotated[EmbeddingProvider, Depends(get_embedding_provider)] = ...,  # type: ignore[assignment]
+    request: Request = ...,  # type: ignore[assignment]
 ) -> PassageSearchResponse | JSONResponse:
     lex = await repo.search_passages(
         q,
@@ -201,21 +207,17 @@ async def search_passages(
             )
         )
 
+    corpus = _get_corpus_version(request)
+    meta = ResponseMeta(corpus_version=corpus)
     if exclude:
         excluded: set[str] = {str(field) for field in exclude}
         return JSONResponse(
             {
                 "results": [row.model_dump(exclude=excluded, mode="json") for row in out],
-                "_meta": ResponseMeta().model_dump(),
+                "_meta": meta.model_dump(),
             }
         )
-    corpus: str | None = None  # later: await repo.active_corpus_version()
-    return PassageSearchResponse.model_validate(
-        {
-            "results": out,
-            "_meta": ResponseMeta(corpus_version=corpus),
-        }
-    )
+    return PassageSearchResponse(results=out, meta=meta)
 
 
 @router.get(

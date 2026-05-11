@@ -210,6 +210,22 @@ class UnifiedServerManager:
             app.state.pool = None
             app.state.repository = None
 
+        # --- Active corpus version (cached for _meta.corpus_version) ---
+        app.state.corpus_version = None
+        if app.state.repository is not None:
+            try:
+                cv = await app.state.repository.active_corpus_version()
+                app.state.corpus_version = cv.version if cv is not None else None
+                logger.info(
+                    "Active corpus version cached on app.state",
+                    corpus_version=app.state.corpus_version,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to read active corpus version; _meta will omit it.",
+                    error=str(exc),
+                )
+
         # --- Embedding provider ---
         if settings.GENEREVIEW_EAGER_LOAD_BGE:
             from genereview_link.retrieval.embeddings import SentenceTransformerEmbeddingProvider

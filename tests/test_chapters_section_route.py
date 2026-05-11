@@ -220,3 +220,26 @@ async def test_section_response_includes_meta_attribution() -> None:
     body = resp.json()
     assert "_meta" in body
     assert body["_meta"]["attribution"].startswith("GeneReviews")
+
+
+@pytest.mark.asyncio
+async def test_section_response_includes_corpus_version_from_app_state() -> None:
+    """Chapter section response surfaces app.state.corpus_version on _meta."""
+    pr = PassageRow(
+        nbk_id="NBK1",
+        passage_id="NBK1:0001",
+        chapter_section="management",
+        heading_path="Management > X",
+        section_level=2,
+        chunk_index=0,
+        text="t",
+        chapter_title="Test",
+        chapter_last_updated=date(2025, 12, 1),
+        gene_symbols=("TG",),
+    )
+    app = _build_app(passages=[pr])
+    app.state.corpus_version = "2026-03-10"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1/sections/management")
+    body = resp.json()
+    assert body["_meta"]["corpus_version"] == "2026-03-10"

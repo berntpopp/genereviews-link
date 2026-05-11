@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Request
 
 from genereview_link.api.errors import StructuredHTTPException
-from genereview_link.api.routes.passages import get_repository
+from genereview_link.api.routes.passages import _get_corpus_version, get_repository
 from genereview_link.models.genereview_models import (
     ChapterSectionResponse,
     PassageInSection,
+    ResponseMeta,
 )
 from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.repository import GeneReviewRepository
@@ -41,6 +42,7 @@ async def get_chapter_section(
         ),
     ],
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
+    request: Request = ...,  # type: ignore[assignment]
 ) -> ChapterSectionResponse:
     """Return all passages for a specific section of a GeneReview chapter.
 
@@ -83,4 +85,5 @@ async def get_chapter_section(
             for p in passages
         ],
         concatenated_text="\n\n".join(p.text for p in passages),
+        meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )
