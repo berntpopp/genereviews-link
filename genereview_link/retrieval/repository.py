@@ -58,6 +58,7 @@ class LexicalPassageRow:
     recall_overlap_count: int
     lexical_rank: float
     gene_symbols: tuple[str, ...]
+    snippet: str | None = None
 
 
 class GeneReviewRepository:
@@ -114,6 +115,7 @@ class GeneReviewRepository:
         nbk_id: str | None = None,
         sections: list[str] | None = None,
         limit: int = 20,
+        brief: bool = False,
     ) -> list[LexicalPassageRow]:
         """Run the three-tsquery hybrid lexical search."""
         from genereview_link.retrieval.lexical import recall_terms, recall_tsquery
@@ -122,10 +124,26 @@ class GeneReviewRepository:
         terms = recall_terms(query)
         sections_param = sections if sections else None
 
+        snippet_select = ""
+        if brief:
+            snippet_select = (
+                ", ts_headline("
+                "    'english', ranked.text, "
+                "    coalesce("
+                "        nullif(q.phrase_query::text, '')::tsquery, "
+                "        nullif(q.strict_query::text, '')::tsquery, "
+                "        q.recall_query"
+                "    ),"
+                "    'MaxWords=60, MinWords=30, MaxFragments=2, "
+                "FragmentDelimiter= ... , StartSel=**, StopSel=**, "
+                "HighlightAll=false'"
+                ") as snippet"
+            )
+
         async with self._acquire() as conn:
             await conn.execute("set search_path to genereview, public")
             rows = await conn.fetch(
-                """
+                f"""
                 with q as (
                     select
                         phraseto_tsquery('english', $2) as phrase_query,
@@ -162,24 +180,28 @@ class GeneReviewRepository:
                        and ($3::text is null or $3 = any(c.gene_symbols))
                        and ($4::text is null or p.nbk_id = $4)
                        and ($5::text[] is null or p.chapter_section = any($5::text[]))
+                ),
+                ranked as (
+                    select
+                        nbk_id, passage_id, chapter_section, heading_path,
+                        section_level, chunk_index, text,
+                        gene_symbols, chapter_title, chapter_last_updated,
+                        phrase_rank, strict_rank, recall_rank, recall_overlap_count,
+                        (phrase_rank * 3.0 + strict_rank * 2.0 + recall_rank)
+                          * case
+                              when phrase_rank = 0 and strict_rank = 0 and recall_rank > 0
+                                and array_length(regexp_split_to_array($2, E'\\s+'), 1) >= 4
+                                and recall_overlap_count <= 1
+                              then least(1.0, greatest(0.25, char_length(text)::double precision / 400.0))
+                              else 1.0
+                            end as lexical_rank
+                      from cand
+                     order by lexical_rank desc, nbk_id, passage_id
+                     limit $6
                 )
-                select
-                    nbk_id, passage_id, chapter_section, heading_path, section_level,
-                    chunk_index, text, gene_symbols,
-                    chapter_title, chapter_last_updated,
-                    phrase_rank, strict_rank, recall_rank, recall_overlap_count,
-                    (phrase_rank * 3.0 + strict_rank * 2.0 + recall_rank)
-                      * case
-                          when phrase_rank = 0 and strict_rank = 0 and recall_rank > 0
-                            and array_length(regexp_split_to_array($2, E'\\s+'), 1) >= 4
-                            and recall_overlap_count <= 1
-                          then least(1.0, greatest(0.25, char_length(text)::double precision / 400.0))
-                          else 1.0
-                        end as lexical_rank
-                  from cand
-                 order by lexical_rank desc, nbk_id, passage_id
-                 limit $6
-                """,
+                select ranked.*{snippet_select}
+                  from ranked, q
+                """,  # noqa: S608
                 "ignored",
                 query,
                 gene_symbol,
@@ -210,6 +232,7 @@ class GeneReviewRepository:
                 recall_overlap_count=int(r["recall_overlap_count"]),
                 lexical_rank=float(r["lexical_rank"]),
                 gene_symbols=tuple(r["gene_symbols"] or ()),
+                snippet=r["snippet"] if brief else None,
             )
             for r in rows
         ]
