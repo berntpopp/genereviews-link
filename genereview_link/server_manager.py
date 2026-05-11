@@ -151,7 +151,7 @@ class UnifiedServerManager:
 
     async def create_mcp_server(self, app: FastAPI, config: ServerConfig) -> FastMCP:
         """Create a FastMCP server instance from the FastAPI app."""
-        from fastmcp.server.openapi import MCPType, RouteMap
+        from fastmcp.server.providers.openapi import MCPType, RouteMap
 
         mcp_custom_names = {
             "get_genereview_summary": "get_genereview_summary",
