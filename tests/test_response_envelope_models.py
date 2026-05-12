@@ -105,3 +105,4 @@ def test_link_data_keeps_flat_urls_and_adds_categorized_links() -> None:
     assert dumped["urls"] == ["https://www.ncbi.nlm.nih.gov/books/NBK1247/"]
     assert dumped["link_entries"][0]["link_type"] == "books"
     assert dumped["by_type"]["books"]
+    assert "_meta" in dumped

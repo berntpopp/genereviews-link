@@ -70,6 +70,10 @@ class LinkData(BaseModel):
     link_entries: list[LinkEntry] | None = None
     by_type: dict[str, list[str]] = Field(default_factory=dict)
     corpus_version: str | None = None
+    meta: ResponseMeta = Field(
+        alias="_meta", default_factory=lambda: ResponseMeta.live_passthrough()
+    )
+    model_config = {"populate_by_name": True}
 
 
 class Reference(BaseModel):
@@ -288,6 +292,10 @@ class ResponseMeta(BaseModel):
     license_summary: str = "Research use only; cite per genereview://license"
     dense_model_id: str | None = None
     embedding_dim: int | None = None
+
+    @classmethod
+    def live_passthrough(cls) -> ResponseMeta:
+        return cls()
 
 
 class PassageSearchResponse(BaseModel):
