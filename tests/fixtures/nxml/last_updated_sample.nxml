@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<book-part xmlns:xlink="http://www.w3.org/1999/xlink" book-part-type="chapter" id="test_last_rev">
+  <book-part-meta>
+    <book-part-id pub-id-type="pmid">99999999</book-part-id>
+    <title-group>
+      <title>Test Chapter With Last-Revision Date</title>
+    </title-group>
+    <pub-date pub-type="initial"><day>1</day><month>1</month><year>2000</year></pub-date>
+    <pub-date pub-type="last-revision"><day>14</day><month>9</month><year>2023</year></pub-date>
+  </book-part-meta>
+  <body>
+    <sec id="summary">
+      <title>Summary</title>
+      <p>This chapter uses pub-type last-revision for the update date.</p>
+    </sec>
+  </body>
+</book-part>

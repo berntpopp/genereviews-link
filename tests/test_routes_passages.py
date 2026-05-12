@@ -56,7 +56,6 @@ def _make_lexical_row(passage_id: str = "p1") -> LexicalPassageRow:
         recall_rank=0.3,
         recall_overlap_count=2,
         lexical_rank=0.6,
-        gene_symbols=("BRCA1",),
     )
 
 
@@ -108,14 +107,17 @@ class TestPassagesSearchRoute:
         resp = await http_client.get("/passages/search?q=BRCA1+diagnosis")
         assert resp.status_code == 200
         body = resp.json()
-        assert isinstance(body, list)
-        assert len(body) == 1
-        p = body[0]
+        assert isinstance(body, dict)
+        assert "_meta" in body
+        results = body["results"]
+        assert isinstance(results, list)
+        assert len(results) == 1
+        p = results[0]
         assert p["passage_id"] == "p1"
         assert p["nbk_id"] == "NBK1"
         assert p["chapter_section"] == "summary"
-        assert "score_breakdown" in p
-        assert p["score_breakdown"]["final_position"] == 1
+        # score_breakdown is opt-in; absent by default
+        assert "score_breakdown" not in p
 
     @pytest.mark.asyncio
     async def test_missing_q_returns_422(self, http_client: AsyncClient) -> None:
@@ -130,12 +132,59 @@ class TestPassagesSearchRoute:
         }
         resp = await http_client.get("/passages/search?q=test&limit=3")
         assert resp.status_code == 200
-        assert len(resp.json()) <= 3
+        assert len(resp.json()["results"]) <= 3
 
     @pytest.mark.asyncio
     async def test_rerank_lexical(self, http_client: AsyncClient) -> None:
         resp = await http_client.get("/passages/search?q=BRCA1&rerank=lexical")
         assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_rerank_off_preserves_repo_order(
+        self, http_client: AsyncClient, fake_repo: Any
+    ) -> None:
+        """rerank=off bypasses section_priority; rows arrive in repo order."""
+        # First row is "references" (high section_priority), second is "summary".
+        # With section_priority tiebreaker, summary should win;
+        # with rerank=off, the repo order is preserved.
+        row_refs = LexicalPassageRow(
+            passage=PassageRow(
+                nbk_id="NBK1",
+                passage_id="p_refs",
+                chapter_section="references",
+                heading_path="References",
+                section_level=1,
+                chunk_index=0,
+                text="ref text",
+            ),
+            phrase_rank=1.0,
+            strict_rank=0.0,
+            recall_rank=0.0,
+            recall_overlap_count=1,
+            lexical_rank=1.0,
+        )
+        row_summary = LexicalPassageRow(
+            passage=PassageRow(
+                nbk_id="NBK1",
+                passage_id="p_summary",
+                chapter_section="summary",
+                heading_path="Summary",
+                section_level=1,
+                chunk_index=0,
+                text="summary text",
+            ),
+            phrase_rank=1.0,
+            strict_rank=0.0,
+            recall_rank=0.0,
+            recall_overlap_count=1,
+            lexical_rank=1.0,
+        )
+        fake_repo.search_passages.return_value = [row_refs, row_summary]
+        resp = await http_client.get("/passages/search?q=BRCA1&rerank=off")
+        assert resp.status_code == 200
+        results = resp.json()["results"]
+        assert results[0]["passage_id"] == "p_refs"
+        assert results[1]["passage_id"] == "p_summary"
 
     @pytest.mark.asyncio
     async def test_503_when_repository_not_set(
@@ -153,3 +202,515 @@ class TestPassagesSearchRoute:
         app.dependency_overrides[get_repository] = _no_repo
         resp = await http_client.get("/passages/search?q=test")
         assert resp.status_code == 503
+
+
+def _brief_row(pid: str, snippet: str) -> LexicalPassageRow:
+    return LexicalPassageRow(
+        passage=PassageRow(
+            nbk_id="NBK1",
+            passage_id=pid,
+            chapter_section="management",
+            heading_path="Management > X",
+            section_level=2,
+            chunk_index=1,
+            text="full text here",
+            chapter_title="Chapter",
+            chapter_last_updated=None,
+            gene_symbols=("TG",),
+        ),
+        phrase_rank=1.0,
+        strict_rank=0.5,
+        recall_rank=0.4,
+        recall_overlap_count=1,
+        lexical_rank=1.0,
+        snippet=snippet,
+    )
+
+
+def _make_brief_app(repo: Any) -> FastAPI:
+    """Build a minimal FastAPI app wired to ``repo`` for the new mode tests."""
+    from genereview_link.api.routes import passages as passages_routes
+
+    app = FastAPI()
+    app.include_router(passages_routes.router)
+    app.state.repository = repo
+    app.state.embedder = FakeEmbeddingProvider(dim=384)
+    return app
+
+
+def _make_brief_repo(rows: int = 7) -> Any:
+    from unittest.mock import MagicMock
+
+    repo = MagicMock()
+    repo.search_passages = AsyncMock(
+        return_value=[_brief_row(f"NBK1:000{i}", f"**bold{i}**") for i in range(rows)]
+    )
+    repo.active_embedding_table = AsyncMock(return_value="t")
+    repo.dense_scores_for_passages = AsyncMock(return_value={})
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_search_default_mode_is_brief_and_limit_is_5() -> None:
+    """Default response has snippet populated, text null, and <=5 rows."""
+    repo = _make_brief_repo(rows=7)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "_meta" in body
+    results = body["results"]
+    assert len(results) == 5
+    assert results[0]["snippet"] is not None
+    assert results[0]["text"] is None
+    assert results[0]["chapter_title"] == "Chapter"
+
+
+@pytest.mark.asyncio
+async def test_search_mode_full_populates_text() -> None:
+    """mode=full returns text, snippet null."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "mode": "full"})
+    assert resp.status_code == 200
+    body = resp.json()
+    results = body["results"]
+    assert results[0]["text"] == "full text here"
+    assert results[0]["snippet"] is None
+
+
+@pytest.mark.asyncio
+async def test_search_exclude_drops_field() -> None:
+    """exclude=score_breakdown removes that key from each row."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "exclude": "score_breakdown"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "_meta" in body
+    assert "score_breakdown" not in body["results"][0]
+
+
+@pytest.mark.asyncio
+async def test_search_exclude_bogus_returns_422() -> None:
+    """Unknown exclude value rejected by FastAPI validation."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "exclude": "bogus"},
+        )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_search_filter_uses_nbk_id_not_nbk() -> None:
+    """The route accepts ?nbk_id= and forwards it to the repository."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "nbk_id": "NBK1247"},
+        )
+    assert resp.status_code == 200
+    assert repo.search_passages.call_args.kwargs["nbk_id"] == "NBK1247"
+
+
+@pytest.mark.asyncio
+async def test_search_response_includes_meta_attribution() -> None:
+    """Search response wraps results in an envelope with _meta.attribution."""
+    repo = _make_brief_repo(rows=7)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "_meta" in body
+    assert body["_meta"]["attribution"].startswith("GeneReviews")
+    assert "results" in body
+    assert len(body["results"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_search_response_includes_corpus_version_from_app_state() -> None:
+    """`_meta.corpus_version` is wired through from app.state.corpus_version."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+    app.state.corpus_version = "2026-01-15"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+    body = resp.json()
+    assert body["_meta"]["corpus_version"] == "2026-01-15"
+
+
+@pytest.mark.asyncio
+async def test_search_exclude_path_includes_corpus_version() -> None:
+    """JSONResponse fallback path also exposes _meta.corpus_version."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+    app.state.corpus_version = "2026-02-01"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "exclude": "score_breakdown"},
+        )
+    body = resp.json()
+    assert body["_meta"]["corpus_version"] == "2026-02-01"
+    assert "score_breakdown" not in body["results"][0]
+
+
+# ---------------------------------------------------------------------------
+# score_breakdown opt-in tests (Task 5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_omits_score_breakdown_by_default() -> None:
+    """score_breakdown is absent from results unless include=score_breakdown."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["results"]
+    assert "score_breakdown" not in body["results"][0]
+
+
+@pytest.mark.asyncio
+async def test_search_includes_score_breakdown_when_requested() -> None:
+    """include=score_breakdown adds the field to every result row."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "include": "score_breakdown"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["results"]
+    p = body["results"][0]
+    assert "score_breakdown" in p
+    sb = p["score_breakdown"]
+    assert sb["final_position"] == 1
+    # All ScoreBreakdown fields must be present
+    for field in (
+        "lexical_rank",
+        "phrase_rank",
+        "strict_rank",
+        "recall_rank",
+        "section_priority",
+        "final_position",
+    ):
+        assert field in sb, f"Missing ScoreBreakdown field: {field}"
+
+
+@pytest.mark.asyncio
+async def test_search_exclude_score_breakdown_is_noop_after_default_flip() -> None:
+    """exclude=score_breakdown is a no-op; field is already absent by default."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "exclude": "score_breakdown"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["results"]
+    assert "score_breakdown" not in body["results"][0]
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics tests (Task 14)
+# ---------------------------------------------------------------------------
+
+
+def _make_empty_repo() -> Any:
+    """Repo whose search_passages always returns an empty list."""
+    from unittest.mock import MagicMock
+
+    repo = MagicMock()
+    repo.search_passages = AsyncMock(return_value=[])
+    repo.active_embedding_table = AsyncMock(return_value="t")
+    repo.dense_scores_for_passages = AsyncMock(return_value={})
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_search_zero_results_emits_diagnostics() -> None:
+    """Empty results with a sections filter produce _meta.diagnostics with suggestions."""
+    repo = _make_empty_repo()
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "xyzzy_definitely_not_in_corpus_zzz", "sections": "management"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["results"] == []
+    diag = data["_meta"].get("diagnostics")
+    assert diag is not None
+    assert "suggestions" in diag
+
+
+@pytest.mark.asyncio
+async def test_search_zero_results_long_query_emits_broaden_suggestion() -> None:
+    """A very long query triggers the 'broaden q' suggestion."""
+    repo = _make_empty_repo()
+    app = _make_brief_app(repo)
+    long_q = "this is a very long query with more than eight words in total to test broadening"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": long_q})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["results"] == []
+    diag = data["_meta"].get("diagnostics")
+    assert diag is not None
+    assert any("broaden" in s for s in diag["suggestions"])
+
+
+@pytest.mark.asyncio
+async def test_search_nonzero_results_omits_diagnostics() -> None:
+    """When results are returned, _meta.diagnostics is absent (None serialises to null/absent)."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["results"]) > 0
+    assert data["_meta"].get("diagnostics") is None
+
+
+@pytest.mark.asyncio
+async def test_search_diagnostics_shape() -> None:
+    """Diagnostics object carries the expected keys."""
+    repo = _make_empty_repo()
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "short query", "sections": "management"},
+        )
+    assert resp.status_code == 200
+    diag = resp.json()["_meta"]["diagnostics"]
+    assert diag is not None
+    for key in ("lexical_hits", "lexical_hits_after_filters", "applied_filters", "suggestions"):
+        assert key in diag, f"Missing diagnostics key: {key}"
+    assert isinstance(diag["applied_filters"], list)
+    assert isinstance(diag["suggestions"], list)
+
+
+@pytest.mark.asyncio
+async def test_search_diagnostics_via_exclude_path() -> None:
+    """Diagnostics are present even when the JSONResponse (exclude) branch is taken."""
+    repo = _make_empty_repo()
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={
+                "q": "xyzzy_long_query_to_trigger_broaden_suggestion_here",
+                "exclude": "heading_path",
+            },
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["results"] == []
+    diag = data["_meta"].get("diagnostics")
+    assert diag is not None
+    assert "suggestions" in diag
+
+
+# ---------------------------------------------------------------------------
+# passage_type exposure tests
+# ---------------------------------------------------------------------------
+
+
+def _make_table_row() -> LexicalPassageRow:
+    """Return a LexicalPassageRow with passage_type='table'."""
+    return LexicalPassageRow(
+        passage=PassageRow(
+            nbk_id="NBK1",
+            passage_id="NBK1:0099",
+            chapter_section="management",
+            heading_path="Management > Table 1",
+            section_level=2,
+            chunk_index=99,
+            text="Table cell content",
+            chapter_title="Chapter",
+            chapter_last_updated=None,
+            gene_symbols=("TG",),
+            passage_type="table",
+        ),
+        phrase_rank=1.0,
+        strict_rank=0.5,
+        recall_rank=0.4,
+        recall_overlap_count=1,
+        lexical_rank=1.0,
+        snippet="**Table** cell content",
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_exposes_passage_type_table() -> None:
+    """When a result has passage_type='table', the JSON shape exposes it."""
+    from unittest.mock import MagicMock
+
+    repo = MagicMock()
+    repo.search_passages = AsyncMock(return_value=[_make_table_row()])
+    repo.active_embedding_table = AsyncMock(return_value="t")
+    repo.dense_scores_for_passages = AsyncMock(return_value={})
+
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "table"})
+
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 1
+    assert results[0]["passage_type"] == "table"
+
+
+@pytest.mark.asyncio
+async def test_search_narrative_passage_type_default() -> None:
+    """A standard narrative passage exposes passage_type='narrative'."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert results[0]["passage_type"] == "narrative"
+
+
+# ---------------------------------------------------------------------------
+# Gene index validation tests (Task 33)
+# ---------------------------------------------------------------------------
+
+
+def _make_indexed_app(repo: Any, symbols: frozenset[str] | None) -> FastAPI:
+    """Build a minimal FastAPI app with an optional GeneIndex on app.state."""
+    from genereview_link.api.routes import passages as passages_routes
+    from genereview_link.services.gene_index import GeneIndex
+
+    app = FastAPI()
+    app.include_router(passages_routes.router)
+    app.state.repository = repo
+    app.state.embedder = FakeEmbeddingProvider(dim=384)
+    if symbols is not None:
+        app.state.gene_index = GeneIndex(symbols=symbols)
+    else:
+        app.state.gene_index = None
+    return app
+
+
+@pytest.mark.asyncio
+async def test_search_unknown_gene_returns_structured_400() -> None:
+    """Unknown gene symbol with a populated index returns 400 with code=gene_not_indexed."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_indexed_app(repo, frozenset({"BRCA1", "BRCA2"}))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "x", "gene": "BRCA9"})
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert detail["code"] == "gene_not_indexed"
+    assert "next_commands" in detail
+
+
+@pytest.mark.asyncio
+async def test_search_unknown_gene_field_errors_contain_suggestions() -> None:
+    """field_errors for an unknown gene include close-match suggestions."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_indexed_app(repo, frozenset({"BRCA1", "BRCA2"}))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "x", "gene": "BRCA9"})
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    # field_errors should be populated with gene + valid_values from rapidfuzz
+    field_errors = detail.get("field_errors", [])
+    assert len(field_errors) > 0
+    gene_error = field_errors[0]
+    assert gene_error["field"] == "gene"
+    valid = gene_error.get("valid_values") or []
+    # BRCA9 should fuzzy-match BRCA1 and/or BRCA2
+    assert any("BRCA" in v for v in valid)
+
+
+@pytest.mark.asyncio
+async def test_search_valid_gene_with_index_returns_200() -> None:
+    """Known gene symbol with a populated index passes through to 200."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_indexed_app(repo, frozenset({"BRCA1", "BRCA2"}))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "x", "gene": "BRCA1"})
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_search_gene_index_none_falls_through_to_200() -> None:
+    """When gene_index is None (startup failed), unknown gene symbols are not blocked."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_indexed_app(repo, symbols=None)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "x", "gene": "TOTALLY_UNKNOWN"})
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_search_next_commands_populated_for_unknown_gene() -> None:
+    """next_commands carry search_passages tool suggestions for each close match."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_indexed_app(repo, frozenset({"BRCA1", "BRCA2"}))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "diagnosis", "gene": "BRCA9"})
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    cmds = detail.get("next_commands", [])
+    assert len(cmds) > 0
+    # Each command references search_passages
+    assert all(cmd["tool"] == "search_passages" for cmd in cmds)
+    # Each command has a gene argument from the suggestions
+    genes_in_commands = [cmd["arguments"]["gene"] for cmd in cmds]
+    assert any("BRCA" in g for g in genes_in_commands)

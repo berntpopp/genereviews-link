@@ -6,13 +6,14 @@ They should never be enabled in production without additional auth.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from genereview_link.api.routes.passages import get_embedding_provider, get_repository
 from genereview_link.config import settings
 from genereview_link.models.genereview_models import RankedPassage, ScoreBreakdown
+from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.embeddings import EmbeddingProvider
 from genereview_link.retrieval.repository import GeneReviewRepository
 from genereview_link.retrieval.rerank import SECTION_PRIORITY, rerank_with_embeddings
@@ -54,9 +55,12 @@ async def debug_ranking(
             RankedPassage(
                 passage_id=r.passage.passage_id,
                 nbk_id=r.passage.nbk_id,
-                gene_symbols=list(r.gene_symbols),
-                chapter_section=r.passage.chapter_section,
+                gene_symbols=list(r.passage.gene_symbols),
+                chapter_title=r.passage.chapter_title or "",
+                chapter_last_updated=r.passage.chapter_last_updated,
+                chapter_section=cast(SectionName, r.passage.chapter_section),
                 heading_path=r.passage.heading_path,
+                passage_type=r.passage.passage_type,
                 text=r.passage.text,
                 char_count=len(r.passage.text),
                 score_breakdown=ScoreBreakdown(
@@ -65,8 +69,8 @@ async def debug_ranking(
                     strict_rank=r.strict_rank,
                     recall_rank=r.recall_rank,
                     dense_score=dense_scores.get(r.passage.passage_id),
-                    dense_rank=None,
-                    rrf_score=None,
+                    dense_rank=r.dense_rank,
+                    rrf_score=r.rrf_score,
                     section_priority=SECTION_PRIORITY.get(r.passage.chapter_section, 100),
                     final_position=pos,
                 ),

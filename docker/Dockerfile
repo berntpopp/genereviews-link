@@ -66,4 +66,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
-CMD ["gunicorn", "-c", "gunicorn_conf.py", "server:app"]
+CMD ["genereview-link", "serve", "--transport", "unified", "--host", "0.0.0.0", "--port", "8000"]

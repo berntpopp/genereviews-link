@@ -3,9 +3,11 @@
 Defines structured data models for validation and serialization.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
+
+from genereview_link.models.sections import SectionName
 
 
 class GeneReviewSection(BaseModel):
@@ -139,6 +141,14 @@ class CorpusVersion(BaseModel):
     is_active: bool
 
 
+COPYRIGHT_LINE = "© 1993–present University of Washington"  # noqa: RUF001 — canonical typography
+
+ATTRIBUTION_TEXT = (
+    f"GeneReviews® content {COPYRIGHT_LINE}; "
+    "sourced from NCBI Bookshelf. Full terms via the genereview://license resource."
+)
+
+
 class LicenseNotice(BaseModel):
     """License and copyright notice for the GeneReviews data source.
 
@@ -147,7 +157,7 @@ class LicenseNotice(BaseModel):
     fetch this once and apply it to all consumed data.
     """
 
-    copyright: str = "(c) 1993-2026 University of Washington"
+    copyright: str = COPYRIGHT_LINE
     terms_url: str = "https://www.ncbi.nlm.nih.gov/books/NBK138602/"
     data_source: str = "NCBI Bookshelf — GeneReviews"
     data_source_url: str = "https://www.ncbi.nlm.nih.gov/books/NBK1116/"
@@ -172,13 +182,138 @@ class ScoreBreakdown(BaseModel):
 
 
 class RankedPassage(BaseModel):
-    """A passage returned by /passages/search, annotated with ranking scores."""
+    """A passage returned by /passages/search, annotated with ranking scores.
+
+    Either ``text`` or ``snippet`` is populated, never both. The route's
+    ``mode`` query parameter controls which:
+    - ``mode="brief"`` (default) → ``snippet`` populated, ``text`` null.
+    - ``mode="full"`` → ``text`` populated, ``snippet`` null.
+    """
 
     passage_id: str
     nbk_id: str
     gene_symbols: list[str] = []
-    chapter_section: str
+    chapter_title: str
+    chapter_last_updated: date | None = None
+    chapter_section: SectionName
     heading_path: str | None = None
+    passage_type: str = "narrative"
+    text: str | None = None
+    snippet: str | None = None
+    char_count: int
+    score_breakdown: ScoreBreakdown | None = None
+
+
+class PassageDetail(BaseModel):
+    """Returned by GET /passages/{passage_id}."""
+
+    passage_id: str
+    nbk_id: str
+    chapter_title: str
+    chapter_last_updated: date | None = None
+    chapter_section: SectionName
+    heading_path: str | None = None
+    passage_type: str = "narrative"
+    section_level: int
+    chunk_index: int
     text: str
     char_count: int
-    score_breakdown: ScoreBreakdown
+    gene_symbols: list[str] = []
+
+
+class SearchDiagnosticsModel(BaseModel):
+    """Diagnostics emitted under ``_meta.diagnostics`` when a search returns zero results."""
+
+    lexical_hits: int
+    lexical_hits_after_filters: int
+    applied_filters: list[str]
+    suggestions: list[str]
+
+
+class ResponseMeta(BaseModel):
+    """Per-response metadata (attribution, corpus version) emitted under ``_meta``."""
+
+    attribution: str = Field(default=ATTRIBUTION_TEXT)
+    corpus_version: str | None = None
+    diagnostics: SearchDiagnosticsModel | None = None
+
+
+class PassageSearchResponse(BaseModel):
+    """Envelope returned by GET /passages/search."""
+
+    results: list[RankedPassage]
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+    model_config = {"populate_by_name": True}
+
+
+class PassageWindowResponse(BaseModel):
+    """Response shape for /passages/{id} (always wrapped, even when neighbors=0)."""
+
+    passage: PassageDetail
+    neighbors_before: list[PassageDetail] = Field(default_factory=list)
+    neighbors_after: list[PassageDetail] = Field(default_factory=list)
+    has_more_before: bool = False
+    has_more_after: bool = False
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}
+
+
+class PassageInSection(BaseModel):
+    """A passage as returned in a chapter section response."""
+
+    passage_id: str
+    heading_path: str | None = None
+    section_level: int
+    chunk_index: int
+    text: str
+
+
+class ChapterSectionResponse(BaseModel):
+    """Envelope returned by GET /chapters/{nbk_id}/sections/{section}."""
+
+    nbk_id: str
+    chapter_title: str
+    chapter_section: SectionName
+    chapter_last_updated: date | None = None
+    passages: list[PassageInSection]
+    concatenated_text: str | None = None  # opt-in via include=concatenated_text
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+    model_config = {"populate_by_name": True}
+
+
+class SectionSummary(BaseModel):
+    """Per-section passage count, emitted inside ChapterMetadataResponse."""
+
+    section: SectionName
+    passage_count: int
+
+
+class ChapterMetadataResponse(BaseModel):
+    """Envelope returned by GET /chapters/{nbk_id}/metadata."""
+
+    nbk_id: str
+    title: str
+    chapter_last_updated: date | None = None
+    gene_symbols: list[str] = Field(default_factory=list)
+    sections: list[SectionSummary] = Field(default_factory=list)
+    table_count: int = 0
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}
+
+
+class TableResponse(BaseModel):
+    """Envelope returned by GET /chapters/{nbk_id}/tables/{table_id}."""
+
+    nbk_id: str
+    table_id: str
+    caption: str
+    heading_path: str | None = None
+    section: str
+    header: list[str]
+    rows: list[list[str]]
+    passage_id: str
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}

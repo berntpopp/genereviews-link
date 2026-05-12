@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<book-part xmlns:xlink="http://www.w3.org/1999/xlink" book-part-type="chapter" id="tbl_test">
+  <book-part-meta>
+    <book-part-id pub-id-type="pmid">99999999</book-part-id>
+    <title-group>
+      <title>Table Interleaving Test Chapter</title>
+    </title-group>
+    <contrib-group>
+      <contrib contrib-type="author"><name><surname>Smith</surname><given-names>A</given-names></name></contrib>
+    </contrib-group>
+    <pub-date pub-type="initial"><day>1</day><month>1</month><year>2020</year></pub-date>
+    <pub-date pub-type="updated"><day>1</day><month>1</month><year>2024</year></pub-date>
+  </book-part-meta>
+  <body>
+    <sec id="pharmacogenomics">
+      <title>Pharmacogenomics</title>
+      <p>This section describes pharmacogenomic associations relevant to treatment.</p>
+      <table-wrap id="t5">
+        <caption><title>Table 5</title><p>Risk-Reducing Mastectomy</p></caption>
+        <table>
+          <thead><tr><th>Variant</th><th>Drug</th><th>Min age</th></tr></thead>
+          <tbody>
+            <tr><td>Class I</td><td>elexacaftor</td><td>6 yrs</td></tr>
+            <tr><td>Class II</td><td>tezacaftor</td><td>12 yrs</td></tr>
+          </tbody>
+        </table>
+      </table-wrap>
+      <p>Additional narrative text after the table to verify interleaving of chunk indices.</p>
+    </sec>
+  </body>
+</book-part>

@@ -7,6 +7,7 @@ stages 4-6 of the ingest pipeline:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import tarfile
 from collections.abc import AsyncIterator, Iterator
@@ -172,6 +173,9 @@ async def copy_passages(
             p.char_count,
             p.token_estimate,
             corpus_version,
+            p.passage_type,
+            p.table_id,
+            json.dumps(p.table_data) if p.table_data is not None else None,
         )
         for p in passages
     ]
@@ -190,5 +194,8 @@ async def copy_passages(
             "char_count",
             "token_estimate",
             "corpus_version",
+            "passage_type",
+            "table_id",
+            "table_data",
         ),
     )

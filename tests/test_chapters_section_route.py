@@ -1,9 +1,10 @@
-"""Unit tests for /chapters/{nbk}/sections/{section} using TestClient + dependency overrides."""
+"""Unit tests for /chapters/{nbk_id}/sections/{section} using TestClient + dependency overrides."""
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -11,6 +12,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.routes import chapters as chapters_routes
 from genereview_link.api.routes.passages import get_embedding_provider, get_repository
 from genereview_link.config import ServerConfig
 from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
@@ -99,16 +101,294 @@ class TestChapterSectionRoute:
         assert body["nbk_id"] == "NBK1247"
         assert body["chapter_section"] == "summary"
         assert len(body["passages"]) == 2
+        # concatenated_text is opt-in; must be absent by default
+        assert "concatenated_text" not in body
+        # License lives at the dedicated /license endpoint, not inlined here.
+        assert "license" not in body
+
+    @pytest.mark.asyncio
+    async def test_returns_section_with_concatenated_text_when_opted_in(
+        self, http_client: AsyncClient
+    ) -> None:
+        resp = await http_client.get(
+            "/chapters/NBK1247/sections/summary",
+            params={"include": "concatenated_text"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
         assert "concatenated_text" in body
         assert "First chunk" in body["concatenated_text"]
         assert "Second chunk" in body["concatenated_text"]
-        # License lives at the dedicated /license endpoint, not inlined here.
-        assert "license" not in body
 
     @pytest.mark.asyncio
     async def test_returns_404_when_section_not_found(
         self, http_client: AsyncClient, fake_repo: Any
     ) -> None:
         fake_repo.get_section.return_value = []
-        resp = await http_client.get("/chapters/NBK1247/sections/nonexistent")
+        resp = await http_client.get("/chapters/NBK1247/sections/management")
         assert resp.status_code == 404
+
+
+def _build_app(*, passages: list[PassageRow]) -> FastAPI:
+    app = FastAPI()
+    app.include_router(chapters_routes.router)
+    repo = MagicMock()
+    repo.get_section = AsyncMock(return_value=passages)
+    app.state.repository = repo
+    return app
+
+
+@pytest.mark.asyncio
+async def test_returns_passages_with_chapter_title_envelope() -> None:
+    pr = PassageRow(
+        nbk_id="NBK1",
+        passage_id="NBK1:0001",
+        chapter_section="management",
+        heading_path="Management > X",
+        section_level=2,
+        chunk_index=0,
+        text="sample text",
+        chapter_title="Test Chapter Title",
+        chapter_last_updated=date(2025, 12, 1),
+        gene_symbols=("TG",),
+    )
+    app = _build_app(passages=[pr])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK1/sections/management",
+            params={"include": "concatenated_text"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["nbk_id"] == "NBK1"
+    assert body["chapter_section"] == "management"
+    assert body["chapter_title"] == "Test Chapter Title"
+    assert body["chapter_last_updated"] == "2025-12-01"
+    assert body["passages"][0]["passage_id"] == "NBK1:0001"
+    assert body["concatenated_text"] == "sample text"
+
+
+@pytest.mark.asyncio
+async def test_old_path_param_name_does_not_match() -> None:
+    """If someone reverts the rename, this test will fail because the
+    old route had a path param called `nbk`; the new one is `nbk_id`.
+    The path itself doesn't change — only the function signature does —
+    so this test asserts the call still returns 200 (route path is
+    unchanged) and that the response envelope keys use `nbk_id`.
+    """
+    pr = PassageRow(
+        nbk_id="NBK1",
+        passage_id="NBK1:0001",
+        chapter_section="management",
+        heading_path=None,
+        section_level=1,
+        chunk_index=0,
+        text="t",
+        chapter_title="C",
+        chapter_last_updated=None,
+        gene_symbols=(),
+    )
+    app = _build_app(passages=[pr])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1/sections/management")
+    body = resp.json()
+    assert "nbk_id" in body
+    assert "nbk" not in body or body.get("nbk_id") == body.get("nbk")
+
+
+@pytest.mark.asyncio
+async def test_section_not_found_returns_structured_payload():
+    app = _build_app(passages=[])  # empty list -> 404
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/sections/management")
+    assert resp.status_code == 404
+    detail = resp.json()["detail"]
+    assert detail["code"] == "section_empty_for_chapter"
+    assert detail["recovery_hint"]
+    assert "no rows" in detail["recovery_hint"]
+    assert "no passages" in detail["message"]
+    # next_commands suggests search_passages:
+    nc = detail["next_commands"][0]
+    assert nc["tool"] == "search_passages"
+    assert nc["arguments"]["nbk_id"] == "NBK1247"
+
+
+@pytest.mark.asyncio
+async def test_section_response_includes_meta_attribution() -> None:
+    """Chapter section response wraps payload in an envelope with _meta.attribution."""
+    pr = PassageRow(
+        nbk_id="NBK1",
+        passage_id="NBK1:0001",
+        chapter_section="management",
+        heading_path="Management > X",
+        section_level=2,
+        chunk_index=0,
+        text="t",
+        chapter_title="Test",
+        chapter_last_updated=date(2025, 12, 1),
+        gene_symbols=("TG",),
+    )
+    app = _build_app(passages=[pr])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1/sections/management")
+    body = resp.json()
+    assert "_meta" in body
+    assert body["_meta"]["attribution"].startswith("GeneReviews")
+
+
+@pytest.mark.asyncio
+async def test_section_response_includes_corpus_version_from_app_state() -> None:
+    """Chapter section response surfaces app.state.corpus_version on _meta."""
+    pr = PassageRow(
+        nbk_id="NBK1",
+        passage_id="NBK1:0001",
+        chapter_section="management",
+        heading_path="Management > X",
+        section_level=2,
+        chunk_index=0,
+        text="t",
+        chapter_title="Test",
+        chapter_last_updated=date(2025, 12, 1),
+        gene_symbols=("TG",),
+    )
+    app = _build_app(passages=[pr])
+    app.state.corpus_version = "2026-03-10"
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1/sections/management")
+    body = resp.json()
+    assert body["_meta"]["corpus_version"] == "2026-03-10"
+
+
+@pytest.mark.asyncio
+async def test_chapter_section_default_omits_concatenated_text() -> None:
+    """Default response must NOT contain the concatenated_text key at all."""
+    pr = PassageRow(
+        nbk_id="NBK1247",
+        passage_id="NBK1247:0001",
+        chapter_section="summary",
+        heading_path="Summary",
+        section_level=1,
+        chunk_index=0,
+        text="some text",
+    )
+    app = _build_app(passages=[pr])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/sections/summary")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "passages" in data
+    assert "concatenated_text" not in data
+
+
+@pytest.mark.asyncio
+async def test_chapter_section_include_concatenated_returns_both() -> None:
+    """include=concatenated_text adds the joined string alongside passages."""
+    pr = PassageRow(
+        nbk_id="NBK1247",
+        passage_id="NBK1247:0001",
+        chapter_section="summary",
+        heading_path="Summary",
+        section_level=1,
+        chunk_index=0,
+        text="some text",
+    )
+    app = _build_app(passages=[pr])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK1247/sections/summary",
+            params={"include": "concatenated_text"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "passages" in data
+    assert "concatenated_text" in data
+    assert isinstance(data["concatenated_text"], str)
+
+
+# ---------------------------------------------------------------------------
+# Dedupe parameter tests
+# ---------------------------------------------------------------------------
+
+# Two passages where the second begins with the same 34-char string that ends
+# the first passage.  This exceeds min_overlap=30 so _strip_overlap removes it.
+_OVERLAP = "BCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJ"  # 35 chars
+_PART1 = "A" * 100 + _OVERLAP
+_PART2 = _OVERLAP + "B" * 100
+_EXPECTED_DEDUPED = "A" * 100 + _OVERLAP + "B" * 100
+_EXPECTED_PLAIN = _PART1 + "\n\n" + _PART2
+
+
+def _build_app_with_overlap() -> FastAPI:
+    """Return a minimal app whose get_section yields two overlapping passages."""
+    passages = [
+        PassageRow(
+            nbk_id="NBK9999",
+            passage_id="NBK9999:0000",
+            chapter_section="management",
+            heading_path="Management",
+            section_level=1,
+            chunk_index=0,
+            text=_PART1,
+        ),
+        PassageRow(
+            nbk_id="NBK9999",
+            passage_id="NBK9999:0001",
+            chapter_section="management",
+            heading_path="Management",
+            section_level=1,
+            chunk_index=1,
+            text=_PART2,
+        ),
+    ]
+    return _build_app(passages=passages)
+
+
+@pytest.mark.asyncio
+async def test_dedupe_true_strips_overlap_region() -> None:
+    """dedupe=true with include=concatenated_text removes the shared suffix/prefix."""
+    app = _build_app_with_overlap()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK9999/sections/management",
+            params={"include": "concatenated_text", "dedupe": "true"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "concatenated_text" in data
+    text = data["concatenated_text"]
+    assert text == _EXPECTED_DEDUPED
+    # Overlap region appears exactly once
+    assert text.count(_OVERLAP) == 1
+
+
+@pytest.mark.asyncio
+async def test_dedupe_false_default_preserves_overlap() -> None:
+    """Default (dedupe=false) keeps the naive join with separator — no stripping."""
+    app = _build_app_with_overlap()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK9999/sections/management",
+            params={"include": "concatenated_text"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    text = data["concatenated_text"]
+    assert text == _EXPECTED_PLAIN
+    # Overlap region appears twice (once per chunk)
+    assert text.count(_OVERLAP) == 2
+
+
+@pytest.mark.asyncio
+async def test_dedupe_without_include_has_no_effect() -> None:
+    """dedupe=true without include=concatenated_text must not add the field."""
+    app = _build_app_with_overlap()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK9999/sections/management",
+            params={"dedupe": "true"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "concatenated_text" not in data
