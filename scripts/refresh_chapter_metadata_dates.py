@@ -133,7 +133,7 @@ async def run() -> None:
             continue
 
         try:
-            chapter, _ = parse_and_chunk_one(
+            chapter, _, _ = parse_and_chunk_one(
                 raw,
                 nbk_id=nbk_id,
                 short_name=short_name,

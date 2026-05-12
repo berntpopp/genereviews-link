@@ -14,7 +14,7 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "nxml"
 @pytest.mark.slow
 def test_parse_chapter_emits_table_passage() -> None:
     raw = (FIXTURES / "chapter_with_table.nxml").read_bytes()
-    chapter, passages = parse_and_chunk_one(
+    chapter, passages, _ = parse_and_chunk_one(
         raw, nbk_id="NBK_TBL", short_name="tbl_test", nxml_relpath="tbl_test.nxml"
     )
     assert chapter.nbk_id == "NBK_TBL"
@@ -36,7 +36,7 @@ def test_parse_chapter_emits_table_passage() -> None:
 def test_table_passage_chunk_index_is_interleaved() -> None:
     """chunk_index must be monotonically interleaved across narrative and table passages."""
     raw = (FIXTURES / "chapter_with_table.nxml").read_bytes()
-    _, passages = parse_and_chunk_one(
+    _, passages, _ = parse_and_chunk_one(
         raw, nbk_id="NBK_TBL", short_name="tbl_test", nxml_relpath="tbl_test.nxml"
     )
     # There should be both narrative and table passages
@@ -64,7 +64,7 @@ def test_table_passage_chunk_index_is_interleaved() -> None:
 def test_table_passage_fields() -> None:
     """Verify all expected fields on the table PassageRecord."""
     raw = (FIXTURES / "chapter_with_table.nxml").read_bytes()
-    _, passages = parse_and_chunk_one(
+    _, passages, _ = parse_and_chunk_one(
         raw, nbk_id="NBK_TBL", short_name="tbl_test", nxml_relpath="tbl_test.nxml"
     )
     t = next(p for p in passages if p.passage_type == "table")
@@ -101,7 +101,7 @@ def test_table_passage_fields() -> None:
 def test_typical_chapter_has_no_table_passages() -> None:
     """Regression: typical.nxml has no tables — no table passages emitted."""
     raw = (FIXTURES / "typical.nxml").read_bytes()
-    _, passages = parse_and_chunk_one(
+    _, passages, _ = parse_and_chunk_one(
         raw, nbk_id="NBK1247", short_name="brca1", nxml_relpath="brca1.nxml"
     )
     table_passages = [p for p in passages if p.passage_type == "table"]

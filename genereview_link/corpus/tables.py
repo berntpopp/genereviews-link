@@ -12,6 +12,7 @@ class ExtractedTable:
     caption: str
     header: list[str]
     rows: list[list[str]]
+    footnotes: str = ""
 
 
 def _text_or_empty(node: Any) -> str:
@@ -49,11 +50,42 @@ def extract_table(table_wrap: Any, *, ordinal: int) -> ExtractedTable:
             for tr in tbody.findall("tr"):
                 rows.append([_text_or_empty(td) for td in tr.findall("td")])
 
-    return ExtractedTable(table_id=table_id, caption=caption, header=header, rows=rows)
+    # Capture <table-wrap-foot> footnotes.  These often carry clinical
+    # qualifiers ("Click here for ...", abbreviation expansions, study
+    # caveats) that are part of the table's meaning.
+    foot_node = table_wrap.find("table-wrap-foot")
+    foot_parts: list[str] = []
+    if foot_node is not None:
+        for fn in foot_node.iter():
+            local = fn.tag.split("}")[-1] if isinstance(fn.tag, str) and "}" in fn.tag else fn.tag
+            if local in ("p", "fn"):
+                t = _text_or_empty(fn)
+                if t:
+                    foot_parts.append(t)
+        # Fallback: if no <p>/<fn> children, take all text.
+        if not foot_parts:
+            t = _text_or_empty(foot_node)
+            if t:
+                foot_parts.append(t)
+    footnotes = "\n".join(foot_parts)
+
+    return ExtractedTable(
+        table_id=table_id,
+        caption=caption,
+        header=header,
+        rows=rows,
+        footnotes=footnotes,
+    )
 
 
-def render_table_markdown(*, caption: str, header: list[str], rows: list[list[str]]) -> str:
-    """Render a table as GitHub-flavored markdown (caption + header + rows)."""
+def render_table_markdown(
+    *,
+    caption: str,
+    header: list[str],
+    rows: list[list[str]],
+    footnotes: str = "",
+) -> str:
+    """Render a table as GitHub-flavored markdown (caption + header + rows + foot)."""
     parts: list[str] = [caption, ""]
     if header:
         parts.append("| " + " | ".join(header) + " |")
@@ -62,4 +94,7 @@ def render_table_markdown(*, caption: str, header: list[str], rows: list[list[st
         # pad rows to header width
         padded = list(row) + [""] * max(0, len(header) - len(row))
         parts.append("| " + " | ".join(padded) + " |")
+    if footnotes:
+        parts.append("")
+        parts.append(footnotes)
     return "\n".join(parts)

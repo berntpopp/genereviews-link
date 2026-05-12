@@ -1,11 +1,28 @@
 """Parse one BITS NXML chapter into ChapterRecord + PassageRecord list.
 
 Uses defusedxml.lxml per AGENTS.md. Output is ready for asyncpg COPY.
+
+Content-loss guardrails
+-----------------------
+GeneReviews carries clinical recommendations inside JATS-NXML elements
+beyond plain <p>: notably <list>, <def-list>, and <boxed-text>.  A
+2026-05 audit found ~12 MB of clinical prose was being silently dropped
+because the section walker only handled <p>, <table-wrap>, <sec>.  The
+chunker now uses an explicit tag policy:
+
+- CAPTURE_TAGS:    prose-bearing tags whose text is preserved into passages
+- STRUCTURAL_TAGS: tags consumed for heading/labeling, no prose to preserve
+- KNOWN_SKIP_TAGS: tags deliberately skipped, each with a stored reason
+- Unknown tags with non-trivial text are recorded in the per-chapter
+  ChapterIngestAudit so the operator can spot regressions.
+
+See docs/superpowers/specs/2026-05-12-chunker-data-loss-findings.md.
 """
 
 from __future__ import annotations
 
 from collections.abc import Generator
+from dataclasses import dataclass, field
 from datetime import date
 
 from defusedxml.lxml import fromstring
@@ -13,13 +30,100 @@ from lxml import etree
 
 from genereview_link.corpus.canonicalize import canonical_section
 from genereview_link.corpus.chunking import DEFAULT_OVERLAP_TOKENS, chunk_section_text
+from genereview_link.corpus.nxml_render import render_boxed_text, render_def_list, render_list
 from genereview_link.corpus.records import ChapterRecord, PassageRecord
 from genereview_link.corpus.tables import extract_table, render_table_markdown
 from genereview_link.corpus.tokenizer import BGE_NET_CHUNK_TOKENS
 
+# Parser version is included in audit logs and can be bound into the
+# corpus_version to invalidate caches on parser-affecting changes.
+PARSER_VERSION = "2026-05-12-r1"
+
+# Prose-bearing tags whose text must reach a PassageRecord.
+CAPTURE_TAGS: frozenset[str] = frozenset(
+    {"p", "table-wrap", "sec", "list", "def-list", "boxed-text"}
+)
+
+# Structural tags consumed for heading path / labeling; no body prose.
+STRUCTURAL_TAGS: frozenset[str] = frozenset({"title", "label"})
+
+# Tags deliberately skipped; each must have a documented reason.
+KNOWN_SKIP_TAGS: dict[str, str] = {
+    "ref-list": "bibliographic references; cited via PMID elsewhere",
+    "fig": "image element; captions are short and noisy in retrieval",
+    "graphic": "image reference; no patient-facing prose",
+    "supplementary-material": "external file pointer",
+    "xref": "cross-reference marker; rendered via parent itertext",
+    "disp-formula": "display formula; rare in GeneReviews",
+    "inline-formula": "inline formula; rare in GeneReviews",
+    "permissions": "copyright metadata; surfaced via genereview://license",
+    "notes": "authoring notes, not patient content",
+    "fn-group": "footnote markup; rendered through xref",
+    "ack": "acknowledgements section",
+    "glossary": "glossary; consider promoting in a future pass",
+    "app-group": "appendix group; consider promoting in a future pass",
+    "back": "back-matter wrapper (refs/ack); handled at body level",
+}
+
 
 class NxmlParseError(Exception):
     """Raised when an NXML file cannot be parsed at all."""
+
+
+@dataclass(slots=True)
+class ChapterIngestAudit:
+    """Per-chapter content-conservation audit.
+
+    Emitted by parse_and_chunk_one alongside the chapter + passages.
+    The pipeline logs this at INFO and may persist it for trend analysis.
+    """
+
+    nbk_id: str
+    parser_version: str
+    body_text_chars: int = 0
+    captured_text_chars: int = 0
+    structural_text_chars: int = 0  # <title>/<label> surfaced via heading_path
+    passage_count: int = 0
+    list_renders: int = 0
+    def_list_renders: int = 0
+    boxed_text_renders: int = 0
+    skipped_by_tag: dict[str, int] = field(default_factory=dict)
+    unknown_tags_with_text: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def accounted_chars(self) -> int:
+        return (
+            self.captured_text_chars
+            + self.structural_text_chars
+            + sum(self.skipped_by_tag.values())
+            + sum(self.unknown_tags_with_text.values())
+        )
+
+    @property
+    def unaccounted_ratio(self) -> float:
+        """Fraction of body text not accounted for."""
+        if self.body_text_chars <= 0:
+            return 0.0
+        delta = self.body_text_chars - self.accounted_chars
+        if delta <= 0:
+            return 0.0
+        return delta / self.body_text_chars
+
+    def as_log_extra(self) -> dict[str, object]:
+        return {
+            "nbk_id": self.nbk_id,
+            "parser_version": self.parser_version,
+            "body_text_chars": self.body_text_chars,
+            "captured_text_chars": self.captured_text_chars,
+            "structural_text_chars": self.structural_text_chars,
+            "passage_count": self.passage_count,
+            "list_renders": self.list_renders,
+            "def_list_renders": self.def_list_renders,
+            "boxed_text_renders": self.boxed_text_renders,
+            "skipped_by_tag": dict(self.skipped_by_tag),
+            "unknown_tags_with_text": dict(self.unknown_tags_with_text),
+            "unaccounted_ratio": round(self.unaccounted_ratio, 6),
+        }
 
 
 def parse_and_chunk_one(
@@ -30,8 +134,12 @@ def parse_and_chunk_one(
     nxml_relpath: str,
     max_tokens: int = BGE_NET_CHUNK_TOKENS,
     overlap_tokens: int = DEFAULT_OVERLAP_TOKENS,
-) -> tuple[ChapterRecord, list[PassageRecord]]:
+) -> tuple[ChapterRecord, list[PassageRecord], ChapterIngestAudit]:
     """Parse one BITS book-part NXML and emit chapter + chunked passages.
+
+    Returns (chapter, passages, audit).  The audit reports per-tag
+    conservation accounting so callers can fail-loud on silent content
+    loss.
 
     Raises:
         NxmlParseError: if the XML cannot be parsed.
@@ -95,26 +203,55 @@ def parse_and_chunk_one(
         raw_metadata={},
     )
 
-    body = chapter_root.find("body")
+    audit = ChapterIngestAudit(nbk_id=nbk_id, parser_version=PARSER_VERSION)
     passages: list[PassageRecord] = []
+    body = chapter_root.find("body")
     if body is not None:
+        # Whitespace-normalize body text so the audit is comparing apples
+        # to apples vs. captured/skipped chars (which are also computed
+        # after normalization in the renderers + _text_len).
+        body_text = " ".join(("".join(body.itertext()) or "").split())
+        audit.body_text_chars = len(body_text)
         global_chunk = 0
         table_ordinal = 0
-        for section in body.findall("sec"):
+        top_sections = body.findall("sec")
+        if top_sections:
+            for section in top_sections:
+                for chunk_passages, next_chunk, next_ordinal in _walk_section(
+                    section,
+                    nbk_id=nbk_id,
+                    ancestor_titles=(),
+                    level=1,
+                    global_chunk=global_chunk,
+                    table_ordinal=table_ordinal,
+                    max_tokens=max_tokens,
+                    overlap_tokens=overlap_tokens,
+                    audit=audit,
+                ):
+                    passages.extend(chunk_passages)
+                    global_chunk = next_chunk
+                    table_ordinal = next_ordinal
+        else:
+            # Chapters like "updates" have a flat <body> with <p>/<list>
+            # children and no <sec> wrapper.  Treat the body as an
+            # implicit top-level section so its content is not lost.
             for chunk_passages, next_chunk, next_ordinal in _walk_section(
-                section,
+                body,
                 nbk_id=nbk_id,
-                ancestor_titles=(),
+                ancestor_titles=(title,),
                 level=1,
                 global_chunk=global_chunk,
                 table_ordinal=table_ordinal,
                 max_tokens=max_tokens,
                 overlap_tokens=overlap_tokens,
+                audit=audit,
             ):
                 passages.extend(chunk_passages)
                 global_chunk = next_chunk
                 table_ordinal = next_ordinal
-    return chapter, passages
+    audit.passage_count = len(passages)
+    audit.captured_text_chars = sum(p.char_count for p in passages)
+    return chapter, passages, audit
 
 
 # ---------- helpers ----------
@@ -124,6 +261,17 @@ def _text(el: etree._Element | None) -> str | None:
     if el is None:
         return None
     return ("".join(el.itertext()) or "").strip() or None
+
+
+def _text_len(el: etree._Element | None) -> int:
+    """Whitespace-normalized text length for audit accounting.
+
+    Body, captured passages, and skipped/unknown tags all measure
+    length post whitespace-normalization so the audit ledger balances.
+    """
+    if el is None:
+        return 0
+    return len(" ".join(("".join(el.itertext()) or "").split()))
 
 
 def _join_authors(group: etree._Element | None) -> str | None:
@@ -197,13 +345,19 @@ def _walk_section(
     table_ordinal: int,
     max_tokens: int,
     overlap_tokens: int,
+    audit: ChapterIngestAudit,
 ) -> Generator[tuple[list[PassageRecord], int, int], None, None]:
     """Recursive section walker.
 
     Yields (passages_for_this_call, next_global_chunk, next_table_ordinal).
 
-    Iterates immediate children in source order so that <table-wrap> passages
-    are interleaved with narrative passages at the correct chunk_index positions.
+    Iterates immediate children in source order so <table-wrap> and
+    rendered <list>/<def-list>/<boxed-text> passages stay locally
+    interleaved with surrounding narrative.
+
+    Tag policy: see CAPTURE_TAGS / STRUCTURAL_TAGS / KNOWN_SKIP_TAGS at
+    module top.  Unknown tags with non-trivial text are recorded in
+    ``audit.unknown_tags_with_text`` so operators can spot regressions.
     """
     title_el = section.find("title")
     title = _text(title_el) or "(untitled)"
@@ -211,16 +365,36 @@ def _walk_section(
     heading_path = " > ".join(titles)
     canonical = canonical_section(titles[0])
 
-    # Walk immediate children in source order, distinguishing <p>, <table-wrap>, <sec>.
     para_accumulator: list[str] = []
+
+    def _flush_now(
+        global_chunk_inner: int, table_ordinal_inner: int
+    ) -> Generator[tuple[list[PassageRecord], int, int], None, tuple[int, int]]:
+        """Drain para_accumulator into passages and yield them."""
+        nonlocal para_accumulator
+        if para_accumulator:
+            flushed, global_chunk_inner = _flush_paragraphs(
+                para_accumulator,
+                nbk_id=nbk_id,
+                canonical=canonical,
+                heading_path=heading_path,
+                level=level,
+                global_chunk=global_chunk_inner,
+                max_tokens=max_tokens,
+                overlap_tokens=overlap_tokens,
+            )
+            para_accumulator = []
+            if flushed:
+                yield flushed, global_chunk_inner, table_ordinal_inner
+        return global_chunk_inner, table_ordinal_inner
 
     for child in section:
         tag = child.tag
         if not isinstance(tag, str):
-            # Skip comments, PIs, etc.
+            # Skip comments, processing instructions, etc.
             continue
 
-        # Strip namespace prefix if present
+        # Strip namespace prefix if present.
         local = tag.split("}")[-1] if "}" in tag else tag
 
         if local == "p":
@@ -228,22 +402,26 @@ def _walk_section(
             if text:
                 para_accumulator.append(text)
 
+        elif local in ("list", "def-list", "boxed-text"):
+            # Render structured prose-bearing tags into markdown text and
+            # append to the accumulator so they share heading_path with
+            # surrounding narrative.  These were silently dropped before
+            # 2026-05-12; see audit findings doc.
+            if local == "list":
+                rendered = render_list(child)
+                audit.list_renders += 1
+            elif local == "def-list":
+                rendered = render_def_list(child)
+                audit.def_list_renders += 1
+            else:  # boxed-text
+                rendered = render_boxed_text(child)
+                audit.boxed_text_renders += 1
+            if rendered:
+                para_accumulator.append(rendered)
+
         elif local == "table-wrap":
             # Flush accumulated paragraphs before emitting the table passage.
-            if para_accumulator:
-                flushed, global_chunk = _flush_paragraphs(
-                    para_accumulator,
-                    nbk_id=nbk_id,
-                    canonical=canonical,
-                    heading_path=heading_path,
-                    level=level,
-                    global_chunk=global_chunk,
-                    max_tokens=max_tokens,
-                    overlap_tokens=overlap_tokens,
-                )
-                para_accumulator = []
-                if flushed:
-                    yield flushed, global_chunk, table_ordinal
+            global_chunk, table_ordinal = yield from _flush_now(global_chunk, table_ordinal)
 
             table_ordinal += 1
             extracted = extract_table(child, ordinal=table_ordinal)
@@ -251,6 +429,7 @@ def _walk_section(
                 caption=extracted.caption,
                 header=extracted.header,
                 rows=extracted.rows,
+                footnotes=extracted.footnotes,
             )
             table_passage = PassageRecord(
                 nbk_id=nbk_id,
@@ -268,6 +447,7 @@ def _walk_section(
                     "caption": extracted.caption,
                     "header": extracted.header,
                     "rows": extracted.rows,
+                    "footnotes": extracted.footnotes,
                 },
             )
             global_chunk += 1
@@ -275,20 +455,7 @@ def _walk_section(
 
         elif local == "sec":
             # Flush accumulated paragraphs before recursing.
-            if para_accumulator:
-                flushed, global_chunk = _flush_paragraphs(
-                    para_accumulator,
-                    nbk_id=nbk_id,
-                    canonical=canonical,
-                    heading_path=heading_path,
-                    level=level,
-                    global_chunk=global_chunk,
-                    max_tokens=max_tokens,
-                    overlap_tokens=overlap_tokens,
-                )
-                para_accumulator = []
-                if flushed:
-                    yield flushed, global_chunk, table_ordinal
+            global_chunk, table_ordinal = yield from _flush_now(global_chunk, table_ordinal)
 
             for sub_passages, sub_next, sub_ordinal in _walk_section(
                 child,
@@ -299,25 +466,32 @@ def _walk_section(
                 table_ordinal=table_ordinal,
                 max_tokens=max_tokens,
                 overlap_tokens=overlap_tokens,
+                audit=audit,
             ):
                 yield sub_passages, sub_next, sub_ordinal
                 # Carry running counters forward across siblings.
                 global_chunk = sub_next
                 table_ordinal = sub_ordinal
 
-        # Any other child tags (title, label, etc.) are intentionally ignored.
+        elif local in STRUCTURAL_TAGS:
+            # <title> and <label> are consumed for heading_path / bullet
+            # labels and carry no body prose at this level.  Count their
+            # text in audit.structural_text_chars so the ledger balances.
+            audit.structural_text_chars += _text_len(child)
+
+        elif local in KNOWN_SKIP_TAGS:
+            # Recorded under skipped_by_tag with documented reason.
+            n = _text_len(child)
+            if n:
+                audit.skipped_by_tag[local] = audit.skipped_by_tag.get(local, 0) + n
+
+        else:
+            # Unknown tag.  If it carries text, log it in the audit so the
+            # operator can decide whether to add it to CAPTURE_TAGS or
+            # KNOWN_SKIP_TAGS.  We do NOT silently ignore.
+            n = _text_len(child)
+            if n:
+                audit.unknown_tags_with_text[local] = audit.unknown_tags_with_text.get(local, 0) + n
 
     # Flush any remaining paragraph text at end of section.
-    if para_accumulator:
-        flushed, global_chunk = _flush_paragraphs(
-            para_accumulator,
-            nbk_id=nbk_id,
-            canonical=canonical,
-            heading_path=heading_path,
-            level=level,
-            global_chunk=global_chunk,
-            max_tokens=max_tokens,
-            overlap_tokens=overlap_tokens,
-        )
-        if flushed:
-            yield flushed, global_chunk, table_ordinal
+    global_chunk, table_ordinal = yield from _flush_now(global_chunk, table_ordinal)

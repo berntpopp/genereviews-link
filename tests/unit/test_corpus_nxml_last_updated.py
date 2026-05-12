@@ -20,7 +20,7 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "nxml"
 def test_parse_chapter_extracts_last_updated_date_from_last_revision() -> None:
     """last_updated_date must come from pub-date[@pub-type='last-revision']."""
     raw = (FIXTURES / "last_updated_sample.nxml").read_bytes()
-    chapter, _ = parse_and_chunk_one(
+    chapter, _, _ = parse_and_chunk_one(
         raw, nbk_id="NBK_TEST", short_name="test_last_rev", nxml_relpath="test.nxml"
     )
     assert chapter.last_updated_date == date(2023, 9, 14)
