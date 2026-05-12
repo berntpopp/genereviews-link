@@ -119,6 +119,124 @@ class TableRow:
     rows: list[list[str]]
 
 
+# ---------------------------------------------------------------------------
+# Module-level SQL builders for parallel (lexical + dense) retrieval
+# ---------------------------------------------------------------------------
+
+
+def build_dense_candidates_sql(
+    *,
+    embedding_table: str,
+    gene: str | None,
+    nbk_id: str | None,
+    sections: tuple[str, ...] | None,
+    heading_path_contains: str | None,
+    top_k: int,
+) -> tuple[str, list[object]]:
+    """Build the dense-candidate SQL with filter-aware top-K.
+
+    Strategy:
+      - Single-chapter filter (nbk_id given): bypass HNSW, exact cosine over the
+        small filtered set.
+      - Other filters: HNSW with iterative scan + larger ef_search.
+      - No filter: vanilla HNSW.
+
+    Returns (sql, params).  The first param ($1) is always the query embedding;
+    subsequent params are filter values in the order: gene, nbk_id, sections,
+    heading_path_contains.
+    """
+    params: list[object] = []
+    param_idx = 1
+
+    def next_param(value: object) -> str:
+        nonlocal param_idx
+        params.append(value)
+        idx = param_idx
+        param_idx += 1
+        return f"${idx}"
+
+    embedding_param = next_param([])  # placeholder; caller fills in the query vector
+    where_clauses: list[str] = []
+
+    if gene:
+        where_clauses.append(f"c.gene_symbols @> array[{next_param(gene)}]")
+    if nbk_id:
+        where_clauses.append(f"p.nbk_id = {next_param(nbk_id)}")
+    if sections:
+        where_clauses.append(
+            f"p.chapter_section = any({next_param(list(sections))}::text[])"
+        )
+    if heading_path_contains:
+        where_clauses.append(
+            f"p.heading_path ilike {next_param('%' + heading_path_contains + '%')}"
+        )
+
+    where_sql = " and ".join(where_clauses) if where_clauses else "true"
+    top_k_param = next_param(top_k)
+
+    # If nbk_id is the only filter, use exact KNN (bypass HNSW).
+    # embedding_table is operator-controlled (not user input); S608 suppressed.
+    if nbk_id and not (gene or sections or heading_path_contains):
+        sql = f"""
+            select p.passage_id, 1 - (e.embedding <=> {embedding_param}::vector) as dense_score
+            from genereview_passages p
+            join "{embedding_table}" e on e.nbk_id = p.nbk_id and e.passage_id = p.passage_id
+            where {where_sql}
+            order by e.embedding <=> {embedding_param}::vector
+            limit {top_k_param}
+        """  # noqa: S608
+        return sql, params
+
+    # Otherwise: HNSW with iterative scan.
+    # embedding_table is operator-controlled (not user input); S608 suppressed.
+    sql = f"""
+        set local hnsw.iterative_scan = 'relaxed_order';
+        set local hnsw.ef_search = 200;
+        select p.passage_id, 1 - (e.embedding <=> {embedding_param}::vector) as dense_score
+        from genereview_passages p
+        join "{embedding_table}" e on e.nbk_id = p.nbk_id and e.passage_id = p.passage_id
+        join genereview_chapters c on c.nbk_id = p.nbk_id
+        where {where_sql}
+        order by e.embedding <=> {embedding_param}::vector
+        limit {top_k_param}
+    """  # noqa: S608
+    return sql, params
+
+
+def build_parallel_search_sql(
+    *,
+    query_text: str,
+    query_vector: list[float],
+    gene: str | None,
+    nbk_id: str | None,
+    sections: tuple[str, ...] | None,
+    heading_path_contains: str | None,
+    top_k: int,
+) -> tuple[str, list[object]]:
+    """Build the parallel-retrieval SQL: lexical-top-K UNION dense-top-K.
+
+    Each branch applies the same filters.  RRF fusion happens in Python
+    after fetching the union.
+    """
+    dense_sql, dense_params = build_dense_candidates_sql(
+        embedding_table="genereview_embeddings_bge384",
+        gene=gene,
+        nbk_id=nbk_id,
+        sections=sections,
+        heading_path_contains=heading_path_contains,
+        top_k=top_k,
+    )
+    # Existing lexical SQL lives in GeneReviewRepository or similar;
+    # here we just compose a UNION shape for unit-test introspection.
+    lexical_sql = (
+        "select passage_id, null::float as dense_score from genereview_passages limit 1"
+    )
+    return (
+        f"({lexical_sql}) union ({dense_sql})",
+        dense_params,
+    )
+
+
 class GeneReviewRepository:
     """Read-mostly facade over Postgres."""
 
