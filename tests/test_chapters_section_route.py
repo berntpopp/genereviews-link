@@ -305,3 +305,90 @@ async def test_chapter_section_include_concatenated_returns_both() -> None:
     assert "passages" in data
     assert "concatenated_text" in data
     assert isinstance(data["concatenated_text"], str)
+
+
+# ---------------------------------------------------------------------------
+# Dedupe parameter tests
+# ---------------------------------------------------------------------------
+
+# Two passages where the second begins with the same 34-char string that ends
+# the first passage.  This exceeds min_overlap=30 so _strip_overlap removes it.
+_OVERLAP = "BCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJ"  # 35 chars
+_PART1 = "A" * 100 + _OVERLAP
+_PART2 = _OVERLAP + "B" * 100
+_EXPECTED_DEDUPED = "A" * 100 + _OVERLAP + "B" * 100
+_EXPECTED_PLAIN = _PART1 + "\n\n" + _PART2
+
+
+def _build_app_with_overlap() -> FastAPI:
+    """Return a minimal app whose get_section yields two overlapping passages."""
+    passages = [
+        PassageRow(
+            nbk_id="NBK9999",
+            passage_id="NBK9999:0000",
+            chapter_section="management",
+            heading_path="Management",
+            section_level=1,
+            chunk_index=0,
+            text=_PART1,
+        ),
+        PassageRow(
+            nbk_id="NBK9999",
+            passage_id="NBK9999:0001",
+            chapter_section="management",
+            heading_path="Management",
+            section_level=1,
+            chunk_index=1,
+            text=_PART2,
+        ),
+    ]
+    return _build_app(passages=passages)
+
+
+@pytest.mark.asyncio
+async def test_dedupe_true_strips_overlap_region() -> None:
+    """dedupe=true with include=concatenated_text removes the shared suffix/prefix."""
+    app = _build_app_with_overlap()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK9999/sections/management",
+            params={"include": "concatenated_text", "dedupe": "true"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "concatenated_text" in data
+    text = data["concatenated_text"]
+    assert text == _EXPECTED_DEDUPED
+    # Overlap region appears exactly once
+    assert text.count(_OVERLAP) == 1
+
+
+@pytest.mark.asyncio
+async def test_dedupe_false_default_preserves_overlap() -> None:
+    """Default (dedupe=false) keeps the naive join with separator — no stripping."""
+    app = _build_app_with_overlap()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK9999/sections/management",
+            params={"include": "concatenated_text"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    text = data["concatenated_text"]
+    assert text == _EXPECTED_PLAIN
+    # Overlap region appears twice (once per chunk)
+    assert text.count(_OVERLAP) == 2
+
+
+@pytest.mark.asyncio
+async def test_dedupe_without_include_has_no_effect() -> None:
+    """dedupe=true without include=concatenated_text must not add the field."""
+    app = _build_app_with_overlap()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK9999/sections/management",
+            params={"dedupe": "true"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "concatenated_text" not in data

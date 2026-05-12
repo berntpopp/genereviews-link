@@ -22,6 +22,32 @@ from genereview_link.retrieval.repository import GeneReviewRepository
 router = APIRouter(tags=["Chapters"])
 
 
+def _strip_overlap(parts: list[str], min_overlap: int = 30) -> str:
+    """Join text chunks while removing the longest common suffix/prefix overlap.
+
+    When the chunker produces overlapping windows, adjacent chunks share a
+    common tail/head region.  This helper finds the longest suffix of each
+    previous chunk that matches a prefix of the next chunk (at least
+    ``min_overlap`` characters) and removes the duplicate before joining.
+
+    Returns the deduplicated concatenation (no separator inserted — the
+    overlap region is the natural boundary).
+    """
+    if not parts:
+        return ""
+    out = [parts[0]]
+    for nxt in parts[1:]:
+        prev = out[-1]
+        max_match = min(len(prev), len(nxt))
+        overlap_len = 0
+        for k in range(max_match, min_overlap - 1, -1):
+            if prev[-k:] == nxt[:k]:
+                overlap_len = k
+                break
+        out.append(nxt[overlap_len:])
+    return "".join(out)
+
+
 @router.get(
     "/chapters/{nbk_id}/sections/{section}",
     response_model=ChapterSectionResponse,
@@ -53,6 +79,17 @@ async def get_chapter_section(
             ),
         ),
     ] = None,
+    dedupe: Annotated[
+        bool,
+        Query(
+            description=(
+                "Strip overlapping text between adjacent chunks "
+                "(longest-common-suffix/prefix heuristic). "
+                "Default False for back-compat with literal stored text. "
+                "Only has effect when include=concatenated_text is also set."
+            ),
+        ),
+    ] = False,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
 ) -> ChapterSectionResponse | JSONResponse:
@@ -82,9 +119,11 @@ async def get_chapter_section(
         )
     head = passages[0]
     include_set = set(include or [])
-    concatenated = (
-        "\n\n".join(p.text for p in passages) if "concatenated_text" in include_set else None
-    )
+    if "concatenated_text" in include_set:
+        parts = [p.text for p in passages]
+        concatenated: str | None = _strip_overlap(parts) if dedupe else "\n\n".join(parts)
+    else:
+        concatenated = None
     response = ChapterSectionResponse(  # type: ignore[call-arg]
         nbk_id=nbk_id,
         chapter_title=head.chapter_title or "",
