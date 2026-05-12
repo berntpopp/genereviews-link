@@ -501,7 +501,7 @@ class UnifiedServerManager:
         # LLMs should read this resource once per session instead of calling a tool.
         import json
 
-        from genereview_link.models.genereview_models import LicenseNotice
+        from genereview_link.models.genereview_models import ATTRIBUTION_TEXT_FULL, LicenseNotice
 
         @mcp.resource(
             "genereview://license",
@@ -519,6 +519,8 @@ class UnifiedServerManager:
                     "data_source": notice.data_source,
                     "data_source_url": notice.data_source_url,
                     "notes": notice.notes,
+                    "license_spdx": "LicenseRef-GeneReviews",
+                    "attribution_text": ATTRIBUTION_TEXT_FULL,
                 }
             )
 

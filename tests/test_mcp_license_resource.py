@@ -78,3 +78,19 @@ def test_license_resource_payload_matches_rest_shape(monkeypatch: pytest.MonkeyP
     assert payload["data_source_url"] == expected_notice.data_source_url
     assert payload["notes"] == expected_notice.notes
     assert "University of Washington" in payload["copyright"]
+
+
+def test_license_mcp_resource_payload_includes_spdx_and_attribution_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """genereview://license resource payload must include license_spdx and attribution_text."""
+    mcp = _build_mcp(monkeypatch)
+    result = asyncio.run(mcp.read_resource("genereview://license"))
+    assert result.contents, "read_resource returned empty contents"
+    first = result.contents[0]
+    raw = first.content if hasattr(first, "content") else str(first)
+    payload = json.loads(raw)
+
+    assert payload["license_spdx"] == "LicenseRef-GeneReviews"
+    assert payload["attribution_text"].startswith("GeneReviews")
+    assert "University of Washington" in payload["attribution_text"]

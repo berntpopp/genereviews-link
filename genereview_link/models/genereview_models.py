@@ -151,6 +151,12 @@ ATTRIBUTION_TEXT = (
     "sourced from NCBI Bookshelf. Full terms via the genereview://license resource."
 )
 
+ATTRIBUTION_TEXT_FULL = (
+    "GeneReviews® content © 1993–present University of Washington; "  # noqa: RUF001
+    "sourced from NCBI Bookshelf — GeneReviews. "
+    "Cite per https://www.ncbi.nlm.nih.gov/books/NBK138602/."
+)
+
 
 class LicenseNotice(BaseModel):
     """License and copyright notice for the GeneReviews data source.
@@ -168,6 +174,8 @@ class LicenseNotice(BaseModel):
         "GeneReviews(R) is a copyrighted resource. Attribute the University of "
         "Washington when redistributing. See terms_url for the full notice."
     )
+    license_spdx: str = "LicenseRef-GeneReviews"
+    attribution_text: str = ATTRIBUTION_TEXT_FULL
 
 
 class ScoreBreakdown(BaseModel):
@@ -239,6 +247,9 @@ class ResponseMeta(BaseModel):
     attribution: str = Field(default=ATTRIBUTION_TEXT)
     corpus_version: str | None = None
     diagnostics: SearchDiagnosticsModel | None = None
+    license_summary: str = "Research use only; cite per genereview://license"
+    dense_model_id: str | None = None
+    embedding_dim: int | None = None
 
 
 class PassageSearchResponse(BaseModel):
