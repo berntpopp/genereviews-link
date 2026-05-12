@@ -2,11 +2,9 @@
 
 Output: tests/fixtures/ranking_bench_worklist.json with ~30 chapters
 stratified across:
-  - section presence (must have management + diagnosis + molecular_genetics
-    populated to ensure variety in seeded passages)
+  - section presence (must have >= min_sections populated sections, enforced
+    via SQL HAVING clause)
   - chapter age (recent + old quarter, plus 2 'middle' quarters)
-  - gene popularity (well-known vs rare, approximated by gene_symbols length
-    in chapter row + presence in OMIM-flagged lists)
 
 Selection: deterministic given a seed (default 42) so the worklist is
 reproducible.
@@ -20,39 +18,45 @@ import json
 import random
 from pathlib import Path
 
+import asyncpg
+
 from genereview_link.db.pool import create_pool
 
 
-async def fetch_candidate_chapters(min_sections: int = 3) -> list:
+async def fetch_candidate_chapters(min_sections: int = 3) -> list[asyncpg.Record]:
     pool = await create_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            select
-                c.nbk_id,
-                c.title,
-                c.last_updated_date,
-                c.gene_symbols,
-                count(distinct p.chapter_section) filter (where p.passage_count > 0)
-                    as populated_sections
-            from genereview_chapters c
-            join (
-                select nbk_id, chapter_section, count(*) as passage_count
-                from genereview_passages
-                group by nbk_id, chapter_section
-            ) p on p.nbk_id = c.nbk_id
-            group by c.nbk_id, c.title, c.last_updated_date, c.gene_symbols
-            having count(distinct p.chapter_section) filter (where p.passage_count > 0) >= $1
-            """,
-            min_sections,
-        )
-    await pool.close()
-    return list(rows)
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                select
+                    c.nbk_id,
+                    c.title,
+                    c.last_updated_date,
+                    c.gene_symbols,
+                    count(distinct p.chapter_section) filter (where p.passage_count > 0)
+                        as populated_sections
+                from genereview_chapters c
+                join (
+                    select nbk_id, chapter_section, count(*) as passage_count
+                    from genereview_passages
+                    group by nbk_id, chapter_section
+                ) p on p.nbk_id = c.nbk_id
+                group by c.nbk_id, c.title, c.last_updated_date, c.gene_symbols
+                having count(distinct p.chapter_section) filter (where p.passage_count > 0) >= $1
+                """,
+                min_sections,
+            )
+        return list(rows)
+    finally:
+        await pool.close()
 
 
-def stratify(rows: list, n_per_bucket: int = 8, seed: int = 42) -> list[dict]:
-    rng = random.Random(seed)  # noqa: S311 — seeded for reproducibility, not crypto
-    # Bucket by last_updated_date quartile (None goes to "unknown" bucket).
+def stratify(
+    rows: list[asyncpg.Record], n_per_bucket: int = 8, seed: int = 42
+) -> list[dict]:
+    rng = random.Random(seed)  # noqa: S311 - seeded for reproducibility, not crypto
+    # Rows without last_updated_date are excluded from stratification.
     sorted_with_dates = sorted(
         [r for r in rows if r["last_updated_date"]],
         key=lambda r: r["last_updated_date"],
