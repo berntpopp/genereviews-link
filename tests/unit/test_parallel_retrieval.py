@@ -10,7 +10,7 @@ from genereview_link.retrieval.repository import (
 
 
 def test_dense_candidates_sql_includes_filter_clauses():
-    sql, _params = build_dense_candidates_sql(
+    _setup, sql, _params = build_dense_candidates_sql(
         embedding_table="genereview_embeddings_bge384",
         gene="HFE",
         nbk_id=None,
@@ -26,27 +26,30 @@ def test_dense_candidates_sql_includes_filter_clauses():
 
 
 def test_dense_candidates_sql_uses_hnsw_iterative_scan():
-    sql, _ = build_dense_candidates_sql(
+    setup, _sql, _ = build_dense_candidates_sql(
         embedding_table="genereview_embeddings_bge384",
         gene=None, nbk_id=None, sections=None, heading_path_contains=None,
         top_k=200,
     )
-    # Iterative scan must be set at session level when filters are present;
-    # for the no-filter case it's also safe to set it.
-    assert "hnsw.iterative_scan" in sql or "set local hnsw" in sql.lower()
+    # Iterative scan must be configured via setup statements (SET LOCAL), not
+    # embedded in the SELECT -- asyncpg prepared statements only support one command.
+    assert any("hnsw.iterative_scan" in s for s in setup), (
+        "hnsw.iterative_scan must appear in setup statements, not in the SELECT"
+    )
 
 
 def test_dense_candidates_sql_bypasses_hnsw_for_highly_selective_nbk_filter():
-    sql, _ = build_dense_candidates_sql(
+    setup, sql, _ = build_dense_candidates_sql(
         embedding_table="genereview_embeddings_bge384",
         gene=None, nbk_id="NBK1247", sections=None, heading_path_contains=None,
         top_k=200,
     )
     # Single-chapter filter (~30 passages) should use exact cosine over the
-    # filtered set, not HNSW. We assert this by looking for explicit "where nbk_id"
-    # and absence of hnsw configuration.
+    # filtered set, not HNSW. Setup must be empty and SELECT must not contain
+    # any hnsw configuration.
+    assert setup == [], "HNSW bypass branch must return empty setup statements"
     assert "nbk_id" in sql.lower()
-    # No need for HNSW iterative scan when scanning <100 rows exactly.
+    assert "hnsw" not in sql.lower(), "bypass branch SELECT must not reference hnsw"
 
 
 def test_parallel_search_sql_returns_union_of_lexical_and_dense():

@@ -132,7 +132,7 @@ def build_dense_candidates_sql(
     sections: tuple[str, ...] | None,
     heading_path_contains: str | None,
     top_k: int,
-) -> tuple[str, list[object]]:
+) -> tuple[list[str], str, list[object]]:
     """Build the dense-candidate SQL with filter-aware top-K.
 
     Strategy:
@@ -141,9 +141,14 @@ def build_dense_candidates_sql(
       - Other filters: HNSW with iterative scan + larger ef_search.
       - No filter: vanilla HNSW.
 
-    Returns (sql, params).  The first param ($1) is always the query embedding;
-    subsequent params are filter values in the order: gene, nbk_id, sections,
-    heading_path_contains.
+    Returns (setup_statements, select_sql, params).
+
+    setup_statements is a list of SET LOCAL statements (or empty for the
+    HNSW-bypass branch). They must be executed via conn.execute() before
+    the SELECT, inside a transaction.
+    select_sql is the parameterized SELECT.
+    params: first element is the query embedding placeholder; rest are filter values
+    in the order: gene, nbk_id, sections, heading_path_contains.
     """
     params: list[object] = []
     param_idx = 1
@@ -177,7 +182,7 @@ def build_dense_candidates_sql(
     # If nbk_id is the only filter, use exact KNN (bypass HNSW).
     # embedding_table is operator-controlled (not user input); S608 suppressed.
     if nbk_id and not (gene or sections or heading_path_contains):
-        sql = f"""
+        select_sql = f"""
             select p.passage_id, 1 - (e.embedding <=> {embedding_param}::vector) as dense_score
             from genereview_passages p
             join "{embedding_table}" e on e.nbk_id = p.nbk_id and e.passage_id = p.passage_id
@@ -185,13 +190,18 @@ def build_dense_candidates_sql(
             order by e.embedding <=> {embedding_param}::vector
             limit {top_k_param}
         """  # noqa: S608
-        return sql, params
+        return [], select_sql, params
 
     # Otherwise: HNSW with iterative scan.
+    # SET LOCAL statements are returned separately so they can be executed via
+    # conn.execute() before the SELECT -- asyncpg prepared statements only accept
+    # a single command and would raise PostgresSyntaxError with a concatenated query.
     # embedding_table is operator-controlled (not user input); S608 suppressed.
-    sql = f"""
-        set local hnsw.iterative_scan = 'relaxed_order';
-        set local hnsw.ef_search = 200;
+    setup = [
+        "SET LOCAL hnsw.iterative_scan = 'relaxed_order'",
+        "SET LOCAL hnsw.ef_search = 200",
+    ]
+    select_sql = f"""
         select p.passage_id, 1 - (e.embedding <=> {embedding_param}::vector) as dense_score
         from genereview_passages p
         join "{embedding_table}" e on e.nbk_id = p.nbk_id and e.passage_id = p.passage_id
@@ -200,7 +210,7 @@ def build_dense_candidates_sql(
         order by e.embedding <=> {embedding_param}::vector
         limit {top_k_param}
     """  # noqa: S608
-    return sql, params
+    return setup, select_sql, params
 
 
 def build_parallel_search_sql(
@@ -218,7 +228,7 @@ def build_parallel_search_sql(
     Each branch applies the same filters.  RRF fusion happens in Python
     after fetching the union.
     """
-    dense_sql, dense_params = build_dense_candidates_sql(
+    _setup, dense_sql, dense_params = build_dense_candidates_sql(
         embedding_table="genereview_embeddings_bge384",
         gene=gene,
         nbk_id=nbk_id,
@@ -816,7 +826,7 @@ class GeneReviewRepository:
         are session-scoped to the txn and do not leak into the pool.
         """
         embedding_table = await self.active_embedding_table()
-        sql, params = build_dense_candidates_sql(
+        setup, select_sql, params = build_dense_candidates_sql(
             embedding_table=embedding_table,
             gene=gene,
             nbk_id=nbk_id,
@@ -828,7 +838,9 @@ class GeneReviewRepository:
         async with self._acquire() as conn:
             await conn.execute("set search_path to genereview, public")
             async with conn.transaction():
-                rows = await conn.fetch(sql, *params)
+                for stmt in setup:
+                    await conn.execute(stmt)
+                rows = await conn.fetch(select_sql, *params)
         return [
             {"passage_id": r["passage_id"], "dense_score": float(r["dense_score"])}
             for r in rows
