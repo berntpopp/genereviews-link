@@ -59,6 +59,11 @@ def _strip_overlap(parts: list[str], min_overlap: int = 30) -> str:
     response_model_by_alias=True,
     operation_id="get_chapter_section",
     summary="Fetch all passages for a section of a GeneReview chapter",
+    description=(
+        "Fetch all passages for a section. Use include=concatenated_text for joined "
+        "text with overlap stripped by default; pass dedupe=false only for literal "
+        "chunk text."
+    ),
 )
 async def get_chapter_section(
     nbk_id: Annotated[
@@ -206,7 +211,7 @@ async def get_chapter_section(
     response_model=ChapterMetadataResponse,
     response_model_by_alias=True,
     operation_id="get_chapter_metadata",
-    summary="Return chapter title, last-updated date, gene symbols, section counts, and table count",
+    summary="The chapter outline tool: title, dates, gene symbols, section counts, and tables",
 )
 async def get_chapter_metadata(
     nbk_id: Annotated[
@@ -219,11 +224,10 @@ async def get_chapter_metadata(
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
 ) -> ChapterMetadataResponse:
-    """Return chapter title, last-updated date, gene symbols, section counts, and table count.
+    """The chapter outline tool.
 
-    Use this before get_chapter_section to avoid blind calls on empty sections.
-
-    Latency: ~1ms p50.
+    Returns chapter title, dates, gene symbols, per-section passage_count, and
+    the full tables[] list with table_id, caption, section, and heading_path.
     """
     nbk_id = canonicalize_nbk_id(nbk_id)
     meta = await repo.get_chapter_metadata(nbk_id)
@@ -241,6 +245,7 @@ async def get_chapter_metadata(
         nbk_id=meta.nbk_id,
         title=meta.title,
         chapter_last_updated=meta.chapter_last_updated,
+        chapter_ingested_at=meta.chapter_ingested_at,
         gene_symbols=list(meta.gene_symbols),
         sections=[
             SectionSummary(

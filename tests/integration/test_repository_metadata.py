@@ -77,6 +77,15 @@ async def test_get_chapter_metadata_last_updated(pool: asyncpg.Pool) -> None:
     assert meta.chapter_last_updated == date(2025, 6, 15)
 
 
+async def test_get_chapter_metadata_ingested_at(pool: asyncpg.Pool) -> None:
+    """ingested_at is projected as chapter_ingested_at."""
+    await _seed(pool)
+    repo = GeneReviewRepository(pool)
+    meta = await repo.get_chapter_metadata("NBKMETA")
+    assert meta is not None
+    assert meta.chapter_ingested_at is not None
+
+
 async def test_get_chapter_metadata_all_canonical_sections_present(pool: asyncpg.Pool) -> None:
     """All canonical sections are present in the result (including zero-count ones)."""
     await _seed(pool)

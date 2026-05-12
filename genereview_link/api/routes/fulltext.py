@@ -66,7 +66,12 @@ def _filter_sections(
 @router.get(
     "/{nbk_id}",
     response_model=FullTextData,
-    summary="Get comprehensive scraped content from NCBI Bookshelf",
+    summary="Fetch live NCBI Bookshelf full text when corpus passages are insufficient",
+    description=(
+        "Fetch live NCBI Bookshelf full text when corpus passages are insufficient. "
+        "Use sections='management,diagnosis' to narrow the scrape; prefer corpus "
+        "tools for indexed passage retrieval and citations."
+    ),
     operation_id="get_fulltext",
 )
 async def get_fulltext(
@@ -86,15 +91,7 @@ async def get_fulltext(
     ] = None,
     fresh: bool = Query(False, description="Bypass index; fetch live from NCBI"),
 ) -> FullTextData:
-    """Scrape comprehensive content from an NCBI Bookshelf page.
-
-    The NBK ID can be provided with or without the 'NBK' prefix.
-    Returns structured sections, metadata, and the complete document content.
-    When ``sections`` is supplied, only matching sections are included in the
-    response.
-
-    Pass ``?fresh=true`` to bypass the index and fetch live from NCBI.
-    """
+    """Fetch live NCBI Bookshelf full text when corpus passages are insufficient."""
     # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient
     # until repository is populated.
     try:

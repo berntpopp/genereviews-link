@@ -49,6 +49,11 @@ For variant nomenclature lookups (e.g. `p.Glu168Ter`, rare allele symbols), set
 `rerank="lexical"` — dense retrieval can pull near-misses for exact-string
 queries.
 
+For variant nomenclature queries in `rerank="lexical"`, prefer the variant
+token alone, for example `q="c.5266dupC"`. Adding broad context words such as
+"founder" or "variant" can still widen recall; use default `rerank="rrf"` for
+multi-token clinical questions.
+
 ## Rerank modes
 
 - **rrf** (default): RRF-blended lexical + dense. Best for general

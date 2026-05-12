@@ -229,6 +229,7 @@ class RankedPassage(BaseModel):
     gene_symbols: list[str] = Field(default_factory=list)
     chapter_title: str
     chapter_last_updated: date | None = None
+    chapter_ingested_at: datetime | None = None
     chapter_section: SectionName
     heading_path: str | None = None
     passage_type: str = "narrative"
@@ -395,6 +396,7 @@ class ChapterMetadataResponse(BaseModel):
     nbk_id: str
     title: str
     chapter_last_updated: date | None = None
+    chapter_ingested_at: datetime | None = None
     gene_symbols: list[str] = Field(default_factory=list)
     sections: list[SectionSummary] = Field(default_factory=list)
     table_count: int = 0

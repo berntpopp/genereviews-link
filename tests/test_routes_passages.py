@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -241,6 +242,7 @@ def _brief_row(pid: str, snippet: str) -> LexicalPassageRow:
             text="full text here",
             chapter_title="Chapter",
             chapter_last_updated=None,
+            chapter_ingested_at=datetime.now(UTC),
             gene_symbols=("TG",),
         ),
         phrase_rank=1.0,
@@ -655,6 +657,45 @@ async def test_search_nonzero_results_includes_diagnostics() -> None:
     assert diag["lexical_candidate_count"] == 2
     assert diag["dense_candidate_count"] == 0
     assert diag["suggestions"] == []
+
+
+@pytest.mark.asyncio
+async def test_search_old_top_hits_emit_stale_corpus_suggestion() -> None:
+    """Old chapter ingest timestamps on top hits warn that the corpus may be stale."""
+    old_ingest = datetime.now(UTC) - timedelta(days=181)
+    repo = _make_brief_repo(rows=3)
+    repo.search_passages.return_value = [
+        LexicalPassageRow(
+            passage=PassageRow(
+                nbk_id="NBK1",
+                passage_id=f"NBK1:000{i}",
+                chapter_section="management",
+                heading_path="Management > X",
+                section_level=2,
+                chunk_index=i,
+                text="full text here",
+                chapter_title="Chapter",
+                chapter_last_updated=None,
+                chapter_ingested_at=old_ingest,
+                gene_symbols=("TG",),
+            ),
+            phrase_rank=1.0,
+            strict_rank=0.5,
+            recall_rank=0.4,
+            recall_overlap_count=1,
+            lexical_rank=1.0,
+            snippet=f"**bold{i}**",
+        )
+        for i in range(3)
+    ]
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "rerank": "lexical"})
+
+    assert resp.status_code == 200
+    suggestions = resp.json()["_meta"]["diagnostics"]["suggestions"]
+    assert "corpus-may-be-stale" in suggestions
 
 
 @pytest.mark.asyncio
@@ -1239,6 +1280,33 @@ async def test_search_snippet_chars_out_of_range_returns_422() -> None:
                 params={"q": "x", "snippet_chars": value},
             )
             assert resp.status_code == 422, f"snippet_chars={value} should reject"
+
+
+@pytest.mark.asyncio
+async def test_lexical_variant_query_with_context_keeps_brca_hits() -> None:
+    rows = [
+        _fake_lex_row(
+            "NBK1247:0010",
+            section="management",
+            lexical_rank=0.9,
+            text="BRCA1 c.5266dupC founder variant in Ashkenazi populations.",
+        )
+    ]
+    app = _build_app_with_fake_repo(rows)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        response = await c.get(
+            "/passages/search",
+            params={
+                "q": "c.5266dupC BRCA1 founder variant Ashkenazi",
+                "rerank": "lexical",
+                "limit": 5,
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert any(row["nbk_id"] == "NBK1247" for row in data["results"])
 
 
 # ---------------------------------------------------------------------------

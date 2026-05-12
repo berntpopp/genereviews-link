@@ -185,6 +185,22 @@ def test_usage_resource_documents_search_aliases_and_heading_filter(
         assert fragment in normalized, f"Missing usage text: {fragment}"
 
 
+def test_usage_resource_documents_lexical_variant_query_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The usage resource must warn that lexical mode is for narrow variant strings."""
+    from genereview_link.api.resources.usage import USAGE_RESOURCE_MARKDOWN
+
+    normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
+    expected_fragments = (
+        'For variant nomenclature queries in `rerank="lexical"`',
+        'prefer the variant token alone, for example `q="c.5266dupC"`',
+        'use default `rerank="rrf"` for multi-token clinical questions',
+    )
+    for fragment in expected_fragments:
+        assert fragment in normalized, f"Missing usage text: {fragment}"
+
+
 def test_usage_resource_returns_markdown(monkeypatch: pytest.MonkeyPatch) -> None:
     """read_resource for genereview://usage must return the markdown string."""
     from genereview_link.api.resources.usage import USAGE_RESOURCE_MARKDOWN

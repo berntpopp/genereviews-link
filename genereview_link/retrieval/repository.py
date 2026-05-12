@@ -33,6 +33,7 @@ class ChapterRow:
     authors: str | None
     initial_pub_date: date | None
     last_updated_date: date | None
+    ingested_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +47,7 @@ class PassageRow:
     text: str
     chapter_title: str | None = None
     chapter_last_updated: date | None = None
+    chapter_ingested_at: datetime | None = None
     gene_symbols: tuple[str, ...] = ()
     passage_type: str = "narrative"
     passage_role: str | None = None
@@ -101,6 +103,7 @@ class ChapterMetadataRow:
     gene_symbols: tuple[str, ...]
     sections: tuple[SectionSummaryRow, ...]
     table_count: int
+    chapter_ingested_at: datetime | None = None
     tables: tuple[TableSummaryRow, ...] = ()
 
 
@@ -220,28 +223,27 @@ class GeneReviewRepository:
                         phraseto_tsquery('english', $2) as phrase_query,
                         websearch_to_tsquery('english', $2) as strict_query,
                         to_tsquery('english', $7) as recall_query,
+                        $8::text[] as recall_terms,
                         $1::text as _ignored
                 ),
-                cand as (
+                scored as (
                     select
                         p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
                         p.section_level, p.chunk_index, p.text,
                         c.gene_symbols,
                         c.title as chapter_title,
                         c.last_updated_date as chapter_last_updated,
+                        c.ingested_at as chapter_ingested_at,
                         p.passage_type, p.passage_role, p.table_id, p.table_data,
                         ts_rank_cd(p.search_vector, q.phrase_query) as phrase_rank,
                         ts_rank_cd(p.search_vector, q.strict_query) as strict_rank,
                         ts_rank_cd(p.search_vector, q.recall_query) as recall_rank,
                         (
                             select count(*)
-                              from (
-                                  select distinct token
-                                    from regexp_split_to_table(lower(p.text), '[^a-zA-Z0-9]+') as token
-                                   where length(token) >= 3
-                              ) pt
-                             where pt.token = any($8::text[])
-                        ) as recall_overlap_count
+                              from unnest(q.recall_terms) as term
+                             where p.search_vector @@ plainto_tsquery('english', term)
+                        )::int as recall_overlap_count,
+                        cardinality(q.recall_terms)::int as recall_terms_count
                       from genereview_passages p
                       join genereview_chapters c on c.nbk_id = p.nbk_id, q
                      where (
@@ -256,20 +258,17 @@ class GeneReviewRepository:
                 ),
                 ranked as (
                     select
-                        nbk_id, passage_id, chapter_section, heading_path,
-                        section_level, chunk_index, text,
-                        gene_symbols, chapter_title, chapter_last_updated,
-                        passage_type, passage_role, table_id, table_data,
-                        phrase_rank, strict_rank, recall_rank, recall_overlap_count,
+                        *,
                         (phrase_rank * 3.0 + strict_rank * 2.0 + recall_rank)
                           * case
                               when phrase_rank = 0 and strict_rank = 0 and recall_rank > 0
-                                and array_length(regexp_split_to_array($2, E'\\s+'), 1) >= 4
-                                and recall_overlap_count <= 1
+                                and recall_terms_count >= 4
+                                and recall_overlap_count <= 2
                               then least(1.0, greatest(0.25, char_length(text)::double precision / 400.0))
                               else 1.0
                             end as lexical_rank
-                      from cand
+                      from scored
+                     where recall_overlap_count >= greatest(1, ceiling(0.25 * recall_terms_count)::int)
                      order by lexical_rank desc, nbk_id, passage_id
                      limit $6
                 )
@@ -306,7 +305,7 @@ class GeneReviewRepository:
             row = await conn.fetchrow(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
-                       authors, initial_pub_date, last_updated_date
+                       authors, initial_pub_date, last_updated_date, ingested_at
                   from genereview_chapters
                  where $1 = any(gene_symbols)
                  order by last_updated_date desc nulls last
@@ -322,7 +321,7 @@ class GeneReviewRepository:
             row = await conn.fetchrow(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
-                       authors, initial_pub_date, last_updated_date
+                       authors, initial_pub_date, last_updated_date, ingested_at
                   from genereview_chapters
                  where nbk_id = $1
                 """,
@@ -336,7 +335,7 @@ class GeneReviewRepository:
             row = await conn.fetchrow(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
-                       authors, initial_pub_date, last_updated_date
+                       authors, initial_pub_date, last_updated_date, ingested_at
                   from genereview_chapters
                  where pubmed_id = $1
                 """,
@@ -359,6 +358,7 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
+                       c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
@@ -382,6 +382,7 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
+                       c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
@@ -412,6 +413,7 @@ class GeneReviewRepository:
             text=row["text"],
             chapter_title=row["chapter_title"],
             chapter_last_updated=row["chapter_last_updated"],
+            chapter_ingested_at=_record_get(row, "chapter_ingested_at"),
             gene_symbols=tuple(row["gene_symbols"] or ()),
             passage_type=row["passage_type"],
             passage_role=_record_get(row, "passage_role"),
@@ -431,6 +433,7 @@ class GeneReviewRepository:
                    p.section_level, p.chunk_index, p.text,
                    c.title as chapter_title,
                    c.last_updated_date as chapter_last_updated,
+                   c.ingested_at as chapter_ingested_at,
                    c.gene_symbols,
                    p.passage_type, p.passage_role, p.table_id, p.table_data
               from genereview_passages p
@@ -475,6 +478,7 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
+                       c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
@@ -493,6 +497,7 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
+                       c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
@@ -523,7 +528,7 @@ class GeneReviewRepository:
             await conn.execute("set search_path to genereview, public")
             chapter = await conn.fetchrow(
                 """
-                select nbk_id, title, last_updated_date, gene_symbols
+                select nbk_id, title, last_updated_date, ingested_at, gene_symbols
                   from genereview_chapters
                  where nbk_id = $1
                 """,
@@ -594,6 +599,7 @@ class GeneReviewRepository:
             nbk_id=chapter["nbk_id"],
             title=chapter["title"],
             chapter_last_updated=chapter["last_updated_date"],
+            chapter_ingested_at=chapter["ingested_at"],
             gene_symbols=tuple(chapter["gene_symbols"] or ()),
             sections=sections,
             table_count=len(tables_tuple),
@@ -705,4 +711,5 @@ def _to_chapter_row(row: asyncpg.Record) -> ChapterRow:
         authors=row["authors"],
         initial_pub_date=row["initial_pub_date"],
         last_updated_date=row["last_updated_date"],
+        ingested_at=_record_get(row, "ingested_at"),
     )
