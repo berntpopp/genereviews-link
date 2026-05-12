@@ -45,6 +45,18 @@ async def test_license_endpoint_includes_spdx_and_attribution_text(app: FastAPI)
 
 
 @pytest.mark.asyncio
+async def test_license_payload_uses_literal_punctuation(app: FastAPI) -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/license")
+    assert response.status_code == 200
+    raw = response.text
+    assert "\\u00a9" not in raw.lower()
+    assert "\\u2014" not in raw.lower()
+    assert "©" in raw
+    assert "—" in raw
+
+
+@pytest.mark.asyncio
 async def test_response_meta_includes_license_summary() -> None:
     """Any envelope with _meta should include license_summary."""
     from unittest.mock import AsyncMock, MagicMock

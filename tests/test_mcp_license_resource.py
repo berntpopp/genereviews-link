@@ -2,7 +2,7 @@
 
 Verifies that:
 - The resource is registered on the MCP server (genereview://license present).
-- The MCP tool get_license is NOT exposed (replaced by the resource).
+- The MCP tool get_license is exposed alongside the resource.
 - The resource payload matches the REST /license route shape exactly.
 """
 
@@ -51,14 +51,18 @@ def test_license_resource_registered(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "genereview://license" in uris, f"Expected genereview://license in {uris}"
 
 
-def test_get_license_tool_not_exposed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """get_license must NOT appear in the MCP tool list (promoted to resource)."""
-    mcp = _build_mcp(monkeypatch)
+def test_get_license_tool_exposed() -> None:
+    """get_license must appear in the MCP tool list."""
+    from genereview_link.config import ServerConfig
+    from genereview_link.server_manager import UnifiedServerManager
+
+    mgr = UnifiedServerManager()
+    app = mgr.create_fastapi_app(ServerConfig())
+    mcp = asyncio.run(mgr.create_mcp_server(app, ServerConfig()))
+
     tools = asyncio.run(mcp.list_tools())
     tool_names = [t.name for t in tools]
-    assert "get_license" not in tool_names, (
-        f"get_license should be a resource, not a tool; found tools: {tool_names}"
-    )
+    assert "get_license" in tool_names
 
 
 def test_license_resource_payload_matches_rest_shape(monkeypatch: pytest.MonkeyPatch) -> None:

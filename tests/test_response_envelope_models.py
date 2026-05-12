@@ -14,6 +14,7 @@ from genereview_link.models.genereview_models import (
     IdsOnlySearchResponse,
     LicenseNotice,
     LinkData,
+    LinkEntry,
     PassageDetail,
     PassageSearchResponse,
     PassageWindowResponse,
@@ -151,3 +152,23 @@ def test_live_passthrough_meta_uses_underscore_alias() -> None:
         assert "meta" not in dumped
         assert dumped["_meta"]["corpus_version"] is None
         assert dumped["_meta"]["attribution"]
+
+
+def test_link_data_keeps_flat_urls_and_adds_categorized_links() -> None:
+    data = LinkData(
+        urls=["https://www.ncbi.nlm.nih.gov/books/NBK1247/"],
+        link_entries=[
+            LinkEntry(
+                url="https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+                link_type="books",
+                provider="NCBI Bookshelf",
+            )
+        ],
+        by_type={"books": ["https://www.ncbi.nlm.nih.gov/books/NBK1247/"]},
+    )
+
+    dumped = data.model_dump(mode="json", by_alias=True)
+    assert dumped["urls"] == ["https://www.ncbi.nlm.nih.gov/books/NBK1247/"]
+    assert dumped["link_entries"][0]["link_type"] == "books"
+    assert dumped["by_type"]["books"]
+    assert "_meta" in dumped

@@ -432,6 +432,7 @@ class UnifiedServerManager:
             "search_passages": "search_passages",
             "get_chapter_section": "get_chapter_section",
             "get_passage": "get_passage",
+            "get_license": "get_license",
         }
 
         mcp_route_maps = [
@@ -441,8 +442,6 @@ class UnifiedServerManager:
             RouteMap(pattern=r"^/$", mcp_type=MCPType.EXCLUDE),
             RouteMap(pattern=r"^/docs$", mcp_type=MCPType.EXCLUDE),
             RouteMap(pattern=r"^/openapi.json$", mcp_type=MCPType.EXCLUDE),
-            # Exclude /license from MCP tools — served as genereview://license resource instead
-            RouteMap(pattern=r"^/license$", mcp_type=MCPType.EXCLUDE),
         ]
 
         mcp = FastMCP.from_fastapi(
@@ -472,8 +471,8 @@ class UnifiedServerManager:
         )
 
         # Register genereview://license as an MCP resource.
-        # The REST GET /license route is excluded from MCP tools (see route_maps above);
-        # LLMs should read this resource once per session instead of calling a tool.
+        # LLMs can read this resource once per session or call get_license when
+        # tool-only clients cannot access MCP resources.
         import json
 
         from genereview_link.models.genereview_models import ATTRIBUTION_TEXT_FULL, LicenseNotice

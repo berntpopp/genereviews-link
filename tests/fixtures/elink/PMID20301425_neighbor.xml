@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<eLinkResult>
+  <LinkSet>
+    <LinkSetDb>
+      <LinkName>pubmed_books_refs</LinkName>
+      <Link>
+        <Id>NBK1247</Id>
+      </Link>
+    </LinkSetDb>
+    <LinkSetDb>
+      <LinkName>pubmed_pmc_refs</LinkName>
+      <Link>
+        <Id>123456</Id>
+      </Link>
+    </LinkSetDb>
+  </LinkSet>
+</eLinkResult>

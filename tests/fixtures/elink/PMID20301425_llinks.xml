@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<eLinkResult>
+  <LinkSet>
+    <IdUrlList>
+      <IdUrlSet>
+        <Id>20301425</Id>
+        <ObjUrl>
+          <Url>https://example.org/fulltext</Url>
+          <Category>llinks</Category>
+        </ObjUrl>
+      </IdUrlSet>
+    </IdUrlList>
+  </LinkSet>
+</eLinkResult>

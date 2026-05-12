@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PubmedArticleSet>
+  <PubmedBookArticle>
+    <BookDocument>
+      <PMID>20301425</PMID>
+      <Book>
+        <BookTitle>GeneReviews</BookTitle>
+        <PubDate>
+          <Year>1993</Year>
+        </PubDate>
+      </Book>
+      <ArticleTitle>BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer</ArticleTitle>
+      <Abstract>
+        <AbstractText Label="DIAGNOSIS/TESTING">The diagnosis is established in a proband by identification of a heterozygous pathogenic variant in BRCA1 or BRCA2.</AbstractText>
+        <AbstractText Label="MANAGEMENT">Consider prophylactic bilateral mastectomy and risk-reducing salpingo-oophorectomy based on individual risk assessment.</AbstractText>
+        <AbstractText Label="GENETIC COUNSELING">BRCA1- and BRCA2-associated hereditary breast and ovarian cancer is inherited in an <i>autosomal dominant</i> manner with variable expression.</AbstractText>
+      </Abstract>
+      <AuthorList Type="authors">
+        <Author>
+          <LastName>Petrucelli</LastName>
+          <ForeName>Nadine</ForeName>
+        </Author>
+      </AuthorList>
+      <ContributionDate>
+        <Year>1998</Year>
+        <Month>09</Month>
+        <Day>04</Day>
+      </ContributionDate>
+    </BookDocument>
+  </PubmedBookArticle>
+</PubmedArticleSet>

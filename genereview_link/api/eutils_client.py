@@ -24,6 +24,12 @@ warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logger = get_logger(__name__)
 
 
+def _itertext(elem: _StdET.Element | None) -> str:
+    if elem is None:
+        return ""
+    return " ".join("".join(elem.itertext()).split())
+
+
 class EutilsClient:
     """A client for interacting with NCBI E-utils and scraping GeneReviews."""
 
@@ -449,23 +455,26 @@ class EutilsClient:
         if pmid is not None:
             article_data["pmid"] = pmid.text or ""
 
-        # Extract title - ArticleTitle for the specific chapter
         title = book_document.find(".//ArticleTitle")
-        if title is not None:
-            article_data["title"] = title.text or ""
+        if title is None:
+            title = book_document.find(".//BookTitle")
+        if title is None:
+            title = book_document.find(".//Book/BookTitle")
+        article_data["title"] = _itertext(title)
 
         # Extract abstract - handle multiple AbstractText elements
-        abstract_texts = []
+        abstract_texts: list[str] = []
         for abstract_text in book_document.findall(".//Abstract/AbstractText"):
-            if abstract_text.text:
-                label = abstract_text.get("Label", "")
-                text = abstract_text.text.strip()
-                if label and label.upper() != "UNLABELLED":
-                    abstract_texts.append(f"{label}: {text}")
-                else:
-                    abstract_texts.append(text)
+            label = abstract_text.get("Label") or abstract_text.get("NlmCategory") or ""
+            text = _itertext(abstract_text)
+            if not text:
+                continue
+            if label and label.upper() != "UNLABELLED":
+                abstract_texts.append(f"{label}: {text}")
+            else:
+                abstract_texts.append(text)
 
-        article_data["abstract"] = " ".join(abstract_texts)
+        article_data["abstract"] = "\n\n".join(abstract_texts)
 
         # Extract authors - look for AuthorList with Type="authors"
         authors = []
@@ -486,7 +495,7 @@ class EutilsClient:
         # Extract journal/book information
         book_title = book_document.find(".//Book/BookTitle")
         if book_title is not None:
-            article_data["journal"] = book_title.text or "GeneReviews"
+            article_data["journal"] = _itertext(book_title) or "GeneReviews"
         else:
             article_data["journal"] = "GeneReviews"
 
@@ -516,20 +525,57 @@ class EutilsClient:
 
         return article_data
 
-    async def get_all_links(self, pubmed_id: str) -> dict[str, list[str]]:
+    async def get_all_links(self, pubmed_id: str) -> dict[str, Any]:
         """Get all available links from a PubMed ID using elink."""
         params = {"dbfrom": "pubmed", "id": pubmed_id, "cmd": "prlinks"}
         root = await self._make_xml_request("elink.fcgi", params)
+        entries = self._parse_link_entries(root)
+        link_types = sorted({str(entry["link_type"]) for entry in entries})
 
-        urls = []
+        return {
+            "urls": [str(entry["url"]) for entry in entries],
+            "link_entries": entries,
+            "by_type": {
+                link_type: [
+                    str(entry["url"]) for entry in entries if entry["link_type"] == link_type
+                ]
+                for link_type in link_types
+            },
+        }
 
-        # Parse XML response for provider links
+    def _parse_link_entries(self, root: _StdET.Element) -> list[dict[str, str | None]]:
+        entries: list[dict[str, str | None]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def add(url: str | None, link_type: str, provider: str | None = None) -> None:
+            if not url:
+                return
+            key = (url, link_type)
+            if key in seen:
+                return
+            seen.add(key)
+            entries.append({"url": url, "link_type": link_type, "provider": provider})
+
         for obj_url in root.findall(".//ObjUrl"):
-            url_elem = obj_url.find(".//Url")
-            if url_elem is not None and url_elem.text:
-                urls.append(url_elem.text)
+            provider = obj_url.findtext("Provider/Name")
+            category = obj_url.findtext("Category")
+            link_type = "prlinks" if provider else "llinks"
+            add(obj_url.findtext("Url"), link_type, provider or category)
 
-        return {"urls": urls}
+        for link_set_db in root.findall(".//LinkSetDb"):
+            link_name = link_set_db.findtext("LinkName") or ""
+            for link in link_set_db.findall("Link"):
+                link_id = link.findtext("Id")
+                if link_id and "books" in link_name.lower():
+                    nbk_id = link_id if link_id.startswith("NBK") else f"NBK{link_id}"
+                    add(f"https://www.ncbi.nlm.nih.gov/books/{nbk_id}/", "books", "NCBI Bookshelf")
+                elif link_id and "pmc" in link_name.lower():
+                    add(
+                        f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{link_id}/",
+                        "pmc",
+                        "PubMed Central",
+                    )
+        return entries
 
     async def scrape_genereview_comprehensive(self, book_url: str) -> dict[str, Any]:
         """Comprehensive scraping of a GeneReview book page with improved structure and fault tolerance."""
@@ -983,9 +1029,12 @@ class EutilsClient:
 
         if section_divs:
             # Process GeneReviews structured sections
+            seen_nodes: set[int] = set()
             for section_div in section_divs:
+                if id(section_div) in seen_nodes:
+                    continue
                 # Extract h2 heading from within the div
-                h2_heading = section_div.find("h2")
+                h2_heading = section_div.find("h2", recursive=False) or section_div.find("h2")
                 if not h2_heading:
                     continue
 
@@ -994,24 +1043,21 @@ class EutilsClient:
                     continue
 
                 # Extract main section content
-                section_content_parts = []
-                subsections = {}
-
-                # Find all content within this section div
-                for element in section_div.find_all(["p", "div", "ul", "ol"]):
-                    text = element.get_text().strip()
-                    if self._is_valid_content(text):
-                        section_content_parts.append(text)
+                section_content_parts = self._collect_direct_content(section_div, seen_nodes)
+                subsections: dict[str, dict[str, Any]] = {}
 
                 # Extract h3 subsections
-                h3_headings = section_div.find_all("h3")
-                for h3 in h3_headings:
-                    subsection_title = h3.get_text().strip()
+                for child in section_div.children:
+                    if not isinstance(child, Tag) or child.name != "h3":
+                        continue
+                    subsection_title = child.get_text().strip()
                     if not subsection_title or len(subsection_title) < 3:
                         continue
 
                     # Extract content for this subsection
-                    subsection_content = self._extract_subsection_content(h3, section_div)
+                    subsection_content = self._collect_until_heading(
+                        child, {"h2", "h3"}, seen_nodes
+                    )
 
                     if subsection_content and len(subsection_content) > 30:
                         subsection_key = self._normalize_section_key(subsection_title)
@@ -1021,9 +1067,10 @@ class EutilsClient:
                             "level": 3,
                             "subsections": {},
                         }
+                    seen_nodes.add(id(child))
 
                 # Create main section
-                main_content = " ".join(section_content_parts).strip()
+                main_content = f"{section_title} {' '.join(section_content_parts)}".strip()
                 main_content = self._clean_content(main_content)
 
                 if main_content and len(main_content) > 50:
@@ -1034,12 +1081,58 @@ class EutilsClient:
                         "level": 2,
                         "subsections": subsections,
                     }
+                    seen_nodes.add(id(section_div))
 
         # Strategy 2: Fallback to heading-based extraction if no structured divs found
         if not sections:
             sections = self._extract_sections_by_headings(content_div)
 
         return sections
+
+    def _collect_direct_content(self, section_div: Tag, seen_nodes: set[int]) -> list[str]:
+        blocks: list[str] = []
+        seen_texts: set[str] = set()
+        for child in section_div.children:
+            if not isinstance(child, Tag) or child.name is None:
+                continue
+            if child.name == "h3":
+                break
+            if id(child) in seen_nodes or child.name == "h2":
+                continue
+            if child.name in {"p", "ul", "ol", "table"}:
+                self._append_unique_block_text(child, blocks, seen_nodes, seen_texts)
+            elif child.name in {"div", "section"}:
+                for block in child.find_all(["p", "ul", "ol", "table"]):
+                    self._append_unique_block_text(block, blocks, seen_nodes, seen_texts)
+        return blocks
+
+    def _collect_until_heading(
+        self, heading: Tag, stop_tags: set[str], seen_nodes: set[int]
+    ) -> str:
+        blocks: list[str] = []
+        seen_texts: set[str] = set()
+        current = heading.find_next_sibling()
+        while isinstance(current, Tag):
+            if current.name in stop_tags:
+                break
+            if id(current) not in seen_nodes and current.name in {"p", "ul", "ol", "table"}:
+                self._append_unique_block_text(current, blocks, seen_nodes, seen_texts)
+            elif id(current) not in seen_nodes and current.name in {"div", "section"}:
+                for block in current.find_all(["p", "ul", "ol", "table"]):
+                    self._append_unique_block_text(block, blocks, seen_nodes, seen_texts)
+            current = current.find_next_sibling()
+        return self._clean_content(" ".join(blocks))
+
+    def _append_unique_block_text(
+        self, block: Tag, blocks: list[str], seen_nodes: set[int], seen_texts: set[str]
+    ) -> None:
+        if id(block) in seen_nodes:
+            return
+        text = block.get_text(separator=" ", strip=True)
+        seen_nodes.add(id(block))
+        if self._is_valid_content(text) and text not in seen_texts:
+            blocks.append(text)
+            seen_texts.add(text)
 
     def _extract_subsection_content(self, h3_heading: Tag, section_div: Tag) -> str:
         """Extract content for an h3 subsection within a section div."""

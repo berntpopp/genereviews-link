@@ -6,8 +6,13 @@ would otherwise only be hit by live NCBI traffic.
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as StdET
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 import respx
+from defusedxml import ElementTree as ET  # noqa: N817 - drop-in replacement for stdlib ET
 from httpx import Response
 
 from genereview_link.api.eutils_client import EutilsClient
@@ -18,6 +23,15 @@ from genereview_link.config import settings
 def client() -> EutilsClient:
     """Fresh client per test - we never share state across tests."""
     return EutilsClient()
+
+
+@pytest.fixture
+def load_xml() -> Callable[[str], StdET.Element]:
+    def _load_xml(name: str) -> StdET.Element:
+        fixture_path = Path(__file__).parent / "fixtures" / name
+        return ET.fromstring(fixture_path.read_text(encoding="utf-8"))
+
+    return _load_xml
 
 
 def _eutils_url(endpoint: str) -> str:
@@ -116,6 +130,51 @@ class TestGetBookUrlFromPmid:
 
 
 class TestGetAllLinks:
+    def test_parse_prlinks_entries(self, load_xml: Callable[[str], StdET.Element]) -> None:
+        root = load_xml("elink/PMID20301425_prlinks.xml")
+        client = EutilsClient()
+
+        entries = client._parse_link_entries(root)
+
+        assert entries == [
+            {
+                "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+                "link_type": "prlinks",
+                "provider": "NCBI Bookshelf",
+            }
+        ]
+
+    def test_parse_llinks_entries(self, load_xml: Callable[[str], StdET.Element]) -> None:
+        root = load_xml("elink/PMID20301425_llinks.xml")
+        client = EutilsClient()
+
+        entries = client._parse_link_entries(root)
+
+        assert entries == [
+            {
+                "url": "https://example.org/fulltext",
+                "link_type": "llinks",
+                "provider": "llinks",
+            }
+        ]
+
+    def test_parse_neighbor_entries(self, load_xml: Callable[[str], StdET.Element]) -> None:
+        root = load_xml("elink/PMID20301425_neighbor.xml")
+        client = EutilsClient()
+
+        entries = client._parse_link_entries(root)
+
+        assert {
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "link_type": "books",
+            "provider": "NCBI Bookshelf",
+        } in entries
+        assert {
+            "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC123456/",
+            "link_type": "pmc",
+            "provider": "PubMed Central",
+        } in entries
+
     @pytest.mark.asyncio
     @respx.mock
     async def test_parses_object_urls(self, client: EutilsClient) -> None:
@@ -130,7 +189,8 @@ class TestGetAllLinks:
             return_value=Response(200, content=xml.encode("utf-8"))
         )
         result = await client.get_all_links("20301425")
-        assert result == {"urls": ["https://example.com/a", "https://example.com/b"]}
+        assert result["urls"] == ["https://example.com/a", "https://example.com/b"]
+        assert result["by_type"]["llinks"] == ["https://example.com/a", "https://example.com/b"]
 
     @pytest.mark.asyncio
     @respx.mock
@@ -140,7 +200,7 @@ class TestGetAllLinks:
             return_value=Response(200, content=xml.encode("utf-8"))
         )
         result = await client.get_all_links("20301425")
-        assert result == {"urls": []}
+        assert result == {"urls": [], "link_entries": [], "by_type": {}}
 
 
 class TestFetchAbstractRegular:
@@ -195,6 +255,19 @@ class TestFetchAbstractRegular:
 
 
 class TestFetchAbstractBook:
+    def test_parse_book_article_preserves_title_and_labeled_abstract(self, load_xml) -> None:
+        root = load_xml("efetch/NBK1247_book_article.xml")
+        article = root.find(".//PubmedBookArticle")
+        client = EutilsClient()
+
+        parsed = client._parse_book_article(article, "20301425")
+
+        assert parsed["title"]
+        assert "DIAGNOSIS/TESTING:" in parsed["abstract"]
+        assert "GENETIC COUNSELING:" in parsed["abstract"]
+        assert "autosomal dominant manner" in parsed["abstract"]
+        assert not parsed["abstract"].endswith("of")
+
     @pytest.mark.asyncio
     @respx.mock
     async def test_parses_book_article(self, client: EutilsClient) -> None:

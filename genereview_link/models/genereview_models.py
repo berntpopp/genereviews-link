@@ -56,6 +56,14 @@ class AbstractData(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class LinkEntry(BaseModel):
+    """A categorized URL returned by PubMed ELink."""
+
+    url: str
+    link_type: Literal["prlinks", "llinks", "books", "pmc"]
+    provider: str | None = None
+
+
 class LinkData(BaseModel):
     """Represents links from PubMed elink."""
 
@@ -63,6 +71,8 @@ class LinkData(BaseModel):
         default_factory=list,
         description="All available URLs for the publication.",
     )
+    link_entries: list[LinkEntry] | None = None
+    by_type: dict[str, list[str]] = Field(default_factory=dict)
     corpus_version: str | None = None
     meta: ResponseMeta = Field(
         alias="_meta", default_factory=lambda: ResponseMeta.live_passthrough()
