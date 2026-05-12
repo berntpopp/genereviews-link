@@ -78,3 +78,27 @@ class TestInvalidInput:
     def test_non_numeric_port_rejected(self) -> None:
         result = runner.invoke(app, ["serve", "--port", "abc"])
         assert result.exit_code != 0
+
+
+class TestBundleCommands:
+    def test_bundle_validate_command_registered(self) -> None:
+        result = runner.invoke(app, ["bundle", "validate", "--help"])
+
+        assert result.exit_code == 0
+        assert "Validate that DATABASE_URL is ready for bundle publishing" in result.output
+
+    def test_bundle_build_exposes_release_id_option(self) -> None:
+        result = runner.invoke(app, ["bundle", "build", "--help"])
+
+        assert result.exit_code == 0
+        assert "--release-id" in result.output
+        assert "--skip-validation" in result.output
+
+    def test_bundle_publish_local_command_registered(self) -> None:
+        result = runner.invoke(app, ["bundle", "publish-local", "--help"])
+
+        assert result.exit_code == 0
+        assert "--release-id" in result.output
+        assert "--device" in result.output
+        assert "--repo" in result.output
+        assert "--draft" in result.output

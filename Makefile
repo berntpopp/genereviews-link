@@ -1,4 +1,4 @@
-.PHONY: help install lock upgrade sync format format-check lint lint-ci lint-fix typecheck typecheck-fast typecheck-stop typecheck-fresh test test-fast test-unit test-integration test-cov test-cov-all test-all check ci-local precommit clean dev mcp-serve mcp-serve-http docker-build docker-up docker-down docker-logs eval eval-baseline
+.PHONY: help install lock upgrade sync format format-check lint lint-ci lint-fix typecheck typecheck-fast typecheck-stop typecheck-fresh test test-fast test-unit test-integration test-cov test-cov-all test-all check ci-local precommit clean dev mcp-serve mcp-serve-http docker-build docker-up docker-down docker-logs bundle-validate bundle-publish-local cuda-check eval eval-baseline
 
 DOCKER_COMPOSE := $(shell if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then echo "docker compose"; elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "docker compose"; fi)
 
@@ -132,6 +132,15 @@ embed: ## Backfill embeddings + build HNSW index
 
 bundle: ## Build release bundle from active corpus
 	uv run genereview-link bundle build
+
+bundle-validate: ## Validate active corpus is ready for bundle publishing
+	uv run genereview-link bundle validate
+
+bundle-publish-local: ## Build/publish corpus bundle locally; set RELEASE_ID=YYYY-MM-DD-rN
+	uv run genereview-link bundle publish-local --release-id $${RELEASE_ID:?set RELEASE_ID=YYYY-MM-DD-rN}
+
+cuda-check: ## Verify local PyTorch CUDA availability
+	uv run python scripts/verify_torch_cuda.py
 
 eval: ## Run MRR@10 / section-precision@5 against tests/eval/
 	uv run python -m tests.eval.run_eval

@@ -82,7 +82,7 @@ def test_postgres_volume_mount_matches_pg18_data_layout() -> None:
     assert "genereview_pg_data:/var/lib/postgresql/data" not in volumes
 
 
-def test_docker_example_boots_without_required_release_bundle() -> None:
+def test_docker_example_defaults_to_latest_release_bundle() -> None:
     env = {}
     for raw_line in (REPO_ROOT / ".env.docker.example").read_text().splitlines():
         line = raw_line.strip()
@@ -91,8 +91,9 @@ def test_docker_example_boots_without_required_release_bundle() -> None:
         key, value = line.split("=", maxsplit=1)
         env[key] = value
 
-    assert env["BUNDLE_URL"] == ""
+    assert env["BUNDLE_URL"] == "latest"
     assert env["AUTO_PULL_RELEASES"] == "false"
+    assert env["BUILD_LOCAL"] == "false"
 
 
 def test_production_compose_uses_unified_cli_server_not_gunicorn_env() -> None:

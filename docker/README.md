@@ -28,7 +28,7 @@ production and NPM overlays:
 ```bash
 cp .env.docker.example .env.docker
 # Edit .env.docker: set POSTGRES_PASSWORD, CORS_ORIGINS, NCBI_API_KEY, and NPM_NETWORK_NAME.
-# Optional: set BUNDLE_URL to a release asset URL, or "latest" once a release exists.
+# Keep BUNDLE_URL=latest to restore the newest promoted corpus release, or pin a release URL.
 docker compose \
   --env-file .env.docker \
   -f docker/docker-compose.yml \
@@ -50,8 +50,19 @@ production Docker/NPM deployments. Notable:
 - `NCBI_API_KEY` — strongly recommended for the higher NCBI rate limit.
 - `GENEREVIEW_LINK_PORT` — default 8000.
 - `NPM_NETWORK_NAME` — external Docker network used by Nginx Proxy Manager.
-- `BUNDLE_URL` — leave empty to boot without a corpus; set to a release bundle URL, or to
-  `latest` once a GitHub release bundle exists, to bootstrap a populated corpus.
+- `BUNDLE_URL` — set to `latest` or a pinned GitHub Release asset URL to bootstrap a
+  populated corpus without local ingest/backfill.
+
+### Corpus Bundle Restore
+
+Production Docker should restore a precomputed GitHub Release bundle:
+
+```bash
+BUNDLE_URL=latest
+```
+
+For reproducibility, pin the release asset URL instead of using `latest`.
+Docker does not run ingest/backfill unless `BUILD_LOCAL=true` is explicitly set.
 
 The production compose stack runs `genereview-link serve --transport unified`,
 which preserves both REST and `/mcp` over HTTP. `docker/gunicorn_conf.py` remains

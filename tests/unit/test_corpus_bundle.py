@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,22 @@ def test_bundle_manifest_defaults() -> None:
     assert m.embedding["dimension"] == 384
     assert m.postgres["major_version"] == "18"
     assert m.checksums == {}
+
+
+def test_bundle_manifest_includes_release_provenance_fields() -> None:
+    manifest = BundleManifest(
+        corpus_release_id="2026-05-12-r1",
+        app_git_sha="abc123",
+        schema_migrations={"control": ["0001_base"], "data": ["genereview:0001_chapters"]},
+        validation={"status": "passed", "smoke_queries": []},
+    )
+
+    payload = asdict(manifest)
+
+    assert payload["corpus_release_id"] == "2026-05-12-r1"
+    assert payload["app_git_sha"] == "abc123"
+    assert payload["schema_migrations"]["control"] == ["0001_base"]
+    assert payload["validation"]["status"] == "passed"
 
 
 def test_write_bundle_creates_tar_and_sha(tmp_path: Path) -> None:

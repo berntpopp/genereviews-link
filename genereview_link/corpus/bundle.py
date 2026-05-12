@@ -15,6 +15,7 @@ from pathlib import Path
 class BundleManifest:
     manifest_version: str = "1"
     bundle_format: str = "tar.gz"
+    corpus_release_id: str = ""
     corpus_version: str = ""
     tarball_source_sha256: str = ""
     tarball_last_updated: str = ""
@@ -34,8 +35,22 @@ class BundleManifest:
             "pgvector_version": "0.8.2",
         }
     )
-    schema_migrations: list[str] = field(default_factory=list)
+    schema_migrations: dict[str, list[str]] = field(
+        default_factory=lambda: {"control": [], "data": []}
+    )
+    app_git_sha: str = ""
+    app_version: str = ""
     genereview_link_version: str = ""
+    hnsw: dict[str, object] = field(
+        default_factory=lambda: {
+            "index_name": "genereview_embeddings_bge384_hnsw_cosine",
+            "exists": False,
+        }
+    )
+    source: dict[str, object] = field(default_factory=dict)
+    validation: dict[str, object] = field(
+        default_factory=lambda: {"status": "not_run", "smoke_queries": []}
+    )
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     created_by: str = "manual"
     license: dict[str, object] = field(
