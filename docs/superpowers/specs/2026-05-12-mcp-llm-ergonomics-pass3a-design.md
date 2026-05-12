@@ -49,8 +49,8 @@ Two LLM-consumer reviews (2026-05-12) rated the server **9/10 overall**, with co
 - #1 Table IDs not listed in metadata → Task C1 `tables: list[TableSummary]` (with `heading_path` added per this review's emphasis on context).
 - #2 Slug vs numeric table-ID naming unclear → Task A1 usage resource "Table ID naming" section pins the canonical form.
 - #6 Server instructions too long for some clients → Tasks A1–A3 split into trim + usage resource.
-- #7 `table_id` not on table-type search hits → Task J1 adds `table_id` field to `RankedPassage` when `passage_type='table'`.
-- #9 No per-passage recommended citation → Task J1 adds always-on `recommended_citation: str` to `RankedPassage` and `PassageDetail`.
+- #7 `table_id` not on table-type search hits → Task I1 adds `table_id` field to `RankedPassage` when `passage_type='table'`.
+- #9 No per-passage recommended citation → Task I1 adds always-on `recommended_citation: str` to `RankedPassage` and `PassageDetail`.
 
 **Items intentionally deferred from each review:**
 - Review #1: #5 neighbors (already shipped, surfaced via usage resource), #6 list_chapters, #7 since filter, #15 prompts surface, #16 streaming, #17 cite(), #18 PMID cross-link.
@@ -83,7 +83,9 @@ B. Chapter-date investigation + (maybe) cheap fix (2 tasks)
 C. get_chapter_metadata enrichments (3 tasks)
    C1  tables: list[TableSummary] (data already in DB)
    C2  per-section total_char_count via SUM aggregate
-   C3  notes: list[str] populated for empty canonical sections
+   C3  SectionSummary.note: str | None populated for empty systematically-
+       unscraped canonical sections (chapter-level ChapterMetadataResponse.notes
+       is declared empty for Pass-3-A, reserved for future warnings)
 
 D. search_passages payload knobs (2 tasks)
    D1  mode="ids_only" → {passage_id, rrf_score, chapter_section} only
@@ -104,12 +106,12 @@ H. heading_path opt-in array (1 task)
    H1  include=heading_path_array → heading_path_array: list[str] | None
        on search_passages + get_passage responses
 
-J. Search-hit citation + table jump (1 task)
-   J1  Always-on recommended_citation: str on RankedPassage + PassageDetail
+I. Search-hit citation + table jump (1 task)
+   I1  Always-on recommended_citation: str on RankedPassage + PassageDetail
        AND table_id: str | None on RankedPassage for passage_type='table' hits
 
-I. Phase gate (1 task)
-   I1  make ci-local + tests/smoke/phase_9.sh + annotated tag
+J. Phase gate (1 task)
+   J1  make ci-local + tests/smoke/phase_9.sh + annotated tag
 ```
 
 **Total:** 14 tasks. Single phase tag. Tests + smoke at the end. May or may not include a partial reingest (Task B branching).
@@ -235,7 +237,10 @@ class PassageBatchResponse(BaseModel):
     model_config = {"populate_by_name": True}
 ```
 
-Route: `POST /passages/batch`. Returns **200** for partial misses (with `missing_ids` populated), **400** when `ids` is empty or any single id fails the regex, **413** when `len(ids) > 20`. The 20-cap is a documented hard limit; documented retry guidance via batching.
+Route: `POST /passages/batch`. Response codes (aligned with existing convention: Pydantic validation → 422, business-logic semantic errors → 400, oversize → 413):
+- **200** — happy path or partial misses with `missing_ids` populated.
+- **422** — empty `ids` list (`min_length=1` violation), or any individual id fails the `^NBK\d+:\d{4}$` regex. Emitted by Pydantic's request validation; the existing `RequestValidationError` handler (Pass-2 Task 34) shapes the response.
+- **413** — `len(ids) > 20`. Checked manually in the route (NOT via Pydantic's `max_length`, so we can emit a structured `StructuredHTTPException` with `code="batch_size_exceeded"`, `recovery_hint`, and `next_commands` rather than Pydantic's generic 422). The 20-cap is a documented hard limit; documented retry guidance via batching.
 
 The route uses the existing `_fetch_passage_row` helper inside a single connection acquire (one round-trip to DB).
 
@@ -277,20 +282,22 @@ class ResponseMeta(BaseModel):
 class RankedPassage(BaseModel):
     # existing fields preserved...
     heading_path_array: list[str] | None = None    # NEW
-    recommended_citation: str                       # NEW (Task J1) — always populated
-    table_id: str | None = None                     # NEW (Task J1) — populated only when passage_type='table'
+    recommended_citation: str                       # NEW (Task I1) — always populated
+    table_id: str | None = None                     # NEW (Task I1) — populated only when passage_type='table'
 
 class PassageDetail(BaseModel):
     # existing fields preserved...
     heading_path_array: list[str] | None = None    # NEW
-    recommended_citation: str                       # NEW (Task J1) — always populated
+    recommended_citation: str                       # NEW (Task I1) — always populated
 ```
 
 When opted in for `heading_path_array`: populated as `heading_path.split(" > ") if heading_path else None`. Mode `ids_only` ignores this flag (documented).
 
-### `recommended_citation` + `table_id` on search hits (Task J1)
+### `recommended_citation` + `table_id` on search hits (Task I1)
 
-**`recommended_citation`** — always populated on `RankedPassage` (in brief / full modes; absent in `ids_only` by design) and `PassageDetail`. Format:
+**`recommended_citation`** — always populated on every `RankedPassage` and `PassageDetail` instance. (`ids_only` mode bypasses the `RankedPassage` model entirely and emits a lean shape — `{passage_id, rrf_score, chapter_section}` — so the field doesn't appear there; callers who need it should request `mode="brief"` or `mode="full"`.)
+
+Format:
 
 ```
 {chapter_title}. NBK{id}. Updated {chapter_last_updated|"date n/a"}. Passage {passage_id}.
@@ -301,6 +308,8 @@ Worked example: `"BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Canc
 LLMs paste this verbatim to satisfy the citation contract; the alternative `cite()` server-side tool in Pass-3-B can either reuse this string or generate richer formatted bibliographies.
 
 **`table_id`** — populated on `RankedPassage` only when `passage_type == 'table'`. Sourced from `PassageRow.table_id` (already projected in Pass-2 Task 19). Eliminates the round-trip a caller would otherwise need to discover the canonical slug from a table-type search hit. Use case: search hit comes back with `passage_type='table'` → caller immediately calls `get_table(nbk_id, table_id)` without parsing `heading_path`.
+
+**Deliberate asymmetry vs `PassageDetail`:** `table_id` is intentionally NOT added to `PassageDetail`. `PassageDetail` is the response shape for `get_passage(passage_id)`; a caller in that path already has the passage's `table_data` (when applicable) on the response, so the canonical slug is fully recoverable from existing fields. Adding `table_id` there would be redundant noise. The `RankedPassage` case is different because search hits don't carry `table_data` (size budget), so without `table_id` the caller would need either to call `get_passage` first (defeating the search-result optimization) or to parse `heading_path`.
 
 ## Task B branching
 
@@ -319,7 +328,7 @@ Task B1 probes NBK1440 NXML to determine the source of the `2005-07-13` date. Th
 **Outcome (c): parser correct, NBK1440 simply hasn't been revised.** The reviewer's observation reflects upstream NCBI's editorial state, not a bug.
 → **Task B2 doc-only**: same usage-resource paragraph; no `notes` heuristic.
 
-The decision tree is captured in the Task B1 deliverable (a code comment + a JSON findings file under `docs/superpowers/specs/2026-05-12-task-b1-findings.md`).
+The decision tree is captured in the Task B1 deliverable: a code comment above the NXML date-extraction function naming the observed elements, plus a markdown findings document (with embedded JSON describing the probed chapters and their date-element shapes) at `docs/superpowers/specs/2026-05-12-task-b1-findings.md`.
 
 ## Usage Resource Content
 
@@ -372,7 +381,9 @@ The `genereview://usage` markdown resource has these sections, in order:
    hint embedded in heading_path. Use the slug for get_table calls and tables-list lookups.
 ## Chapter date semantics
    [populated by Task B2 based on findings]
-## Latency profile (p50)
+## Latency profile (p50, measured 2026-05-12 against gr-pg corpus on 127.0.0.1:8765)
+   These numbers are point-in-time and may drift with corpus size, hardware,
+   or rerank-config changes. Re-run `tests/smoke/measure_latency.sh` to refresh.
    search_passages rrf:     ~27ms
    search_passages lexical: ~26ms
    get_passage:              ~1ms
@@ -393,13 +404,13 @@ Per-task TDD where possible. Critical test additions:
 - **D1 (ids_only):** Route test asserts the lean shape; assertions that no `score_breakdown`, no `text`, no `chapter_title` leak in.
 - **D2 (snippet_chars):** Route test asserts that `snippet_chars=80` produces shorter snippets than `snippet_chars=800`.
 - **E1 (section metadata):** Route test asserts `passage_count == len(passages)`; `concatenated_char_count` populated only when opted in.
-- **F1 (batch):** Route tests: 200 path with all hits, 200 path with partial misses (1 unknown id), 400 on empty list, 400 on regex fail, 413 on overflow.
+- **F1 (batch):** Route tests: 200 path with all hits, 200 path with partial misses (1 unknown id), **422** on empty list, **422** on per-id regex fail, **413** on overflow (`len(ids) > 20`).
 - **G1 (license enrichment):** Resource test asserts new fields. REST `/license` route enriched identically (mirror).
 - **G2 (model metadata):** Search test asserts `dense_model_id` + `embedding_dim` populated only when `include=score_breakdown`.
 - **H1 (heading_path array):** Test asserts split correctness for chapters with deep nesting; null when source `heading_path` is null.
-- **J1 (citation + table_id):** Route tests: (a) `recommended_citation` matches the exact format `"{title}. {nbk_id}. Updated {date}. Passage {pid}."` for a seeded passage; (b) `table_id` populated on `passage_type='table'` search hits and absent on narrative hits; (c) `ids_only` mode omits `recommended_citation` and `table_id` by design.
+- **I1 (citation + table_id):** Route tests: (a) `recommended_citation` matches the exact format `"{title}. {nbk_id}. Updated {date}. Passage {pid}."` for a seeded passage; (b) `table_id` populated on `passage_type='table'` search hits and absent on narrative hits; (c) `ids_only` mode omits `recommended_citation` and `table_id` by design.
 
-Phase gate (Task I1) writes `tests/smoke/phase_9.sh` covering every new endpoint and shape against the live gr-pg corpus on `127.0.0.1:8765`.
+Phase gate (Task J1) writes `tests/smoke/phase_9.sh` covering every new endpoint and shape against the live gr-pg corpus on `127.0.0.1:8765`.
 
 ## Breaking changes
 
