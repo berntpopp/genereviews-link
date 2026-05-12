@@ -1,0 +1,377 @@
+[
+  {
+    "nbk_id": "NBK1300",
+    "title": "SOX2 Disorder",
+    "last_updated": "2020-07-30",
+    "gene_symbols": [
+      "SOX2"
+    ],
+    "bucket": "oldest_q"
+  },
+  {
+    "nbk_id": "NBK1425",
+    "title": "C3 Glomerulopathy",
+    "last_updated": "2018-04-05",
+    "gene_symbols": [
+      "C3",
+      "CD46",
+      "CFB",
+      "CFH",
+      "CFHR1",
+      "CFHR5",
+      "CFI",
+      "DGKE"
+    ],
+    "bucket": "oldest_q"
+  },
+  {
+    "nbk_id": "NBK1332",
+    "title": "Congenital Disorders of N-Linked Glycosylation and Multiple Pathway Overview",
+    "last_updated": "2017-01-12",
+    "gene_symbols": [
+      "ALG1",
+      "ALG11",
+      "ALG12",
+      "ALG13",
+      "ALG2",
+      "ALG3",
+      "ALG6",
+      "ALG8",
+      "ALG9",
+      "B4GALT1",
+      "COG1",
+      "COG2",
+      "COG4",
+      "COG5",
+      "COG6",
+      "COG7",
+      "COG8",
+      "DDOST",
+      "DHDDS",
+      "DOLK",
+      "DPAGT1",
+      "DPM1",
+      "DPM2",
+      "DPM3",
+      "GMPPA",
+      "MAGT1",
+      "MAN1B1",
+      "MGAT2",
+      "MOGS",
+      "MPDU1",
+      "MPI",
+      "PGM1",
+      "PGM3",
+      "PMM2",
+      "RFT1",
+      "SLC35A1",
+      "SLC35A2",
+      "SLC35C1",
+      "SRD5A3",
+      "SSR4",
+      "STT3A",
+      "STT3B",
+      "TMEM165",
+      "TUSC3"
+    ],
+    "bucket": "oldest_q"
+  },
+  {
+    "nbk_id": "NBK1189",
+    "title": "Saethre-Chotzen Syndrome",
+    "last_updated": "2019-01-24",
+    "gene_symbols": [
+      "TWIST1"
+    ],
+    "bucket": "oldest_q"
+  },
+  {
+    "nbk_id": "NBK1878",
+    "title": "Donnai-Barrow Syndrome",
+    "last_updated": "2018-11-21",
+    "gene_symbols": [
+      "LRP2"
+    ],
+    "bucket": "oldest_q"
+  },
+  {
+    "nbk_id": "NBK1238",
+    "title": "Krabbe Disease",
+    "last_updated": "2018-10-11",
+    "gene_symbols": [
+      "GALC"
+    ],
+    "bucket": "oldest_q"
+  },
+  {
+    "nbk_id": "NBK25442",
+    "title": "Episodic Ataxia Type 1",
+    "last_updated": "2018-05-31",
+    "gene_symbols": [
+      "KCNA1"
+    ],
+    "bucket": "oldest_q"
+  },
+  {
+    "nbk_id": "NBK1451",
+    "title": "PAX2-Related Disorder",
+    "last_updated": "2018-02-08",
+    "gene_symbols": [
+      "PAX2"
+    ],
+    "bucket": "oldest_q"
+  },
+  {
+    "nbk_id": "NBK1373",
+    "title": "SALL4-Related Disorders",
+    "last_updated": "2022-03-17",
+    "gene_symbols": [
+      "SALL4"
+    ],
+    "bucket": "old_mid"
+  },
+  {
+    "nbk_id": "NBK1229",
+    "title": "Genetic Prion Disease",
+    "last_updated": "2021-01-07",
+    "gene_symbols": [
+      "PRNP"
+    ],
+    "bucket": "old_mid"
+  },
+  {
+    "nbk_id": "NBK99496",
+    "title": "Chronic Granulomatous Disease",
+    "last_updated": "2022-04-21",
+    "gene_symbols": [
+      "CYBA",
+      "CYBB",
+      "CYBC1",
+      "NCF1",
+      "NCF2",
+      "NCF4"
+    ],
+    "bucket": "old_mid"
+  },
+  {
+    "nbk_id": "NBK350554",
+    "title": "Tubulinopathies Overview",
+    "last_updated": "2021-09-16",
+    "gene_symbols": [
+      "TUBA1A",
+      "TUBB",
+      "TUBB2A",
+      "TUBB2B",
+      "TUBB3",
+      "TUBG1"
+    ],
+    "bucket": "old_mid"
+  },
+  {
+    "nbk_id": "NBK1341",
+    "title": "Usher Syndrome Type II",
+    "last_updated": "2020-10-22",
+    "gene_symbols": [
+      "ADGRV1",
+      "USH2A",
+      "WHRN"
+    ],
+    "bucket": "old_mid"
+  },
+  {
+    "nbk_id": "NBK1126",
+    "title": "Oculopharyngeal Muscular Dystrophy",
+    "last_updated": "2020-10-22",
+    "gene_symbols": [
+      "PABPN1"
+    ],
+    "bucket": "old_mid"
+  },
+  {
+    "nbk_id": "NBK1484",
+    "title": "L1 Syndrome",
+    "last_updated": "2021-01-07",
+    "gene_symbols": [
+      "L1CAM"
+    ],
+    "bucket": "old_mid"
+  },
+  {
+    "nbk_id": "NBK327268",
+    "title": "7q11.23 Duplication Syndrome",
+    "last_updated": "2021-03-25",
+    "gene_symbols": [
+      "Not applicable"
+    ],
+    "bucket": "old_mid"
+  },
+  {
+    "nbk_id": "NBK1249",
+    "title": "Williams Syndrome",
+    "last_updated": "2023-04-13",
+    "gene_symbols": [
+      "ELN",
+      "GTF2I",
+      "GTF2IRD1",
+      "LIMK1",
+      "NCF1",
+      "Not applicable"
+    ],
+    "bucket": "new_mid"
+  },
+  {
+    "nbk_id": "NBK100239",
+    "title": "CSF1R-Related Disorder",
+    "last_updated": "2024-04-04",
+    "gene_symbols": [
+      "CSF1R"
+    ],
+    "bucket": "new_mid"
+  },
+  {
+    "nbk_id": "NBK385627",
+    "title": "GRIN2A-Related Disorders",
+    "last_updated": "2024-07-04",
+    "gene_symbols": [
+      "GRIN2A"
+    ],
+    "bucket": "new_mid"
+  },
+  {
+    "nbk_id": "NBK1547",
+    "title": "Nonsyndromic Disorders of Testicular Development Overview",
+    "last_updated": "2022-08-18",
+    "gene_symbols": [
+      "DHH",
+      "DHX37",
+      "DMRT1",
+      "MAP3K1",
+      "NR5A1",
+      "SOX8",
+      "SOX9",
+      "SRY"
+    ],
+    "bucket": "new_mid"
+  },
+  {
+    "nbk_id": "NBK558090",
+    "title": "Fibrodysplasia Ossificans Progressiva",
+    "last_updated": "2024-05-23",
+    "gene_symbols": [
+      "ACVR1"
+    ],
+    "bucket": "new_mid"
+  },
+  {
+    "nbk_id": "NBK447258",
+    "title": "VPS35-Related Parkinson Disease",
+    "last_updated": "2023-03-23",
+    "gene_symbols": [
+      "VPS35"
+    ],
+    "bucket": "new_mid"
+  },
+  {
+    "nbk_id": "NBK1133",
+    "title": "Loeys-Dietz Syndrome",
+    "last_updated": "2024-09-12",
+    "gene_symbols": [
+      "IPO8",
+      "SMAD2",
+      "SMAD3",
+      "TGFB2",
+      "TGFB3",
+      "TGFBR1",
+      "TGFBR2"
+    ],
+    "bucket": "new_mid"
+  },
+  {
+    "nbk_id": "NBK1368",
+    "title": "Factor V Leiden Thrombophilia",
+    "last_updated": "2024-05-16",
+    "gene_symbols": [
+      "F5"
+    ],
+    "bucket": "new_mid"
+  },
+  {
+    "nbk_id": "NBK63582",
+    "title": "Short-Chain Acyl-CoA Dehydrogenase Deficiency",
+    "last_updated": "2025-09-11",
+    "gene_symbols": [
+      "ACADS"
+    ],
+    "bucket": "newest_q"
+  },
+  {
+    "nbk_id": "NBK570882",
+    "title": "SCN3A-Related Neurodevelopmental Disorder",
+    "last_updated": "2025-05-01",
+    "gene_symbols": [
+      "SCN3A"
+    ],
+    "bucket": "newest_q"
+  },
+  {
+    "nbk_id": "NBK1477",
+    "title": "Hypochondroplasia",
+    "last_updated": "2025-09-25",
+    "gene_symbols": [
+      "FGFR3"
+    ],
+    "bucket": "newest_q"
+  },
+  {
+    "nbk_id": "NBK395611",
+    "title": "TUBB4A-Related Neurologic Disorders",
+    "last_updated": "2026-03-05",
+    "gene_symbols": [
+      "TUBB4A"
+    ],
+    "bucket": "newest_q"
+  },
+  {
+    "nbk_id": "NBK1295",
+    "title": "COL1A1- and COL1A2-Related Osteogenesis Imperfecta",
+    "last_updated": "2025-05-29",
+    "gene_symbols": [
+      "COL1A1",
+      "COL1A2"
+    ],
+    "bucket": "newest_q"
+  },
+  {
+    "nbk_id": "NBK1192",
+    "title": "Marinesco-Sj\u00f6gren Syndrome",
+    "last_updated": "2024-10-03",
+    "gene_symbols": [
+      "SIL1"
+    ],
+    "bucket": "newest_q"
+  },
+  {
+    "nbk_id": "NBK1504",
+    "title": "Phenylalanine Hydroxylase Deficiency",
+    "last_updated": "2025-03-13",
+    "gene_symbols": [
+      "PAH"
+    ],
+    "bucket": "newest_q"
+  },
+  {
+    "nbk_id": "NBK1421",
+    "title": "Primary Familial Brain Calcification Overview",
+    "last_updated": "2025-09-18",
+    "gene_symbols": [
+      "JAM2",
+      "MYORG",
+      "NAA60",
+      "PDGFB",
+      "PDGFRB",
+      "SLC20A2",
+      "XPR1"
+    ],
+    "bucket": "newest_q"
+  }
+]
