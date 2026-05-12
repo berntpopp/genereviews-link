@@ -78,6 +78,15 @@ class SectionSummaryRow:
 
 
 @dataclass(frozen=True, slots=True)
+class TableSummaryRow:
+    table_id: str
+    caption: str
+    section: str
+    heading_path: str
+    passage_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class ChapterMetadataRow:
     nbk_id: str
     title: str
@@ -85,6 +94,7 @@ class ChapterMetadataRow:
     gene_symbols: tuple[str, ...]
     sections: tuple[SectionSummaryRow, ...]
     table_count: int
+    tables: tuple[TableSummaryRow, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,9 +508,18 @@ class GeneReviewRepository:
                 nbk_id,
             )
 
-            table_count = await conn.fetchval(
-                "select count(*)::int from genereview_passages "
-                "where nbk_id=$1 and passage_type='table'",
+            table_rows = await conn.fetch(
+                """
+                select p.table_id,
+                       coalesce(p.table_data->>'caption', '') as caption,
+                       p.chapter_section,
+                       coalesce(p.heading_path, '') as heading_path,
+                       p.passage_id
+                  from genereview_passages p
+                 where p.nbk_id = $1
+                   and p.passage_type = 'table'
+                 order by p.chunk_index
+                """,
                 nbk_id,
             )
 
@@ -510,13 +529,24 @@ class GeneReviewRepository:
             for name in SECTION_NAMES
         )
 
+        tables_tuple = tuple(
+            TableSummaryRow(
+                table_id=r["table_id"],
+                caption=r["caption"],
+                section=r["chapter_section"],
+                heading_path=r["heading_path"],
+                passage_id=r["passage_id"],
+            )
+            for r in table_rows
+        )
         return ChapterMetadataRow(
             nbk_id=chapter["nbk_id"],
             title=chapter["title"],
             chapter_last_updated=chapter["last_updated_date"],
             gene_symbols=tuple(chapter["gene_symbols"] or ()),
             sections=sections,
-            table_count=table_count or 0,
+            table_count=len(tables_tuple),
+            tables=tables_tuple,
         )
 
     async def get_table(self, nbk_id: str, table_id: str) -> TableRow | None:

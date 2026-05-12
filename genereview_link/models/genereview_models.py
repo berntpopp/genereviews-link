@@ -289,6 +289,18 @@ class SectionSummary(BaseModel):
     passage_count: int
 
 
+class TableSummary(BaseModel):
+    """One table on a chapter: canonical slug, caption, section + heading context."""
+
+    table_id: str
+    caption: str
+    section: SectionName
+    heading_path: str
+    passage_id: str
+
+    model_config = {"populate_by_name": True}
+
+
 class ChapterMetadataResponse(BaseModel):
     """Envelope returned by GET /chapters/{nbk_id}/metadata."""
 
@@ -298,6 +310,7 @@ class ChapterMetadataResponse(BaseModel):
     gene_symbols: list[str] = Field(default_factory=list)
     sections: list[SectionSummary] = Field(default_factory=list)
     table_count: int = 0
+    tables: list[TableSummary] = Field(default_factory=list)
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
 
     model_config = {"populate_by_name": True}

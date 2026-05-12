@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import JSONResponse
@@ -15,6 +15,7 @@ from genereview_link.models.genereview_models import (
     PassageInSection,
     ResponseMeta,
     SectionSummary,
+    TableSummary,
 )
 from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.repository import GeneReviewRepository
@@ -192,9 +193,19 @@ async def get_chapter_metadata(
         chapter_last_updated=meta.chapter_last_updated,
         gene_symbols=list(meta.gene_symbols),
         sections=[
-            SectionSummary(section=s.section, passage_count=s.passage_count)  # type: ignore[arg-type]
+            SectionSummary(section=cast(SectionName, s.section), passage_count=s.passage_count)
             for s in meta.sections
         ],
         table_count=meta.table_count,
+        tables=[
+            TableSummary(
+                table_id=t.table_id,
+                caption=t.caption,
+                section=cast(SectionName, t.section),
+                heading_path=t.heading_path,
+                passage_id=t.passage_id,
+            )
+            for t in meta.tables
+        ],
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )

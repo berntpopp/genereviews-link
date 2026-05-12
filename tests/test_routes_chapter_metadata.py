@@ -11,7 +11,11 @@ from httpx import ASGITransport, AsyncClient
 
 from genereview_link.api.routes import chapters as chapters_routes
 from genereview_link.models.sections import SECTION_NAMES
-from genereview_link.retrieval.repository import ChapterMetadataRow, SectionSummaryRow
+from genereview_link.retrieval.repository import (
+    ChapterMetadataRow,
+    SectionSummaryRow,
+    TableSummaryRow,
+)
 
 
 def _make_metadata_row(
@@ -21,6 +25,7 @@ def _make_metadata_row(
     chapter_last_updated: date | None = date(2025, 12, 1),
     gene_symbols: tuple[str, ...] = ("BRCA1", "BRCA2"),
     table_count: int = 0,
+    tables: tuple[TableSummaryRow, ...] = (),
 ) -> ChapterMetadataRow:
     """Build a ChapterMetadataRow with all canonical sections (matching repo behaviour)."""
     sections = tuple(
@@ -37,6 +42,7 @@ def _make_metadata_row(
         gene_symbols=gene_symbols,
         sections=sections,
         table_count=table_count,
+        tables=tables,
     )
 
 
@@ -183,3 +189,58 @@ async def test_get_chapter_metadata_rejects_malformed_nbk_with_422() -> None:
         resp = await c.get("/chapters/not-an-nbk/metadata")
 
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_chapter_metadata_returns_tables_list() -> None:
+    """tables[] in the response maps TableSummaryRow entries in order."""
+    table_rows = (
+        TableSummaryRow(
+            table_id="mgmt.T.first",
+            caption="Table 1 — Risk-reducing surgery",
+            section="management",
+            heading_path="Management > Table 1",
+            passage_id="NBKTBL:0001",
+        ),
+        TableSummaryRow(
+            table_id="mgmt.T.second",
+            caption="Table 2 — Followup",
+            section="management",
+            heading_path="Management > Table 2",
+            passage_id="NBKTBL:0002",
+        ),
+    )
+    app = _build_app(
+        metadata=_make_metadata_row(
+            nbk_id="NBK9999",
+            title="Tables Test Chapter",
+            chapter_last_updated=None,
+            gene_symbols=("TBTG",),
+            table_count=2,
+            tables=table_rows,
+        )
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK9999/metadata")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data["tables"], list)
+    assert len(data["tables"]) == 2
+    assert data["tables"][0]["table_id"] == "mgmt.T.first"
+    assert data["tables"][0]["section"] == "management"
+    assert data["tables"][0]["heading_path"].startswith("Management")
+    assert data["tables"][0]["passage_id"].startswith("NBKTBL:")
+    assert data["tables"][1]["table_id"] == "mgmt.T.second"
+
+
+@pytest.mark.asyncio
+async def test_chapter_metadata_tables_empty_list_when_none() -> None:
+    """tables[] is an empty list when the chapter has no table passages."""
+    app = _build_app(metadata=_make_metadata_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/metadata")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["tables"] == []
