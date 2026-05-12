@@ -20,6 +20,7 @@ import os
 import sys
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -33,7 +34,7 @@ def reciprocal_rank(ids: list[str], gold: str) -> float:
     return 0.0
 
 
-async def run_one(client: httpx.AsyncClient, entry: dict, mode: str) -> dict:
+async def run_one(client: httpx.AsyncClient, entry: dict[str, Any], mode: str) -> dict[str, Any]:
     r = await client.get(
         "/passages/search",
         params={
@@ -67,6 +68,22 @@ async def main() -> None:
         default=os.environ.get("MCP_BASE_URL", "http://127.0.0.1:8765"),
     )
     ap.add_argument("--json-out", type=Path)
+    ap.add_argument(
+        "--regression-kind-strict",
+        action="store_true",
+        default=True,
+        help=(
+            "When set (default), only regression_kind='exact-symbol-anchor' rows "
+            "trigger the must_not_regress gate. "
+            "Use --no-regression-kind-strict to gate ALL must_not_regress rows."
+        ),
+    )
+    ap.add_argument(
+        "--no-regression-kind-strict",
+        action="store_false",
+        dest="regression_kind_strict",
+        help="Disable the regression_kind subset filter; gate ALL must_not_regress rows.",
+    )
     args = ap.parse_args()
 
     entries = [
@@ -92,18 +109,19 @@ async def main() -> None:
                 results[mode]["recall_at_5"].append(r["recall_at_5"])
 
                 # Hard gates
-                if (
-                    entry.get("status") == "must_not_regress"
-                    and entry.get("regression_kind") == "exact-symbol-anchor"
-                    and r["top1"] != entry["expected_top1_passage_id"]
-                ):
-                    regressions[mode].append(
-                        (
-                            entry["query"],
-                            entry["expected_top1_passage_id"],
-                            r["top1"],
-                        )
+                if entry.get("status") == "must_not_regress":
+                    is_anchor = entry.get("regression_kind") == "exact-symbol-anchor"
+                    gate = (args.regression_kind_strict and is_anchor) or (
+                        not args.regression_kind_strict
                     )
+                    if gate and r["top1"] != entry["expected_top1_passage_id"]:
+                        regressions[mode].append(
+                            (
+                                entry["query"],
+                                entry["expected_top1_passage_id"],
+                                r["top1"],
+                            )
+                        )
 
                 if entry.get("status") == "must_change" and r["p_at_1"] == 1.0:
                     improvements[mode].append(entry["query"])
@@ -114,7 +132,7 @@ async def main() -> None:
         f" {'Composite':>10} {'Regressions':>12} {'Improvements':>13}"
     )
     print("-" * 80)  # noqa: T201
-    summary: dict[str, dict] = {}
+    summary: dict[str, dict[str, Any]] = {}
     for mode in MODES:
         n = len(entries)
         p1 = sum(results[mode]["p_at_1"]) / n
@@ -146,6 +164,16 @@ async def main() -> None:
             )
             for q, gold, got in regressions[mode]:
                 print(f"  {q}: expected {gold}, got {got}")  # noqa: T201
+            failed = True
+
+    # Spec-level gate: must_change improvements must be > 0 (else the model is disqualified).
+    n_must_change = sum(1 for e in entries if e.get("status") == "must_change")
+    for mode in MODES:
+        if n_must_change > 0 and not improvements[mode]:
+            print(  # noqa: T201
+                f"\nFAIL: {mode} fixed 0 of {n_must_change} must_change entries"
+                " (need at least 1)."
+            )
             failed = True
 
     if args.json_out:
