@@ -453,7 +453,7 @@ class UnifiedServerManager:
                 "Canonical pipeline: search_passages (brief mode) -> "
                 "get_chapter_metadata(nbk_id) on hits to read sections + tables -> "
                 "get_passage(passage_id) OR get_chapter_section(nbk_id, section) OR "
-                "get_table(nbk_id, table_id) OR POST /passages/batch for up to 20 "
+                "get_table(nbk_id, table_id) OR get_passages_batch for up to 20 "
                 "passage_ids at once.\n\n"
                 "Citation contract: every claim must cite passage_id (NBKxxxx:NNNN) "
                 "and chapter NBK ID; include chapter_last_updated for freshness. "
