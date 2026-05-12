@@ -11,14 +11,26 @@ import httpx
 GITHUB_API = "https://api.github.com"
 
 
+def _select_bundle_asset(assets: list[dict[str, object]]) -> str | None:
+    for asset in assets:
+        name = str(asset.get("name", ""))
+        if (
+            name.startswith("genereview-corpus-")
+            and name.endswith(".tar.gz")
+            and not name.endswith(".sha256")
+        ):
+            return str(asset["browser_download_url"])
+    return None
+
+
 async def resolve_latest(repo: str) -> str:
     """Return the asset URL for the latest 'corpus-*' release bundle."""
     async with httpx.AsyncClient(timeout=30.0) as c:
         r = await c.get(f"{GITHUB_API}/repos/{repo}/releases/latest")
         r.raise_for_status()
-        for asset in r.json().get("assets", []):
-            if asset["name"].endswith(".tar.gz") and asset["name"].startswith("genereview-corpus-"):
-                return str(asset["browser_download_url"])
+        selected = _select_bundle_asset(r.json().get("assets", []))
+        if selected:
+            return selected
     raise RuntimeError("no corpus bundle found in latest release")
 
 
@@ -56,4 +68,8 @@ async def pg_restore(dump_path: Path, *, database_url: str, jobs: int | None = N
     if jobs:
         cmd += ["-j", str(jobs)]
     cmd.append(str(dump_path))
-    subprocess.run(cmd, check=True)  # noqa: S603
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True)  # noqa: S603
+    if isinstance(result.returncode, int) and result.returncode != 0:
+        raise RuntimeError(
+            f"pg_restore failed with exit {result.returncode}: {result.stderr.strip()}"
+        )

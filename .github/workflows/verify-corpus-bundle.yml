@@ -1,0 +1,77 @@
+name: Verify corpus bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_url:
+        description: "GitHub Release asset URL ending in .tar.gz"
+        required: true
+        type: string
+
+concurrency:
+  group: verify-corpus-bundle
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg18
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: genereview
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:ci@localhost:5432/genereview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --frozen
+      - name: Download bundle and checksum
+        run: |
+          mkdir -p dist verify
+          curl -fL "${{ inputs.bundle_url }}" -o dist/bundle.tar.gz
+          curl -fL "${{ inputs.bundle_url }}.sha256" -o dist/bundle.tar.gz.sha256
+          cd dist
+          sha256sum -c bundle.tar.gz.sha256
+      - name: Extract and verify manifest checksums
+        run: |
+          tar -xzf dist/bundle.tar.gz -C verify
+          uv run python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+
+          root = Path("verify")
+          manifest = json.loads((root / "manifest.json").read_text())
+          for relpath, expected in manifest["checksums"].items():
+              h = hashlib.sha256((root / relpath).read_bytes()).hexdigest()
+              if h != expected:
+                  raise SystemExit(f"checksum mismatch for {relpath}: {h} != {expected}")
+          print("manifest checksums passed")
+          PY
+      - name: Restore dump
+        run: pg_restore -j 2 -d "$DATABASE_URL" verify/corpus.dump
+      - name: Validate restored corpus
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          select version, chapter_count, ingest_status, is_active
+            from public.genereview_corpus_version
+           where is_active;
+          select count(*) as chapters from genereview.genereview_chapters;
+          select count(*) as passages from genereview.genereview_passages;
+          select count(*) as embeddings from genereview.genereview_embeddings_bge384;
+          select indexname from pg_indexes
+           where schemaname = 'genereview'
+             and indexname = 'genereview_embeddings_bge384_hnsw_cosine';
+          SQL
+      - name: Summary
+        run: |
+          echo "## Corpus Bundle Verification" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Verified: ${{ inputs.bundle_url }}" >> "$GITHUB_STEP_SUMMARY"

@@ -289,6 +289,15 @@ BUNDLE_URL=latest DATABASE_URL=postgresql://... genereview-link serve
 On first boot the server downloads and integrity-verifies the bundle, restores the Postgres dump,
 and starts serving immediately. Subsequent boots detect the active corpus and skip the restore.
 
+This is the recommended Docker production mode. The bundle is built locally by the maintainer on
+CUDA, published as a GitHub Release asset, and consumed by Docker at startup. Maintainers build and
+publish a new bundle with:
+
+```bash
+make cuda-check
+RELEASE_ID=2026-05-12-r1 make bundle-publish-local
+```
+
 Set `GITHUB_REPO=owner/repo` (default `berntpopp/genereviews-link`) when hosting your own releases.
 Leave `BUNDLE_URL` empty when no release bundle exists; the server will boot, but corpus-backed
 passage search returns 503 until a corpus is loaded.
