@@ -64,7 +64,7 @@ async def download_with_integrity(url: str, dest: Path, *, expected_sha256: str)
 
 
 async def pg_restore(dump_path: Path, *, database_url: str, jobs: int | None = None) -> None:
-    cmd = ["pg_restore", "-d", database_url]
+    cmd = ["pg_restore", "--clean", "--if-exists", "--no-owner", "-d", database_url]
     if jobs:
         cmd += ["-j", str(jobs)]
     cmd.append(str(dump_path))

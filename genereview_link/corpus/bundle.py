@@ -62,9 +62,21 @@ class BundleManifest:
     checksums: dict[str, str] = field(default_factory=dict)
 
 
-def pg_dump_to(dump_path: Path, *, database_url: str) -> None:
+def pg_dump_to(
+    dump_path: Path,
+    *,
+    database_url: str,
+    schemas: tuple[str, ...] = ("public", "genereview"),
+    extensions: tuple[str, ...] = ("vector",),
+) -> None:
+    cmd = ["pg_dump", "-Fc", "--no-owner", "-f", str(dump_path)]
+    for extension in extensions:
+        cmd.extend(["--extension", extension])
+    for schema in schemas:
+        cmd.extend(["--schema", schema])
+    cmd.append(database_url)
     subprocess.run(  # noqa: S603
-        ["pg_dump", "-Fc", "-f", str(dump_path), database_url],  # noqa: S607
+        cmd,
         check=True,
     )
 

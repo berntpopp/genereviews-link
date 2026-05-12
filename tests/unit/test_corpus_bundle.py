@@ -126,5 +126,8 @@ def test_pg_dump_to_calls_subprocess(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(subprocess, "run", fake_run)
     dump_path = tmp_path / "corpus.dump"
     pg_dump_to(dump_path, database_url="postgresql://user:pass@localhost/db")
-    assert called_with[0][:2] == ["pg_dump", "-Fc"]
-    assert called_with[0][4] == "postgresql://user:pass@localhost/db"
+    assert called_with[0][:3] == ["pg_dump", "-Fc", "--no-owner"]
+    assert called_with[0][-1] == "postgresql://user:pass@localhost/db"
+    assert "--extension" in called_with[0]
+    assert "vector" in called_with[0]
+    assert called_with[0].count("--schema") == 2
