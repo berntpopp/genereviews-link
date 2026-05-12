@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
 
 from genereview_link.api.diagnostics import build_search_diagnostics
-from genereview_link.api.errors import StructuredHTTPException
+from genereview_link.api.errors import FieldError, StructuredHTTPException
 from genereview_link.models.genereview_models import (
     PassageDetail,
     PassageSearchResponse,
@@ -167,6 +167,38 @@ async def search_passages(
     embedder: Annotated[EmbeddingProvider, Depends(get_embedding_provider)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
 ) -> PassageSearchResponse | JSONResponse:
+    if gene:
+        idx = getattr(request.app.state, "gene_index", None)
+        if idx is not None and not idx.is_indexed(gene):
+            suggestions = idx.close_matches(gene, limit=3)
+            raise StructuredHTTPException(
+                status_code=400,
+                code="gene_not_indexed",
+                message=f"gene symbol {gene!r} is not indexed in the corpus",
+                recovery_hint=(
+                    "use the canonical HGNC symbol; aliases (e.g., 'hMLH1' for 'MLH1')"
+                    " are not supported"
+                ),
+                field_errors=(
+                    [
+                        FieldError(
+                            field="gene",
+                            reason="symbol not found in the indexed corpus",
+                            valid_values=suggestions,
+                        )
+                    ]
+                    if suggestions
+                    else None
+                ),
+                next_commands=(
+                    [
+                        {"tool": "search_passages", "arguments": {"q": "<query>", "gene": s}}
+                        for s in suggestions
+                    ]
+                    or None
+                ),
+            )
+
     lex = await repo.search_passages(
         q,
         gene_symbol=gene,

@@ -613,3 +613,104 @@ async def test_search_narrative_passage_type_default() -> None:
     assert resp.status_code == 200
     results = resp.json()["results"]
     assert results[0]["passage_type"] == "narrative"
+
+
+# ---------------------------------------------------------------------------
+# Gene index validation tests (Task 33)
+# ---------------------------------------------------------------------------
+
+
+def _make_indexed_app(repo: Any, symbols: frozenset[str] | None) -> FastAPI:
+    """Build a minimal FastAPI app with an optional GeneIndex on app.state."""
+    from genereview_link.api.routes import passages as passages_routes
+    from genereview_link.services.gene_index import GeneIndex
+
+    app = FastAPI()
+    app.include_router(passages_routes.router)
+    app.state.repository = repo
+    app.state.embedder = FakeEmbeddingProvider(dim=384)
+    if symbols is not None:
+        app.state.gene_index = GeneIndex(symbols=symbols)
+    else:
+        app.state.gene_index = None
+    return app
+
+
+@pytest.mark.asyncio
+async def test_search_unknown_gene_returns_structured_400() -> None:
+    """Unknown gene symbol with a populated index returns 400 with code=gene_not_indexed."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_indexed_app(repo, frozenset({"BRCA1", "BRCA2"}))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "x", "gene": "BRCA9"})
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert detail["code"] == "gene_not_indexed"
+    assert "next_commands" in detail
+
+
+@pytest.mark.asyncio
+async def test_search_unknown_gene_field_errors_contain_suggestions() -> None:
+    """field_errors for an unknown gene include close-match suggestions."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_indexed_app(repo, frozenset({"BRCA1", "BRCA2"}))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "x", "gene": "BRCA9"})
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    # field_errors should be populated with gene + valid_values from rapidfuzz
+    field_errors = detail.get("field_errors", [])
+    assert len(field_errors) > 0
+    gene_error = field_errors[0]
+    assert gene_error["field"] == "gene"
+    valid = gene_error.get("valid_values") or []
+    # BRCA9 should fuzzy-match BRCA1 and/or BRCA2
+    assert any("BRCA" in v for v in valid)
+
+
+@pytest.mark.asyncio
+async def test_search_valid_gene_with_index_returns_200() -> None:
+    """Known gene symbol with a populated index passes through to 200."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_indexed_app(repo, frozenset({"BRCA1", "BRCA2"}))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "x", "gene": "BRCA1"})
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_search_gene_index_none_falls_through_to_200() -> None:
+    """When gene_index is None (startup failed), unknown gene symbols are not blocked."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_indexed_app(repo, symbols=None)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "x", "gene": "TOTALLY_UNKNOWN"})
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_search_next_commands_populated_for_unknown_gene() -> None:
+    """next_commands carry search_passages tool suggestions for each close match."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_indexed_app(repo, frozenset({"BRCA1", "BRCA2"}))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "diagnosis", "gene": "BRCA9"})
+
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    cmds = detail.get("next_commands", [])
+    assert len(cmds) > 0
+    # Each command references search_passages
+    assert all(cmd["tool"] == "search_passages" for cmd in cmds)
+    # Each command has a gene argument from the suggestions
+    genes_in_commands = [cmd["arguments"]["gene"] for cmd in cmds]
+    assert any("BRCA" in g for g in genes_in_commands)
