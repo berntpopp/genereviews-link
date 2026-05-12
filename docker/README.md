@@ -28,6 +28,7 @@ production and NPM overlays:
 ```bash
 cp .env.docker.example .env.docker
 # Edit .env.docker: set POSTGRES_PASSWORD, CORS_ORIGINS, NCBI_API_KEY, and NPM_NETWORK_NAME.
+# Optional: set BUNDLE_URL to a release asset URL, or "latest" once a release exists.
 docker compose \
   --env-file .env.docker \
   -f docker/docker-compose.yml \
@@ -49,7 +50,8 @@ production Docker/NPM deployments. Notable:
 - `NCBI_API_KEY` — strongly recommended for the higher NCBI rate limit.
 - `GENEREVIEW_LINK_PORT` — default 8000.
 - `NPM_NETWORK_NAME` — external Docker network used by Nginx Proxy Manager.
-- `BUNDLE_URL` — set to `latest` in production to bootstrap from the latest release bundle.
+- `BUNDLE_URL` — leave empty to boot without a corpus; set to a release bundle URL, or to
+  `latest` once a GitHub release bundle exists, to bootstrap a populated corpus.
 
 The production compose stack runs `genereview-link serve --transport unified`,
 which preserves both REST and `/mcp` over HTTP. `docker/gunicorn_conf.py` remains

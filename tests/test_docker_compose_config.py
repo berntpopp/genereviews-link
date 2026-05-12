@@ -71,6 +71,30 @@ def test_docker_env_file_is_injected_into_app_container() -> None:
     assert "../.env.docker" in paths
 
 
+def test_postgres_volume_mount_matches_pg18_data_layout() -> None:
+    compose = yaml.load(
+        (REPO_ROOT / "docker/docker-compose.yml").read_text(),
+        Loader=_ComposeLoader,  # noqa: S506
+    )
+
+    volumes = compose["services"]["postgres"]["volumes"]
+    assert "genereview_pg_data:/var/lib/postgresql" in volumes
+    assert "genereview_pg_data:/var/lib/postgresql/data" not in volumes
+
+
+def test_docker_example_boots_without_required_release_bundle() -> None:
+    env = {}
+    for raw_line in (REPO_ROOT / ".env.docker.example").read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", maxsplit=1)
+        env[key] = value
+
+    assert env["BUNDLE_URL"] == ""
+    assert env["AUTO_PULL_RELEASES"] == "false"
+
+
 def test_production_compose_uses_unified_cli_server_not_gunicorn_env() -> None:
     config = _compose_config("docker/docker-compose.yml", "docker/docker-compose.prod.yml")
 

@@ -279,7 +279,8 @@ GeneReview Link supports three corpus-loading modes, selected at startup via env
 ### Mode 1 — Restore from release bundle (`BUNDLE_URL`)
 
 The fastest way to get a populated corpus. Set `BUNDLE_URL` to a `.tar.gz` asset URL from the
-GitHub Releases page, or to the special value `latest` to auto-resolve the newest release:
+GitHub Releases page, or to the special value `latest` to auto-resolve the newest release after
+a release bundle has been published:
 
 ```bash
 BUNDLE_URL=latest DATABASE_URL=postgresql://... genereview-link serve
@@ -289,6 +290,8 @@ On first boot the server downloads and integrity-verifies the bundle, restores t
 and starts serving immediately. Subsequent boots detect the active corpus and skip the restore.
 
 Set `GITHUB_REPO=owner/repo` (default `berntpopp/genereviews-link`) when hosting your own releases.
+Leave `BUNDLE_URL` empty when no release bundle exists; the server will boot, but corpus-backed
+passage search returns 503 until a corpus is loaded.
 
 ### Mode 2 — Build corpus locally (`BUILD_LOCAL=true`)
 

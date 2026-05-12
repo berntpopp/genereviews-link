@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-genereview}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-genereview}
     volumes:
-      - genereview_pg_data:/var/lib/postgresql/data
+      - genereview_pg_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-genereview}"]
       interval: 5s
