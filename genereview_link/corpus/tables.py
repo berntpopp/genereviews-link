@@ -21,6 +21,69 @@ def _text_or_empty(node: Any) -> str:
     return " ".join(node.itertext()).strip()
 
 
+def _local_name(node: Any) -> str:
+    tag = node.tag
+    if isinstance(tag, str) and "}" in tag:
+        return tag.rsplit("}", 1)[1]
+    return str(tag)
+
+
+def _positive_int_attr(node: Any, name: str) -> int:
+    raw = node.get(name, "1")
+    try:
+        return max(int(raw or "1"), 1)
+    except ValueError:
+        return 1
+
+
+def parse_rows(table_elem: Any) -> list[list[str]]:
+    """Parse NXML table rows, expanding rowspan and colspan."""
+    rows: list[list[str]] = []
+    pending: dict[int, tuple[str, int]] = {}
+
+    for tr in table_elem.findall(".//tr"):
+        row: list[str] = []
+        col_idx = 0
+        cells = iter(child for child in tr if _local_name(child) in {"td", "th"})
+
+        while True:
+            while col_idx in pending:
+                value, remaining = pending[col_idx]
+                row.append(value)
+                if remaining > 1:
+                    pending[col_idx] = (value, remaining - 1)
+                else:
+                    del pending[col_idx]
+                col_idx += 1
+
+            cell = next(cells, None)
+            if cell is None:
+                break
+
+            value = _text_or_empty(cell)
+            colspan = _positive_int_attr(cell, "colspan")
+            rowspan = _positive_int_attr(cell, "rowspan")
+
+            for _ in range(colspan):
+                row.append(value)
+                if rowspan > 1:
+                    pending[col_idx] = (value, rowspan - 1)
+                col_idx += 1
+
+        while col_idx in pending:
+            value, remaining = pending[col_idx]
+            row.append(value)
+            if remaining > 1:
+                pending[col_idx] = (value, remaining - 1)
+            else:
+                del pending[col_idx]
+            col_idx += 1
+
+        rows.append(row)
+
+    return rows
+
+
 def extract_table(table_wrap: Any, *, ordinal: int) -> ExtractedTable:
     """Extract a single <table-wrap> element."""
     nxml_id = table_wrap.get("id")
@@ -47,8 +110,7 @@ def extract_table(table_wrap: Any, *, ordinal: int) -> ExtractedTable:
                 header = [_text_or_empty(th) for th in header_row.findall("th")]
         tbody = table.find("tbody")
         if tbody is not None:
-            for tr in tbody.findall("tr"):
-                rows.append([_text_or_empty(td) for td in tr.findall("td")])
+            rows = parse_rows(tbody)
 
     # Capture <table-wrap-foot> footnotes.  These often carry clinical
     # qualifiers ("Click here for ...", abbreviation expansions, study
