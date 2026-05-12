@@ -168,9 +168,7 @@ def build_dense_candidates_sql(
     if nbk_id:
         where_clauses.append(f"p.nbk_id = {next_param(nbk_id)}")
     if sections:
-        where_clauses.append(
-            f"p.chapter_section = any({next_param(list(sections))}::text[])"
-        )
+        where_clauses.append(f"p.chapter_section = any({next_param(list(sections))}::text[])")
     if heading_path_contains:
         where_clauses.append(
             f"p.heading_path ilike {next_param('%' + heading_path_contains + '%')}"
@@ -238,9 +236,7 @@ def build_parallel_search_sql(
     )
     # Existing lexical SQL lives in GeneReviewRepository or similar;
     # here we just compose a UNION shape for unit-test introspection.
-    lexical_sql = (
-        "select passage_id, null::float as dense_score from genereview_passages limit 1"
-    )
+    lexical_sql = "select passage_id, null::float as dense_score from genereview_passages limit 1"
     return (
         f"({lexical_sql}) union ({dense_sql})",
         dense_params,
@@ -842,13 +838,10 @@ class GeneReviewRepository:
                     await conn.execute(stmt)
                 rows = await conn.fetch(select_sql, *params)
         return [
-            {"passage_id": r["passage_id"], "dense_score": float(r["dense_score"])}
-            for r in rows
+            {"passage_id": r["passage_id"], "dense_score": float(r["dense_score"])} for r in rows
         ]
 
-    async def fetch_passages_by_ids(
-        self, passage_ids: list[str]
-    ) -> dict[str, PassageRow]:
+    async def fetch_passages_by_ids(self, passage_ids: list[str]) -> dict[str, PassageRow]:
         """Batch-fetch full passage rows for a list of passage_ids.
 
         Returns a mapping of passage_id -> PassageRow.  Passage IDs that do

@@ -351,9 +351,7 @@ async def search_passages(
         # Find passage_ids that are in dense results but not in lexical results.
         lex_ids = {r.passage.passage_id for r in lex_rows}
         dense_only_ids = [
-            str(r["passage_id"])
-            for r in dense_rows
-            if str(r["passage_id"]) not in lex_ids
+            str(r["passage_id"]) for r in dense_rows if str(r["passage_id"]) not in lex_ids
         ]
 
         # Hydrate dense-only passage_ids with full passage data (option a).

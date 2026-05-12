@@ -36,9 +36,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     [e for e in BASELINE if e.get("regression_kind") == "exact-symbol-anchor"],
     ids=lambda e: e["query"][:40] if isinstance(e, dict) else str(e),
 )
-async def test_must_not_regress_exact_symbol_anchor(
-    client: AsyncClient, entry: dict
-) -> None:
+async def test_must_not_regress_exact_symbol_anchor(client: AsyncClient, entry: dict) -> None:
     r = await client.get(
         "/passages/search",
         params={

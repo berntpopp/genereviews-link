@@ -3,6 +3,7 @@
 These tests assert that user-supplied filters apply to BOTH lexical and
 dense branches, not just lexical. Closes the round-2 Codex finding.
 """
+
 from __future__ import annotations
 
 import os
@@ -59,9 +60,7 @@ async def test_rrf_with_gene_filter_restricts_to_gene(client: AsyncClient) -> No
         # response shape; accept either as long as 'HFE' appears.
         gs = row.get("gene_symbols", row.get("chapter_gene_symbols", ""))
         if isinstance(gs, list):
-            assert "HFE" in gs, (
-                f"gene filter leaked: row {row['passage_id']} has gene_symbols {gs}"
-            )
+            assert "HFE" in gs, f"gene filter leaked: row {row['passage_id']} has gene_symbols {gs}"
         else:
             assert "HFE" in str(gs), (
                 f"gene filter leaked: row {row['passage_id']} has gene_symbols {gs}"
@@ -103,6 +102,4 @@ async def test_rrf_with_heading_path_contains_filters_correctly(client: AsyncCli
     r.raise_for_status()
     for row in r.json()["results"]:
         hp = (row.get("heading_path") or "").lower()
-        assert "prevention" in hp, (
-            f"heading_path_contains leaked: {hp}"
-        )
+        assert "prevention" in hp, f"heading_path_contains leaked: {hp}"
