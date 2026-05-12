@@ -59,13 +59,38 @@ queries.
 - **off**: raw repo order (no section_priority tiebreak); debugging only.
 
 **Score visibility**: when `rerank="rrf"`, every search hit produced by rerank
-exposes `rrf_score`, `lexical_score`, `lexical_rank_position`, and
-`dense_rank_position` as top-level fields. Scores are comparable across hits for
-the same query but not across queries. `score_breakdown` remains the opt-in deep
-view: add `include=score_breakdown` to inspect raw lexical + dense ranks and
+exposes `lexical_score`, `lexical_rank_position`, `dense_rank_position`,
+`rrf_score`, and `passage_role` as top-level fields. Dense-derived fields
+(`dense_rank_position`, `rrf_score`, and `adjusted_score`) are non-null only
+when dense scores are available and RRF is active; they can be `null` on lexical,
+off, or RRF fallback paths. Scores are comparable across hits for the same query
+but not across queries. Active RRF results are sorted by role- and intent-aware
+`adjusted_score`; add `include=score_breakdown` to see `adjusted_score`,
+`role_multiplier`, `intent_section_boost`, raw lexical + dense ranks, and to
 surface `_meta.dense_model_id` and `_meta.embedding_dim` for reproducibility.
 When a top hit looks off, fetch ranks 2-3 too and compare scores before
 committing.
+
+### Passage roles
+
+Every search hit carries `passage_role`; known values and ranking multipliers
+are `evidence` (1.0), `cross_reference` (0.4), `definition` (0.95),
+`table_caption` (0.85), and `table_body` (1.0). The role multiplier affects
+`adjusted_score`, which is the field used for sorting RRF results and is visible
+inside `score_breakdown` when callers opt in with `include=score_breakdown`.
+
+### Query-intent boosts
+
+The server infers query intents from trigger patterns and applies section boosts:
+`management` (treatment, management, therapy, surgery, prophylactic,
+risk-reducing, screening, surveillance, intervention, prevent, prevention,
+managing) boosts `management` by 0.30; `diagnosis` (diagnosis, diagnostic
+criteria, establishing, confirming, differential, differential diagnosis)
+boosts `diagnosis` by 0.30 and `clinical_features` by 0.10; `genetics`
+(inheritance, penetrance, autosomal, x-linked, variant spectrum, molecular
+genetics) boosts `molecular_genetics` by 0.20 and `genetic_counseling` by 0.05.
+These boosts are server-inferred, not user-tunable, and surfaced in
+`_meta.diagnostics.query_intents`.
 
 ## Response modes
 
@@ -78,7 +103,9 @@ committing.
 - **full**: each row carries the entire passage text. Approximately 10-50 KB
   per row.
 - **ids_only**: each row is the lean
-  `{passage_id, rrf_score, lexical_rank_position, chapter_section}` shape only.
+  `{passage_id, rrf_score, lexical_rank_position, chapter_section, passage_role}`
+  shape only. Role-affected `adjusted_score` is not emitted in this mode; use
+  `mode=brief|full&include=score_breakdown` to inspect it.
   Approximately 70% smaller than brief. Use for bulk-triage workflows;
   `include` flags, `recommended_citation`, and `table_id` are NOT emitted in
   this mode.
@@ -135,6 +162,8 @@ retrying with looser parameters.
   has_more_before, has_more_after}` regardless of `neighbors`.
 - `passage_id` format: `^NBK\\d+:\\d{4}$` (regex-validated on input).
 - Every search hit carries a `passage_type` field: `"narrative"` or `"table"`.
+- Every search hit carries a top-level `passage_role`; role-affected
+  `adjusted_score` is available in `score_breakdown` when opted in.
 - Every `passage_type='table'` search hit carries a `table_id` (canonical NXML
   slug). Call `get_table(nbk_id, table_id)` directly — do NOT parse
   `heading_path`.
@@ -169,12 +198,14 @@ The canonical `table_id` is the NXML slug attribute (e.g.
 
 ## Chapter date semantics
 
-`chapter_last_updated` reflects NCBI's `<date date-type="updated">` element
-in the chapter's NXML `<pub-history>` block — the GeneReviews editorial-update
-timestamp shown on the chapter's NCBI web page. If `updated` is absent the
-parser falls back to `<date date-type="revised">` (a metadata/schema
-revision timestamp that may predate the latest content edit). Chapters whose
-NXML has neither `updated` nor `revised` (only `created`) have
+`chapter_last_updated` usually reflects NCBI's `<date date-type="updated">`
+element in the chapter's NXML `<pub-history>` block — the GeneReviews
+editorial-update timestamp shown on the chapter's NCBI web page. If `updated`
+is absent, the parser falls back to `<date date-type="revised">` (a
+metadata/schema revision timestamp that may predate the latest content edit).
+For legacy fixture-style NXML without `<pub-history>`, the parser falls back to
+`<pub-date pub-type="last-revision">`, then `<pub-date pub-type="updated">`.
+Chapters with none of those update/revision dates have
 `chapter_last_updated = null`.
 
 As of 2026-05-12, 685 of 882 chapters have a populated `chapter_last_updated`

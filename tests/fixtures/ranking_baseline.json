@@ -1,0 +1,37 @@
+[
+  {
+    "query": "BRCA1 risk-reducing mastectomy salpingo-oophorectomy",
+    "status": "must_change",
+    "expected_top1_passage_id": "NBK1247:0024",
+    "observed_batch_ae_top1_passage_id": "NBK1247:0035",
+    "notes": "Current top-1 is a genetic counseling passage. NBK1247:0024 is the management prevention passage and directly discusses prophylactic bilateral mastectomy and oophorectomy risk-benefit counseling."
+  },
+  {
+    "query": "BRCA2 prophylactic surgery",
+    "status": "must_change",
+    "expected_top1_passage_id": "NBK1247:0024",
+    "observed_batch_ae_top1_passage_id": "NBK1247:0010",
+    "notes": "Current top-1 is clinical description text. The plan hint named NBK1101, but the live Batch A+E corpus returned no BRCA2 prophylactic surgery candidates for NBK1101; NBK1247:0024 is the BRCA1/BRCA2 management prevention passage covering prophylactic bilateral mastectomy."
+  },
+  {
+    "query": "HFE C282Y allele frequency",
+    "status": "must_not_regress",
+    "expected_top1_passage_id": "NBK1440:0051",
+    "observed_batch_ae_top1_passage_id": "NBK1440:0051",
+    "notes": "Locked live Batch A+E top-1. NBK1440:0051 is the HFE molecular pathogenesis table with pathogenic alleles and allele-frequency comments."
+  },
+  {
+    "query": "tetra-amelia gene WNT3",
+    "status": "must_not_regress",
+    "expected_top1_passage_id": "NBK131811:0005",
+    "observed_batch_ae_top1_passage_id": "NBK131811:0005",
+    "notes": "Locked live Batch A+E top-1 even though the current result is Coffin-Siris syndrome molecular testing rather than tetra-amelia/WNT3; this is a no-intent baseline guard."
+  },
+  {
+    "query": "BRCA1 founder mutation Ashkenazi",
+    "status": "must_not_regress",
+    "expected_top1_passage_id": "NBK1247:0043",
+    "observed_batch_ae_top1_passage_id": "NBK1247:0043",
+    "notes": "Locked live Batch A+E top-1. NBK1247:0043 is the BRCA1/BRCA2 notable pathogenic variants table and includes Ashkenazi founder variants."
+  }
+]

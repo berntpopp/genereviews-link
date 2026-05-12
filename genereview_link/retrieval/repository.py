@@ -48,6 +48,7 @@ class PassageRow:
     chapter_last_updated: date | None = None
     gene_symbols: tuple[str, ...] = ()
     passage_type: str = "narrative"
+    passage_role: str | None = None
     table_id: str | None = None
     table_data: dict[str, Any] | None = None
 
@@ -70,6 +71,9 @@ class LexicalPassageRow:
     lexical_rank_position: int | None = None
     dense_rank: int | None = None
     rrf_score: float | None = None
+    adjusted_score: float | None = None
+    role_multiplier: float = 1.0
+    intent_section_boost: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +229,7 @@ class GeneReviewRepository:
                         c.gene_symbols,
                         c.title as chapter_title,
                         c.last_updated_date as chapter_last_updated,
-                        p.passage_type, p.table_id, p.table_data,
+                        p.passage_type, p.passage_role, p.table_id, p.table_data,
                         ts_rank_cd(p.search_vector, q.phrase_query) as phrase_rank,
                         ts_rank_cd(p.search_vector, q.strict_query) as strict_rank,
                         ts_rank_cd(p.search_vector, q.recall_query) as recall_rank,
@@ -255,7 +259,7 @@ class GeneReviewRepository:
                         nbk_id, passage_id, chapter_section, heading_path,
                         section_level, chunk_index, text,
                         gene_symbols, chapter_title, chapter_last_updated,
-                        passage_type, table_id, table_data,
+                        passage_type, passage_role, table_id, table_data,
                         phrase_rank, strict_rank, recall_rank, recall_overlap_count,
                         (phrase_rank * 3.0 + strict_rank * 2.0 + recall_rank)
                           * case
@@ -356,7 +360,7 @@ class GeneReviewRepository:
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
                        c.gene_symbols,
-                       p.passage_type, p.table_id, p.table_data
+                       p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
                  where p.nbk_id = $1 and p.chapter_section = $2
@@ -379,7 +383,7 @@ class GeneReviewRepository:
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
                        c.gene_symbols,
-                       p.passage_type, p.table_id, p.table_data
+                       p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
                  where p.passage_id = $1
@@ -410,6 +414,7 @@ class GeneReviewRepository:
             chapter_last_updated=row["chapter_last_updated"],
             gene_symbols=tuple(row["gene_symbols"] or ()),
             passage_type=row["passage_type"],
+            passage_role=_record_get(row, "passage_role"),
             table_id=row["table_id"],
             table_data=table_data,
         )
@@ -427,7 +432,7 @@ class GeneReviewRepository:
                    c.title as chapter_title,
                    c.last_updated_date as chapter_last_updated,
                    c.gene_symbols,
-                   p.passage_type, p.table_id, p.table_data
+                   p.passage_type, p.passage_role, p.table_id, p.table_data
               from genereview_passages p
               join genereview_chapters c on c.nbk_id = p.nbk_id
              where p.passage_id = $1
@@ -471,7 +476,7 @@ class GeneReviewRepository:
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
                        c.gene_symbols,
-                       p.passage_type, p.table_id, p.table_data
+                       p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
                  where p.nbk_id = $1
@@ -489,7 +494,7 @@ class GeneReviewRepository:
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
                        c.gene_symbols,
-                       p.passage_type, p.table_id, p.table_data
+                       p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
                  where p.nbk_id = $1
@@ -680,6 +685,13 @@ def _note_for_empty_section(section: str, nbk_id: str) -> str | None:
             f"see the chapter abstract at https://www.ncbi.nlm.nih.gov/books/{nbk_id}"
         )
     return None
+
+
+def _record_get(row: asyncpg.Record, key: str, default: Any = None) -> Any:
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return default
 
 
 def _to_chapter_row(row: asyncpg.Record) -> ChapterRow:

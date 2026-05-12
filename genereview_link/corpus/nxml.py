@@ -38,13 +38,14 @@ from lxml import etree
 from genereview_link.corpus.canonicalize import canonical_section
 from genereview_link.corpus.chunking import DEFAULT_OVERLAP_TOKENS, chunk_section_text
 from genereview_link.corpus.nxml_render import render_boxed_text, render_def_list, render_list
+from genereview_link.corpus.passage_role import classify_passage_role
 from genereview_link.corpus.records import ChapterRecord, PassageRecord
 from genereview_link.corpus.tables import extract_table, render_table_markdown
 from genereview_link.corpus.tokenizer import BGE_NET_CHUNK_TOKENS
 
 # Parser version is included in audit logs and can be bound into the
 # corpus_version to invalidate caches on parser-affecting changes.
-PARSER_VERSION = "2026-05-12-r1"
+PARSER_VERSION = "2026-05-12-r2"
 
 # Prose-bearing tags whose text must reach a PassageRecord.
 CAPTURE_TAGS: frozenset[str] = frozenset(
@@ -96,6 +97,7 @@ class ChapterIngestAudit:
     boxed_text_renders: int = 0
     skipped_by_tag: dict[str, int] = field(default_factory=dict)
     unknown_tags_with_text: dict[str, int] = field(default_factory=dict)
+    role_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def accounted_chars(self) -> int:
@@ -116,6 +118,11 @@ class ChapterIngestAudit:
             return 0.0
         return delta / self.body_text_chars
 
+    @property
+    def cross_reference_ratio(self) -> float:
+        total = sum(self.role_counts.values()) or 1
+        return self.role_counts.get("cross_reference", 0) / total
+
     def as_log_extra(self) -> dict[str, object]:
         return {
             "nbk_id": self.nbk_id,
@@ -129,6 +136,8 @@ class ChapterIngestAudit:
             "boxed_text_renders": self.boxed_text_renders,
             "skipped_by_tag": dict(self.skipped_by_tag),
             "unknown_tags_with_text": dict(self.unknown_tags_with_text),
+            "role_counts": dict(self.role_counts),
+            "cross_reference_ratio": round(self.cross_reference_ratio, 6),
             "unaccounted_ratio": round(self.unaccounted_ratio, 6),
         }
 
@@ -317,6 +326,7 @@ def _flush_paragraphs(
     global_chunk: int,
     max_tokens: int,
     overlap_tokens: int,
+    audit: ChapterIngestAudit,
 ) -> tuple[list[PassageRecord], int]:
     """Chunk and emit accumulated paragraph text. Returns (passages, updated_global_chunk)."""
     if not text_parts:
@@ -325,21 +335,35 @@ def _flush_paragraphs(
     chunks = chunk_section_text(full, max_tokens=max_tokens, overlap_tokens=overlap_tokens)
     passages: list[PassageRecord] = []
     for c in chunks:
-        passages.append(
-            PassageRecord(
-                nbk_id=nbk_id,
-                passage_id=f"{nbk_id}:{global_chunk:04d}",
-                chapter_section=canonical,
-                heading_path=heading_path,
-                section_level=level,
-                chunk_index=global_chunk,
-                text=c.text,
-                char_count=len(c.text),
-                token_estimate=c.token_count,
-            )
+        role = classify_passage_role(
+            text=c.text,
+            heading_path=heading_path,
+            passage_type="narrative",
+            char_count=len(c.text),
+            caption_text="",
         )
+        record = PassageRecord(
+            nbk_id=nbk_id,
+            passage_id=f"{nbk_id}:{global_chunk:04d}",
+            chapter_section=canonical,
+            heading_path=heading_path,
+            section_level=level,
+            chunk_index=global_chunk,
+            text=c.text,
+            char_count=len(c.text),
+            token_estimate=c.token_count,
+            passage_role=role,
+        )
+        _increment_role_count(audit, record)
+        passages.append(record)
         global_chunk += 1
     return passages, global_chunk
+
+
+def _increment_role_count(audit: ChapterIngestAudit, record: PassageRecord) -> None:
+    role_counts = getattr(audit, "role_counts", None)
+    if role_counts is not None:
+        role_counts[record.passage_role] = role_counts.get(record.passage_role, 0) + 1
 
 
 def _walk_section(
@@ -389,6 +413,7 @@ def _walk_section(
                 global_chunk=global_chunk_inner,
                 max_tokens=max_tokens,
                 overlap_tokens=overlap_tokens,
+                audit=audit,
             )
             para_accumulator = []
             if flushed:
@@ -438,16 +463,25 @@ def _walk_section(
                 rows=extracted.rows,
                 footnotes=extracted.footnotes,
             )
+            table_heading_path = f"{heading_path} > Table {table_ordinal}"
+            role = classify_passage_role(
+                text=markdown,
+                heading_path=table_heading_path,
+                passage_type="table",
+                char_count=len(markdown),
+                caption_text=extracted.caption,
+            )
             table_passage = PassageRecord(
                 nbk_id=nbk_id,
                 passage_id=f"{nbk_id}:{global_chunk:04d}",
                 chapter_section=canonical,
-                heading_path=f"{heading_path} > Table {table_ordinal}",
+                heading_path=table_heading_path,
                 section_level=level,
                 chunk_index=global_chunk,
                 text=markdown,
                 char_count=len(markdown),
                 token_estimate=len(markdown.split()),
+                passage_role=role,
                 passage_type="table",
                 table_id=extracted.table_id,
                 table_data={
@@ -457,6 +491,7 @@ def _walk_section(
                     "footnotes": extracted.footnotes,
                 },
             )
+            _increment_role_count(audit, table_passage)
             global_chunk += 1
             yield [table_passage], global_chunk, table_ordinal
 

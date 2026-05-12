@@ -157,6 +157,8 @@ ATTRIBUTION_TEXT_FULL = (
     "Cite per https://www.ncbi.nlm.nih.gov/books/NBK138602/."
 )
 
+PassageRole = Literal["evidence", "cross_reference", "definition", "table_caption", "table_body"]
+
 
 class LicenseNotice(BaseModel):
     """License and copyright notice for the GeneReviews data source.
@@ -185,6 +187,10 @@ class ScoreBreakdown(BaseModel):
     phrase_rank: float
     strict_rank: float
     recall_rank: float
+    adjusted_score: float | None = None
+    role_multiplier: float = 1.0
+    intent_section_boost: float = 0.0
+    passage_role: PassageRole | None = None
     dense_score: float | None = None
     dense_rank: int | None = None
     rrf_score: float | None = None
@@ -214,6 +220,7 @@ class RankedPassage(BaseModel):
     chapter_section: SectionName
     heading_path: str | None = None
     passage_type: str = "narrative"
+    passage_role: PassageRole | None = None
     text: str | None = None
     snippet: str | None = None
     char_count: int
@@ -238,6 +245,7 @@ class PassageDetail(BaseModel):
     chapter_section: SectionName
     heading_path: str | None = None
     passage_type: str = "narrative"
+    passage_role: PassageRole | None = None
     section_level: int
     chunk_index: int
     text: str
@@ -258,6 +266,7 @@ class SearchDiagnosticsModel(BaseModel):
     unfiltered_lexical_count: int | None = None
     applied_filters: list[str] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
+    query_intents: list[str] = Field(default_factory=list)
 
 
 class ResponseMeta(BaseModel):

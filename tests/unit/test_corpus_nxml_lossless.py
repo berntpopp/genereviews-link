@@ -178,6 +178,34 @@ def test_table_footnote_content_reaches_passage() -> None:
     assert "GUARDRAIL_CANARY_FOOTNOTE" in table_passages[0].text
 
 
+def test_parse_assigns_passage_roles_and_counts_them() -> None:
+    """Parser plumbing must persist classifier output on each emitted passage."""
+    raw = _make_nxml(
+        """
+        <sec><title>Related Genetic Counseling Issues</title>
+          <p>See Genetic Counseling for more information.</p>
+        </sec>
+        <sec><title>Surveillance</title>
+          <table-wrap id="t-role">
+            <caption><title>Small role table</title></caption>
+            <table>
+              <tbody><tr><td>Eye</td></tr></tbody>
+            </table>
+          </table-wrap>
+        </sec>
+        """
+    )
+
+    _, passages, audit = parse_and_chunk_one(
+        raw, nbk_id="NBK_ROLE_PARSE", short_name="role", nxml_relpath="role.nxml"
+    )
+
+    roles = {p.passage_type: p.passage_role for p in passages}
+    assert roles["narrative"] == "cross_reference"
+    assert roles["table"] == "table_caption"
+    assert audit.role_counts == {"cross_reference": 1, "table_caption": 1}
+
+
 # ---------------------------------------------------------------------------
 # Audit ledger conservation: captured + structural + skipped + unknown
 # >= body (modulo chunk overlap).
@@ -203,6 +231,19 @@ def test_audit_balances_for_simple_chapter() -> None:
     assert audit.unaccounted_ratio == 0.0
     assert audit.unknown_tags_with_text == {}
     assert audit.passage_count >= 1
+
+
+def test_audit_log_extra_includes_role_counts_and_cross_reference_ratio() -> None:
+    audit = ChapterIngestAudit(
+        nbk_id="NBK_ROLE",
+        parser_version=PARSER_VERSION,
+        role_counts={"evidence": 6, "cross_reference": 3, "definition": 1},
+    )
+
+    extra = audit.as_log_extra()
+
+    assert extra["role_counts"] == {"evidence": 6, "cross_reference": 3, "definition": 1}
+    assert extra["cross_reference_ratio"] == 0.3
 
 
 def test_audit_records_known_skip_tags() -> None:

@@ -50,6 +50,8 @@ def test_usage_resource_content_has_expected_sections(monkeypatch: pytest.Monkey
         "## Pipeline",
         "## Filters",
         "## Rerank modes",
+        "### Passage roles",
+        "### Query-intent boosts",
         "## Response modes",
         "## `snippet_chars` (brief mode only)",
         "## Diagnostics",
@@ -70,8 +72,14 @@ def test_usage_resource_documents_search_score_and_diagnostic_semantics(
 
     normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
     expected_fragments = (
-        "`rrf_score`, `lexical_score`, `lexical_rank_position`, and `dense_rank_position`",
-        "`score_breakdown` remains the opt-in deep view",
+        "`lexical_score`, `lexical_rank_position`, `dense_rank_position`, "
+        "`rrf_score`, and `passage_role` as top-level fields",
+        "Dense-derived fields (`dense_rank_position`, `rrf_score`, and `adjusted_score`) "
+        "are non-null only when dense scores are available and RRF is active",
+        "they can be `null` on lexical, off, or RRF fallback paths",
+        "Active RRF results are sorted by role- and intent-aware `adjusted_score`",
+        "add `include=score_breakdown` to see `adjusted_score`, `role_multiplier`, "
+        "`intent_section_boost`",
         "`lexical_candidate_count` and `dense_candidate_count` are post-filter",
         "`dense_candidate_count` is `null` when dense retrieval is not run",
         "`unfiltered_lexical_count` is normally `null`",
@@ -86,13 +94,59 @@ def test_usage_resource_documents_search_score_and_diagnostic_semantics(
         assert fragment in normalized, f"Missing usage text: {fragment}"
 
 
+def test_usage_resource_documents_chapter_date_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The usage resource must document current and legacy last-updated parsing."""
+    from genereview_link.api.resources.usage import USAGE_RESOURCE_MARKDOWN
+
+    normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
+    expected_fragments = (
+        '`<date date-type="updated">`',
+        '`<date date-type="revised">`',
+        '`<pub-date pub-type="last-revision">`',
+        '`<pub-date pub-type="updated">`',
+        "Chapters with none of those update/revision dates have `chapter_last_updated = null`",
+    )
+    for fragment in expected_fragments:
+        assert fragment in normalized, f"Missing usage text: {fragment}"
+
+
+def test_usage_resource_documents_passage_roles_and_query_intent_boosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The usage resource must document ranking roles and inferred query intents."""
+    from genereview_link.api.resources.usage import USAGE_RESOURCE_MARKDOWN
+
+    normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
+    expected_fragments = (
+        "`evidence` (1.0), `cross_reference` (0.4), `definition` (0.95), "
+        "`table_caption` (0.85), and `table_body` (1.0)",
+        "The role multiplier affects `adjusted_score`",
+        "`management` (treatment, management, therapy, surgery, prophylactic, "
+        "risk-reducing, screening, surveillance, intervention, prevent, prevention, "
+        "managing) boosts `management` by 0.30",
+        "`diagnosis` (diagnosis, diagnostic criteria, establishing, confirming, "
+        "differential, differential diagnosis) boosts `diagnosis` by 0.30 and "
+        "`clinical_features` by 0.10",
+        "`genetics` (inheritance, penetrance, autosomal, x-linked, variant spectrum, "
+        "molecular genetics) boosts `molecular_genetics` by 0.20 and "
+        "`genetic_counseling` by 0.05",
+        "server-inferred, not user-tunable",
+        "`_meta.diagnostics.query_intents`",
+    )
+    for fragment in expected_fragments:
+        assert fragment in normalized, f"Missing usage text: {fragment}"
+
+
 def test_usage_resource_documents_ids_only_shape(monkeypatch: pytest.MonkeyPatch) -> None:
     """The usage resource must document the ids_only lean row fields."""
     from genereview_link.api.resources.usage import USAGE_RESOURCE_MARKDOWN
 
     normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
-    expected = "{passage_id, rrf_score, lexical_rank_position, chapter_section}"
+    expected = "{passage_id, rrf_score, lexical_rank_position, chapter_section, passage_role}"
     assert expected in normalized
+    assert "Role-affected `adjusted_score` is not emitted in this mode" in normalized
 
 
 def test_usage_resource_documents_search_aliases_and_heading_filter(
