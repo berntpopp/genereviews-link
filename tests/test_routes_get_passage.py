@@ -271,3 +271,24 @@ async def test_get_passage_recommended_citation_present() -> None:
     assert resp.status_code == 200
     citation = resp.json()["passage"]["recommended_citation"]
     assert "HBOC. NBK1247. Updated 2026-03-25. Passage NBK1247:0020." in citation
+
+
+# ---------------------------------------------------------------------------
+# source_url tests (Pass-3-A)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_passage_carries_source_url() -> None:
+    """source_url present on PassageDetail and points at the chapter URL."""
+    pr = _make_row(
+        passage_id="NBK1247:0010",
+        chunk_index=10,
+        nbk_id="NBK1247",
+    )
+    app = _build_app(focal=pr)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1247:0010")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["passage"]["source_url"] == "https://www.ncbi.nlm.nih.gov/books/NBK1247/"

@@ -114,9 +114,7 @@ async def get_chapter_section(
 
     Latency: ~1ms p50.
     """
-    passages = await repo.get_section(
-        nbk_id, section, heading_path_contains=heading_path_contains
-    )
+    passages = await repo.get_section(nbk_id, section, heading_path_contains=heading_path_contains)
     if not passages:
         raise StructuredHTTPException(
             status_code=404,

@@ -124,6 +124,10 @@ retrying with looser parameters.
   `heading_path`.
 - Every search hit and every passage detail carries a `recommended_citation`
   string (`"{title}. NBK{id}. Updated {date}. Passage {pid}."`). Paste verbatim.
+- Every search hit and passage detail carries a `source_url` (chapter-level
+  NCBI Bookshelf URL: `https://www.ncbi.nlm.nih.gov/books/{nbk_id}/`). Use for
+  click-through to the canonical page. Per-passage anchors are deferred to a
+  future pass.
 - `include=score_breakdown` on `search_passages`: raw lexical + dense ranks;
   also surfaces `_meta.dense_model_id` and `_meta.embedding_dim`.
 - `include=heading_path_array` on `search_passages`, `get_passage`, and

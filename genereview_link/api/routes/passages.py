@@ -51,6 +51,16 @@ def _format_recommended_citation(
     return f"{title}. {nbk_id}. Updated {date_str}. Passage {passage_id}."
 
 
+def _format_source_url(nbk_id: str) -> str:
+    """Chapter-level NCBI Bookshelf URL for a passage's containing chapter.
+
+    Per-passage anchors (section-level deep links) require the chapter's NXML
+    ``short_name``, which isn't currently projected onto PassageRow. Returning
+    the chapter URL still resolves the "no URL anywhere on responses" gap.
+    """
+    return f"https://www.ncbi.nlm.nih.gov/books/{nbk_id}/"
+
+
 async def get_repository(request: Request) -> GeneReviewRepository:
     """Resolve GeneReviewRepository from app state; 503 if not configured."""
     repo: GeneReviewRepository | None = getattr(request.app.state, "repository", None)
@@ -330,6 +340,7 @@ async def search_passages(
                     passage_id=r.passage.passage_id,
                 ),
                 table_id=r.passage.table_id if r.passage.passage_type == "table" else None,
+                source_url=_format_source_url(r.passage.nbk_id),
             )
         )
 
@@ -500,6 +511,7 @@ def _passage_row_to_detail(
             last_updated=row.chapter_last_updated,
             passage_id=row.passage_id,
         ),
+        source_url=_format_source_url(row.nbk_id),
     )
 
 

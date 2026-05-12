@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from genereview_link.api.routes.passages import (
     _format_recommended_citation,
+    _format_source_url,
     get_embedding_provider,
     get_repository,
 )
@@ -85,6 +86,7 @@ async def debug_ranking(
                     passage_id=r.passage.passage_id,
                 ),
                 table_id=r.passage.table_id if r.passage.passage_type == "table" else None,
+                source_url=_format_source_url(r.passage.nbk_id),
             )
         )
     return {

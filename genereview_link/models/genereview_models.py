@@ -216,6 +216,7 @@ class RankedPassage(BaseModel):
     heading_path_array: list[str] | None = None
     recommended_citation: str  # always populated; no default to prevent silent omission
     table_id: str | None = None  # populated only when passage_type='table'
+    source_url: str  # always populated; chapter-level NCBI Bookshelf URL
 
 
 class PassageDetail(BaseModel):
@@ -235,6 +236,7 @@ class PassageDetail(BaseModel):
     gene_symbols: list[str] = Field(default_factory=list)
     heading_path_array: list[str] | None = None
     recommended_citation: str  # always populated; no default to prevent silent omission
+    source_url: str  # always populated; chapter-level NCBI Bookshelf URL
 
 
 class SearchDiagnosticsModel(BaseModel):

@@ -89,7 +89,5 @@ async def test_get_section_heading_path_contains_no_match_returns_empty(
     """A filter that matches nothing returns an empty list."""
     await _seed(pool)
     repo = GeneReviewRepository(pool)
-    none = await repo.get_section(
-        "NBKHPC", "management", heading_path_contains="NoSuchSubsection"
-    )
+    none = await repo.get_section("NBKHPC", "management", heading_path_contains="NoSuchSubsection")
     assert len(none) == 0

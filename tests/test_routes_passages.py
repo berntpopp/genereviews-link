@@ -789,6 +789,7 @@ async def test_search_ids_only_mode_returns_lean_shape() -> None:
         "heading_path_array",
         "passage_type",
         "table_id",
+        "source_url",
     ):
         assert forbidden not in first, f"Forbidden key present: {forbidden}"
     assert "_meta" in data
@@ -1202,3 +1203,36 @@ async def test_ids_only_mode_omits_recommended_citation_and_table_id() -> None:
     first = resp.json()["results"][0]
     assert "recommended_citation" not in first
     assert "table_id" not in first
+
+
+# ---------------------------------------------------------------------------
+# source_url tests (Pass-3-A)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_source_url_present_on_every_hit() -> None:
+    """source_url is chapter-level NCBI Bookshelf URL on every search hit."""
+    repo = _make_brief_repo(rows=3)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+    assert resp.status_code == 200
+    body = resp.json()
+    for hit in body["results"]:
+        assert hit["source_url"] == f"https://www.ncbi.nlm.nih.gov/books/{hit['nbk_id']}/"
+
+
+@pytest.mark.asyncio
+async def test_ids_only_mode_omits_source_url() -> None:
+    """ids_only mode must not carry source_url."""
+    repo = _make_ids_only_repo(passage_ids=["NBK1247:0010", "NBK1247:0011"])
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "mode": "ids_only"})
+    assert resp.status_code == 200
+    body = resp.json()
+    for hit in body["results"]:
+        assert "source_url" not in hit
