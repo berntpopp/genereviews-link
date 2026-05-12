@@ -127,27 +127,34 @@ async def get_chapter_section(
         concatenated: str | None = _strip_overlap(parts) if dedupe else "\n\n".join(parts)
     else:
         concatenated = None
+    passages_response = [
+        PassageInSection(
+            passage_id=p.passage_id,
+            heading_path=p.heading_path,
+            section_level=p.section_level,
+            chunk_index=p.chunk_index,
+            text=p.text,
+        )
+        for p in passages
+    ]
     response = ChapterSectionResponse(  # type: ignore[call-arg]
         nbk_id=nbk_id,
         chapter_title=head.chapter_title or "",
         chapter_section=section,
         chapter_last_updated=head.chapter_last_updated,
-        passages=[
-            PassageInSection(
-                passage_id=p.passage_id,
-                heading_path=p.heading_path,
-                section_level=p.section_level,
-                chunk_index=p.chunk_index,
-                text=p.text,
-            )
-            for p in passages
-        ],
+        passages=passages_response,
+        passage_count=len(passages_response),
         concatenated_text=concatenated,
+        concatenated_char_count=(len(concatenated) if concatenated is not None else None),
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )
     if "concatenated_text" not in include_set:
         return JSONResponse(
-            response.model_dump(exclude={"concatenated_text"}, mode="json", by_alias=True)
+            response.model_dump(
+                exclude={"concatenated_text", "concatenated_char_count"},
+                mode="json",
+                by_alias=True,
+            )
         )
     return response
 

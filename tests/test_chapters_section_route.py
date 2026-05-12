@@ -392,3 +392,68 @@ async def test_dedupe_without_include_has_no_effect() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert "concatenated_text" not in data
+
+
+# ---------------------------------------------------------------------------
+# Task 7: passage_count + concatenated_char_count (Spec E1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chapter_section_default_includes_passage_count_without_concatenated_char_count() -> (
+    None
+):
+    """passage_count is always present; concatenated_char_count is absent when not opted in."""
+    pr1 = PassageRow(
+        nbk_id="NBK1247",
+        passage_id="NBK1247:0001",
+        chapter_section="diagnosis",
+        heading_path="Diagnosis",
+        section_level=1,
+        chunk_index=0,
+        text="First passage.",
+    )
+    pr2 = PassageRow(
+        nbk_id="NBK1247",
+        passage_id="NBK1247:0002",
+        chapter_section="diagnosis",
+        heading_path="Diagnosis",
+        section_level=1,
+        chunk_index=1,
+        text="Second passage.",
+    )
+    app = _build_app(passages=[pr1, pr2])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/sections/diagnosis")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "passage_count" in body
+    assert isinstance(body["passage_count"], int)
+    assert body["passage_count"] == len(body["passages"])
+    # concatenated_char_count must be absent when concatenated_text was not requested
+    assert "concatenated_char_count" not in body
+    assert "concatenated_text" not in body
+
+
+@pytest.mark.asyncio
+async def test_chapter_section_concatenated_text_includes_char_count() -> None:
+    """include=concatenated_text also populates concatenated_char_count."""
+    pr = PassageRow(
+        nbk_id="NBK1247",
+        passage_id="NBK1247:0001",
+        chapter_section="diagnosis",
+        heading_path="Diagnosis",
+        section_level=1,
+        chunk_index=0,
+        text="Hello world.",
+    )
+    app = _build_app(passages=[pr])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK1247/sections/diagnosis",
+            params={"include": "concatenated_text"},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["concatenated_text"] is not None
+    assert body["concatenated_char_count"] == len(body["concatenated_text"])
