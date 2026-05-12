@@ -47,13 +47,11 @@ def _build_app(
     repo = MagicMock()
     repo.get_table = AsyncMock(return_value=table)
 
-    from genereview_link.retrieval.repository import ChapterMetadataRow, SectionSummaryRow
     from genereview_link.models.sections import SECTION_NAMES
+    from genereview_link.retrieval.repository import ChapterMetadataRow, SectionSummaryRow
 
     if chapter_exists:
-        sections = tuple(
-            SectionSummaryRow(section=name, passage_count=0) for name in SECTION_NAMES
-        )
+        sections = tuple(SectionSummaryRow(section=name, passage_count=0) for name in SECTION_NAMES)
         meta_row = ChapterMetadataRow(
             nbk_id="NBK1247",
             title="BRCA1-HBOC",

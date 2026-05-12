@@ -6,7 +6,6 @@ import pytest
 
 from genereview_link.retrieval.embeddings import bge_passage_text
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

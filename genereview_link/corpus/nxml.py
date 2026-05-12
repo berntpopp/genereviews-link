@@ -61,12 +61,22 @@ def parse_and_chunk_one(
     pubmed_id = _text(meta.find("book-part-id[@pub-id-type='pmid']")) or None
 
     authors = _join_authors(meta.find("contrib-group"))
-    initial = _parse_pub_date(meta.find("pub-date[@pub-type='initial']"))
-    # Production NCBI NXMLs use pub-type="last-revision"; hand-crafted fixtures
-    # use pub-type="updated". Probe last-revision first, fall back to updated.
-    _last_rev = meta.find("pub-date[@pub-type='last-revision']")
-    _updated_el = meta.find("pub-date[@pub-type='updated']")
-    updated = _parse_pub_date(_last_rev if _last_rev is not None else _updated_el)
+    # Production NCBI NXMLs (litarch tarball) store dates in
+    #   <pub-history><date date-type="created|revised|...">
+    # Hand-crafted fixtures use the older BITS pattern:
+    #   <pub-date pub-type="initial|updated|last-revision">
+    # Probe the production pattern first; fall back to fixtures pattern.
+    _ph = meta.find("pub-history")
+    if _ph is not None:
+        initial = _parse_pub_date(_ph.find("date[@date-type='created']"))
+        # "revised" is the most recent revision; fall back to "updated"
+        _rev = _ph.find("date[@date-type='revised']") or _ph.find("date[@date-type='updated']")
+        updated = _parse_pub_date(_rev)
+    else:
+        initial = _parse_pub_date(meta.find("pub-date[@pub-type='initial']"))
+        _last_rev = meta.find("pub-date[@pub-type='last-revision']")
+        _updated_el = meta.find("pub-date[@pub-type='updated']")
+        updated = _parse_pub_date(_last_rev if _last_rev is not None else _updated_el)
 
     chapter = ChapterRecord(
         nbk_id=nbk_id,
@@ -127,26 +137,6 @@ def _join_authors(group: etree._Element | None) -> str | None:
     return ", ".join(names) if names else None
 
 
-# INVESTIGATION NOTE (2026-05-12) — last_updated_date extraction bug
-#
-# Observed element shape in hand-crafted fixtures (tests/fixtures/nxml/typical.nxml):
-#   <book-part-meta>
-#     <pub-date pub-type="initial"><day>4</day><month>9</month><year>1998</year></pub-date>
-#     <pub-date pub-type="updated"><day>21</day><month>9</month><year>2023</year></pub-date>
-#   </book-part-meta>
-#
-# Production NXML from the NCBI litarch tarball (gene_NBK1116.tar.gz) almost certainly
-# uses pub-type="last-revision" instead of pub-type="updated" for the last-revision date.
-# Evidence: the web page for NBK1247 shows "Last Revision: March 25, 2026", but the
-# fixture records "2023-09-21" under pub-type="updated" — a different date — confirming
-# the fixtures were hand-crafted and do NOT reflect the real tarball element shape.
-#
-# Consequence: the XPath pub-date[@pub-type='updated'] in _extract_chapter_metadata
-# always returns None for real production chapters (none use pub-type="updated"), so
-# last_updated_date is None for all 882 chapters in the gr-pg corpus.
-#
-# Fix planned in a follow-up commit: probe pub-type="last-revision" first, then fall
-# back to pub-type="updated" for any chapters that use the older attribute value.
 def _parse_pub_date(el: etree._Element | None) -> date | None:
     if el is None:
         return None

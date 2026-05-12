@@ -64,9 +64,7 @@ async def get_table(
                 "field_errors.valid_values for the list of known table IDs"
             ),
             field_errors=field_errors,
-            next_commands=[
-                {"tool": "get_chapter_metadata", "arguments": {"nbk_id": nbk_id}}
-            ],
+            next_commands=[{"tool": "get_chapter_metadata", "arguments": {"nbk_id": nbk_id}}],
         )
 
     return TableResponse(
@@ -78,5 +76,5 @@ async def get_table(
         header=table.header,
         rows=table.rows,
         passage_id=table.passage_id,
-        meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
+        **{"_meta": ResponseMeta(corpus_version=_get_corpus_version(request))},
     )

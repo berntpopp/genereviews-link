@@ -57,9 +57,7 @@ async def iter_passages_missing_embedding(
             )
         if not rows:
             return
-        yield [
-            (r["nbk_id"], r["passage_id"], r["text"], r["passage_type"]) for r in rows
-        ]
+        yield [(r["nbk_id"], r["passage_id"], r["text"], r["passage_type"]) for r in rows]
         last_nbk = rows[-1]["nbk_id"]
         last_pid = rows[-1]["passage_id"]
 
@@ -84,8 +82,7 @@ async def backfill_embeddings(
             pool, model_name=provider.model_name, schema=schema, batch_size=batch_size
         ):
             texts = [
-                bge_passage_text(text, passage_type=ptype)
-                for _nbk, _pid, text, ptype in batch
+                bge_passage_text(text, passage_type=ptype) for _nbk, _pid, text, ptype in batch
             ]
             vectors = await provider.embed_passages(texts)
             records = [

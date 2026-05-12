@@ -1021,14 +1021,14 @@ class TestMigrateListSql:
 
 class TestChunking:
     def test_chunk_section_text_empty_returns_empty(self, mocker: MockerFixture) -> None:
-        # Mock the tokenizer so the test does not download HF model weights.
+        # Mock encode_with_offsets so the test does not download HF model weights.
+        # empty / whitespace-only text is rejected before calling the tokenizer.
         mocker.patch(
-            "genereview_link.corpus.chunking.encode_to_token_ids",
-            side_effect=lambda t: list(range(len(t.split()))),
-        )
-        mocker.patch(
-            "genereview_link.corpus.chunking.decode_tokens",
-            side_effect=lambda ids: " ".join(f"w{i}" for i in ids),
+            "genereview_link.corpus.chunking.encode_with_offsets",
+            side_effect=lambda t: (
+                list(range(len(t.split()))),
+                [(i, i + 1) for i in range(len(t.split()))],
+            ),
         )
         from genereview_link.corpus.chunking import chunk_section_text
 
@@ -1036,13 +1036,17 @@ class TestChunking:
         assert chunk_section_text("   ") == []
 
     def test_chunk_section_text_short_text_one_chunk(self, mocker: MockerFixture) -> None:
+        # 10 tokens, each mapped to a 1-char offset slot in the 20-char text.
+        text = "a b c d e f g h i j"
+        n = 10
+        offsets = [(i * 2, i * 2 + 1) for i in range(n)]
         mocker.patch(
-            "genereview_link.corpus.chunking.encode_to_token_ids",
-            return_value=list(range(10)),
+            "genereview_link.corpus.chunking.encode_with_offsets",
+            return_value=(list(range(n)), offsets),
         )
         from genereview_link.corpus.chunking import chunk_section_text
 
-        chunks = chunk_section_text("a b c d e f g h i j", max_tokens=20)
+        chunks = chunk_section_text(text, max_tokens=20)
         assert len(chunks) == 1
         assert chunks[0].chunk_index == 0
         assert chunks[0].token_count == 10
@@ -1050,17 +1054,17 @@ class TestChunking:
     def test_chunk_section_text_splits_into_overlapping_windows(
         self, mocker: MockerFixture
     ) -> None:
+        # 100 tokens mapped to char offsets 0..99 in a 100-char fake text.
+        n = 100
+        text = "x" * n
+        offsets = [(i, i + 1) for i in range(n)]
         mocker.patch(
-            "genereview_link.corpus.chunking.encode_to_token_ids",
-            return_value=list(range(100)),
-        )
-        mocker.patch(
-            "genereview_link.corpus.chunking.decode_tokens",
-            side_effect=lambda ids: " ".join(str(i) for i in ids),
+            "genereview_link.corpus.chunking.encode_with_offsets",
+            return_value=(list(range(n)), offsets),
         )
         from genereview_link.corpus.chunking import chunk_section_text
 
-        chunks = chunk_section_text("ignored", max_tokens=40, overlap_tokens=10)
+        chunks = chunk_section_text(text, max_tokens=40, overlap_tokens=10)
         assert len(chunks) >= 2
         assert chunks[0].chunk_index == 0
         # Strides of (max_tokens - overlap) = 30 cover the 100 token range.
@@ -1068,14 +1072,17 @@ class TestChunking:
         assert chunks[0].token_count == 40
 
     def test_chunk_section_text_invalid_overlap_raises(self, mocker: MockerFixture) -> None:
+        n = 50
+        text = "x" * n
+        offsets = [(i, i + 1) for i in range(n)]
         mocker.patch(
-            "genereview_link.corpus.chunking.encode_to_token_ids",
-            return_value=list(range(50)),
+            "genereview_link.corpus.chunking.encode_with_offsets",
+            return_value=(list(range(n)), offsets),
         )
         from genereview_link.corpus.chunking import chunk_section_text
 
         with pytest.raises(ValueError, match="overlap_tokens"):
-            chunk_section_text("ignored", max_tokens=10, overlap_tokens=10)
+            chunk_section_text(text, max_tokens=10, overlap_tokens=10)
 
 
 # ---- corpus/archive fetch + download (httpx-mocked) ------------------------
