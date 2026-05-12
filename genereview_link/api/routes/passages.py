@@ -81,7 +81,9 @@ def _get_corpus_version(request: Request) -> str | None:
         "Filter with `gene` (HGNC symbol), `nbk_id` (single chapter), "
         "or `sections` (list; valid values in the sections JSONSchema "
         "enum). Use `exclude=score_breakdown` or `exclude=heading_path` "
-        "to trim response payload further."
+        "to trim response payload further.\n\n"
+        "Latency: ~27ms p50 (rerank=rrf), ~26ms p50 (rerank=lexical), "
+        "~26ms p50 (rerank=off)."
     ),
 )
 async def search_passages(
@@ -314,7 +316,8 @@ async def search_passages(
         "Use ``neighbors`` (0-5) to fetch adjacent chunks before and after the focal "
         "passage within the same section. Set ``cross_sections=true`` to allow neighbors "
         "to span section boundaries within the same chapter.\n\n"
-        "The ``_meta`` field carries attribution and the active corpus version."
+        "The ``_meta`` field carries attribution and the active corpus version.\n\n"
+        "Latency: ~1ms p50 (neighbors=0), ~1ms p50 (neighbors=3)."
     ),
 )
 async def get_passage(

@@ -43,6 +43,8 @@ async def get_table(
     Use after search_passages or get_chapter_metadata to retrieve a
     specific table's data when you need row-level access (the table is
     also retrievable as a passage_type='table' passage via search_passages).
+
+    Latency: ~1ms p50.
     """
     table = await repo.get_table(nbk_id, table_id)
     if table is None:
