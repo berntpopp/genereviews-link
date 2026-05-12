@@ -12,6 +12,8 @@ import pytest
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
 from genereview_link.api.eutils_client import EutilsClient
+from genereview_link.api.routes.fulltext import _filter_sections
+from genereview_link.models.genereview_models import GeneReviewSection
 
 # Suppress XML parsing warnings for fixtures that are HTML/XML hybrids
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
@@ -29,6 +31,28 @@ def load_fixture(name: str) -> str:
     if not fixture_path.exists():
         pytest.skip(f"Fixture {name} not found")
     return fixture_path.read_text(encoding="utf-8")
+
+
+def section(title: str) -> GeneReviewSection:
+    return GeneReviewSection(title=title, content=f"{title} content")
+
+
+def test_filter_sections_matches_alias() -> None:
+    sections = {"management": section("Management"), "diagnosis": section("Diagnosis")}
+    assert set(_filter_sections(sections, "mgmt")) == {"management"}
+
+
+def test_filter_sections_uses_fuzzy_fallback_per_token() -> None:
+    sections = {"management": section("Management"), "diagnosis": section("Diagnosis")}
+    assert set(_filter_sections(sections, "management,diagnosi")) == {
+        "management",
+        "diagnosis",
+    }
+
+
+def test_filter_sections_unrelated_token_returns_empty() -> None:
+    sections = {"management": section("Management")}
+    assert _filter_sections(sections, "completely_unrelated_word") == {}
 
 
 class TestMainContentExtraction:

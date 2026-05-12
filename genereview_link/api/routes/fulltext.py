@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from rapidfuzz import fuzz, process
 
 from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.eutils_client import EutilsClient
@@ -19,6 +20,18 @@ from genereview_link.models.genereview_models import (
 )
 
 router = APIRouter(prefix="/fulltext", tags=["Full Text"])
+
+_SECTION_ALIASES: dict[str, str] = {
+    "mgmt": "management",
+    "tx": "management",
+    "rx": "management",
+    "dx": "diagnosis",
+    "diag": "diagnosis",
+    "cf": "clinical_features",
+    "molgen": "molecular_genetics",
+    "counseling": "genetic_counseling",
+    "refs": "references",
+}
 
 
 def _build_section(section_data: dict[str, Any]) -> GeneReviewSection:
@@ -55,11 +68,27 @@ def _filter_sections(
     tokens = [tok.strip().lower() for tok in requested.split(",") if tok.strip()]
     if not tokens:
         return sections
-    return {
-        key: section
-        for key, section in sections.items()
-        if key.lower() in tokens or any(tok in key.lower() for tok in tokens)
-    }
+
+    matched: dict[str, GeneReviewSection] = {}
+    keys = list(sections)
+    for token in tokens:
+        token_matched = False
+        canonical = _SECTION_ALIASES.get(token, token)
+        if canonical in sections:
+            matched[canonical] = sections[canonical]
+            continue
+
+        for key in keys:
+            if canonical in key.lower():
+                matched[key] = sections[key]
+                token_matched = True
+
+        if not token_matched:
+            result = process.extractOne(canonical, keys, scorer=fuzz.ratio, score_cutoff=70)
+            if result is not None:
+                matched[result[0]] = sections[result[0]]
+
+    return matched
 
 
 @router.get(
