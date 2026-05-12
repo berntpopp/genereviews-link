@@ -1029,9 +1029,12 @@ class EutilsClient:
 
         if section_divs:
             # Process GeneReviews structured sections
+            seen_nodes: set[int] = set()
             for section_div in section_divs:
+                if id(section_div) in seen_nodes:
+                    continue
                 # Extract h2 heading from within the div
-                h2_heading = section_div.find("h2")
+                h2_heading = section_div.find("h2", recursive=False) or section_div.find("h2")
                 if not h2_heading:
                     continue
 
@@ -1040,24 +1043,21 @@ class EutilsClient:
                     continue
 
                 # Extract main section content
-                section_content_parts = []
-                subsections = {}
-
-                # Find all content within this section div
-                for element in section_div.find_all(["p", "div", "ul", "ol"]):
-                    text = element.get_text().strip()
-                    if self._is_valid_content(text):
-                        section_content_parts.append(text)
+                section_content_parts = self._collect_direct_content(section_div, seen_nodes)
+                subsections: dict[str, dict[str, Any]] = {}
 
                 # Extract h3 subsections
-                h3_headings = section_div.find_all("h3")
-                for h3 in h3_headings:
-                    subsection_title = h3.get_text().strip()
+                for child in section_div.children:
+                    if not isinstance(child, Tag) or child.name != "h3":
+                        continue
+                    subsection_title = child.get_text().strip()
                     if not subsection_title or len(subsection_title) < 3:
                         continue
 
                     # Extract content for this subsection
-                    subsection_content = self._extract_subsection_content(h3, section_div)
+                    subsection_content = self._collect_until_heading(
+                        child, {"h2", "h3"}, seen_nodes
+                    )
 
                     if subsection_content and len(subsection_content) > 30:
                         subsection_key = self._normalize_section_key(subsection_title)
@@ -1067,9 +1067,10 @@ class EutilsClient:
                             "level": 3,
                             "subsections": {},
                         }
+                    seen_nodes.add(id(child))
 
                 # Create main section
-                main_content = " ".join(section_content_parts).strip()
+                main_content = f"{section_title} {' '.join(section_content_parts)}".strip()
                 main_content = self._clean_content(main_content)
 
                 if main_content and len(main_content) > 50:
@@ -1080,12 +1081,58 @@ class EutilsClient:
                         "level": 2,
                         "subsections": subsections,
                     }
+                    seen_nodes.add(id(section_div))
 
         # Strategy 2: Fallback to heading-based extraction if no structured divs found
         if not sections:
             sections = self._extract_sections_by_headings(content_div)
 
         return sections
+
+    def _collect_direct_content(self, section_div: Tag, seen_nodes: set[int]) -> list[str]:
+        blocks: list[str] = []
+        seen_texts: set[str] = set()
+        for child in section_div.children:
+            if not isinstance(child, Tag) or child.name is None:
+                continue
+            if child.name == "h3":
+                break
+            if id(child) in seen_nodes or child.name == "h2":
+                continue
+            if child.name in {"p", "ul", "ol", "table"}:
+                self._append_unique_block_text(child, blocks, seen_nodes, seen_texts)
+            elif child.name in {"div", "section"}:
+                for block in child.find_all(["p", "ul", "ol", "table"]):
+                    self._append_unique_block_text(block, blocks, seen_nodes, seen_texts)
+        return blocks
+
+    def _collect_until_heading(
+        self, heading: Tag, stop_tags: set[str], seen_nodes: set[int]
+    ) -> str:
+        blocks: list[str] = []
+        seen_texts: set[str] = set()
+        current = heading.find_next_sibling()
+        while isinstance(current, Tag):
+            if current.name in stop_tags:
+                break
+            if id(current) not in seen_nodes and current.name in {"p", "ul", "ol", "table"}:
+                self._append_unique_block_text(current, blocks, seen_nodes, seen_texts)
+            elif id(current) not in seen_nodes and current.name in {"div", "section"}:
+                for block in current.find_all(["p", "ul", "ol", "table"]):
+                    self._append_unique_block_text(block, blocks, seen_nodes, seen_texts)
+            current = current.find_next_sibling()
+        return self._clean_content(" ".join(blocks))
+
+    def _append_unique_block_text(
+        self, block: Tag, blocks: list[str], seen_nodes: set[int], seen_texts: set[str]
+    ) -> None:
+        if id(block) in seen_nodes:
+            return
+        text = block.get_text(separator=" ", strip=True)
+        seen_nodes.add(id(block))
+        if self._is_valid_content(text) and text not in seen_texts:
+            blocks.append(text)
+            seen_texts.add(text)
 
     def _extract_subsection_content(self, h3_heading: Tag, section_div: Tag) -> str:
         """Extract content for an h3 subsection within a section div."""

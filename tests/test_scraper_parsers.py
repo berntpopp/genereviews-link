@@ -33,6 +33,11 @@ def load_fixture(name: str) -> str:
     return fixture_path.read_text(encoding="utf-8")
 
 
+@pytest.fixture
+def load_html():
+    return load_fixture
+
+
 def section(title: str) -> GeneReviewSection:
     return GeneReviewSection(title=title, content=f"{title} content")
 
@@ -147,6 +152,16 @@ class TestMetadataExtraction:
 
 class TestHierarchicalSectionExtraction:
     """Test the hierarchical section extraction logic."""
+
+    def test_hierarchical_sections_do_not_duplicate_management_paragraphs(self, load_html) -> None:
+        soup = BeautifulSoup(load_html("bookshelf_html/NBK1247_management.html"), "lxml")
+        client = EutilsClient()
+
+        sections = client._extract_hierarchical_sections(soup)
+        management = sections["management"]["content"]
+
+        assert management.count("Consider prophylactic bilateral mastectomy") == 1
+        assert set(sections["management"]) == {"title", "content", "level", "subsections"}
 
     def test_extract_hierarchical_sections_brca1(self, client):
         """Test hierarchical section extraction from BRCA1 fixture."""
