@@ -145,7 +145,7 @@ COPYRIGHT_LINE = "© 1993–present University of Washington"  # noqa: RUF001 �
 
 ATTRIBUTION_TEXT = (
     f"GeneReviews® content {COPYRIGHT_LINE}; "
-    "sourced from NCBI Bookshelf. Full terms via the get_license tool."
+    "sourced from NCBI Bookshelf. Full terms via the genereview://license resource."
 )
 
 

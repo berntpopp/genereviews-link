@@ -426,7 +426,6 @@ class UnifiedServerManager:
             "search_passages": "search_passages",
             "get_chapter_section": "get_chapter_section",
             "get_passage": "get_passage",
-            "get_license": "get_license",
         }
 
         mcp_route_maps = [
@@ -436,6 +435,8 @@ class UnifiedServerManager:
             RouteMap(pattern=r"^/$", mcp_type=MCPType.EXCLUDE),
             RouteMap(pattern=r"^/docs$", mcp_type=MCPType.EXCLUDE),
             RouteMap(pattern=r"^/openapi.json$", mcp_type=MCPType.EXCLUDE),
+            # Exclude /license from MCP tools — served as genereview://license resource instead
+            RouteMap(pattern=r"^/license$", mcp_type=MCPType.EXCLUDE),
         ]
 
         mcp = FastMCP.from_fastapi(
@@ -460,9 +461,9 @@ class UnifiedServerManager:
                 "chapter_last_updated is now populated for the vast majority "
                 "of chapters and should be included in citations for freshness. "
                 "License attribution: response envelopes include "
-                "_meta.attribution; call get_license for the full structured "
-                "license terms once per session. Filters: pass "
-                "sections=['management'] (see the section parameter's "
+                "_meta.attribution; fetch resource genereview://license once "
+                "per session for the full structured license terms. Filters: "
+                "pass sections=['management'] (see the section parameter's "
                 "JSONSchema enum for valid values) or gene='BRCA1' (HGNC "
                 "symbol) to narrow search_passages. Each result in "
                 "search_passages carries a passage_type field which is either "
@@ -495,6 +496,31 @@ class UnifiedServerManager:
             mcp_names=mcp_custom_names,
             route_maps=mcp_route_maps,
         )
+
+        # Register genereview://license as an MCP resource.
+        # The REST GET /license route is excluded from MCP tools (see route_maps above);
+        # LLMs should read this resource once per session instead of calling a tool.
+        import json
+
+        from genereview_link.models.genereview_models import LicenseNotice
+
+        @mcp.resource(
+            "genereview://license",
+            name="license",
+            description="Static GeneReviews attribution and license summary.",
+            mime_type="application/json",
+        )
+        def license_resource() -> str:
+            """Static GeneReviews attribution and license summary."""
+            notice = LicenseNotice()
+            return json.dumps({
+                "copyright": notice.copyright,
+                "terms_url": notice.terms_url,
+                "data_source": notice.data_source,
+                "data_source_url": notice.data_source_url,
+                "notes": notice.notes,
+            })
+
         # Register prompts on the constructed MCP server.
         from genereview_link.mcp.prompts import register_prompts
 
