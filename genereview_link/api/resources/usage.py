@@ -113,7 +113,17 @@ The canonical `table_id` is the NXML slug attribute (e.g.
 
 ## Chapter date semantics
 
-[Populated by Task 16 (B2) based on Task 1 (B1) findings.]
+`chapter_last_updated` reflects NCBI's `<date date-type="updated">` element
+in the chapter's NXML `<pub-history>` block — the GeneReviews editorial-update
+timestamp shown on the chapter's NCBI web page. If `updated` is absent the
+parser falls back to `<date date-type="revised">` (a metadata/schema
+revision timestamp that may predate the latest content edit). Chapters whose
+NXML has neither `updated` nor `revised` (only `created`) have
+`chapter_last_updated = null`.
+
+As of 2026-05-12, 685 of 882 chapters have a populated `chapter_last_updated`
+(~78%). For chapters that returned `null`, NCBI's authoritative editorial
+date can be checked directly at ncbi.nlm.nih.gov/books/{nbk_id}.
 
 ## Latency profile (p50, measured 2026-05-12 against gr-pg corpus on 127.0.0.1:8765)
 

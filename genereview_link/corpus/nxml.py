@@ -67,11 +67,13 @@ def parse_and_chunk_one(
     #   <pub-date pub-type="initial|updated|last-revision">
     # Probe the production pattern first; fall back to fixtures pattern.
     # T1 findings (2026-05-12): see docs/superpowers/specs/2026-05-12-task-b1-findings.md
-    # for the chapter-date semantics audit. Outcome categorized as (a).
+    # for the chapter-date semantics audit. Outcome (a) addressed in Task 16:
+    # prefer "updated" (editorial content timestamp) over "revised" (schema metadata).
     _ph = meta.find("pub-history")
     if _ph is not None:
         initial = _parse_pub_date(_ph.find("date[@date-type='created']"))
-        _rev = _ph.find("date[@date-type='revised']") or _ph.find("date[@date-type='updated']")
+        _upd = _ph.find("date[@date-type='updated']")
+        _rev = _upd if _upd is not None else _ph.find("date[@date-type='revised']")
         updated = _parse_pub_date(_rev)
     else:
         initial = _parse_pub_date(meta.find("pub-date[@pub-type='initial']"))

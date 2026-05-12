@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<book-part xmlns:xlink="http://www.w3.org/1999/xlink" book-part-type="chapter" id="test_pub_history_created_only">
+  <book-part-meta>
+    <book-part-id pub-id-type="pmid">99000001</book-part-id>
+    <title-group>
+      <title>Test Chapter With Only Created Date</title>
+    </title-group>
+    <pub-history>
+      <date date-type="created">
+        <day>4</day><month>12</month><year>2025</year>
+      </date>
+    </pub-history>
+  </book-part-meta>
+  <body>
+    <sec id="summary">
+      <title>Summary</title>
+      <p>This chapter exercises pub-history with only a created date-type.</p>
+    </sec>
+  </body>
+</book-part>

@@ -171,7 +171,10 @@ async def test_batch_413_on_oversize() -> None:
 @pytest.mark.asyncio
 async def test_batch_200_order_preserved_for_all_found() -> None:
     """Response passages appear in the same order as the request ids."""
-    rows = {f"NBK1247:{i:04d}": _make_row(passage_id=f"NBK1247:{i:04d}", chunk_index=i) for i in range(5)}
+    rows = {
+        f"NBK1247:{i:04d}": _make_row(passage_id=f"NBK1247:{i:04d}", chunk_index=i)
+        for i in range(5)
+    }
     ids = [f"NBK1247:{i:04d}" for i in range(4, -1, -1)]  # reverse order: 4,3,2,1,0
     app = _build_app(rows)
 

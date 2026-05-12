@@ -473,12 +473,12 @@ async def get_passage(
     )
 
 
-def _passage_row_to_detail(row: PassageRow, *, include_heading_array: bool = False) -> PassageDetail:
+def _passage_row_to_detail(
+    row: PassageRow, *, include_heading_array: bool = False
+) -> PassageDetail:
     """Convert a PassageRow to a PassageDetail response model."""
     heading_path_array = (
-        row.heading_path.split(" > ")
-        if include_heading_array and row.heading_path
-        else None
+        row.heading_path.split(" > ") if include_heading_array and row.heading_path else None
     )
     return PassageDetail(
         nbk_id=row.nbk_id,

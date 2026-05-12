@@ -767,7 +767,9 @@ async def test_search_ids_only_mode_returns_lean_shape() -> None:
     app = _make_brief_app(repo)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get("/passages/search", params={"q": "BRCA1", "mode": "ids_only", "limit": 5})
+        resp = await c.get(
+            "/passages/search", params={"q": "BRCA1", "mode": "ids_only", "limit": 5}
+        )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -814,7 +816,9 @@ async def test_search_ids_only_mode_respects_limit() -> None:
     app = _make_brief_app(repo)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get("/passages/search", params={"q": "BRCA1", "mode": "ids_only", "limit": 3})
+        resp = await c.get(
+            "/passages/search", params={"q": "BRCA1", "mode": "ids_only", "limit": 3}
+        )
 
     assert resp.status_code == 200
     data = resp.json()
@@ -868,7 +872,9 @@ def _fake_lex_row(
             nbk_id=passage_id.split(":")[0],
             passage_id=passage_id,
             chapter_section=section,
-            heading_path=heading_path if heading_path is not None else f"{section.capitalize()} > X",
+            heading_path=heading_path
+            if heading_path is not None
+            else f"{section.capitalize()} > X",
             section_level=2,
             chunk_index=int(passage_id.split(":")[1]),
             text=text,
@@ -1121,8 +1127,7 @@ async def test_search_recommended_citation_format() -> None:
     assert resp.status_code == 200
     citation = resp.json()["results"][0]["recommended_citation"]
     assert citation == (
-        "BRCA1- and BRCA2-Associated HBOC. NBK1247. "
-        "Updated 2026-03-25. Passage NBK1247:0020."
+        "BRCA1- and BRCA2-Associated HBOC. NBK1247. Updated 2026-03-25. Passage NBK1247:0020."
     )
 
 
@@ -1192,9 +1197,7 @@ async def test_ids_only_mode_omits_recommended_citation_and_table_id() -> None:
     app = _build_app_with_fake_repo(rows)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get(
-            "/passages/search", params={"q": "x", "mode": "ids_only", "limit": 1}
-        )
+        resp = await c.get("/passages/search", params={"q": "x", "mode": "ids_only", "limit": 1})
     assert resp.status_code == 200
     first = resp.json()["results"][0]
     assert "recommended_citation" not in first
