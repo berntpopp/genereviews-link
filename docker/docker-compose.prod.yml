@@ -6,8 +6,6 @@ services:
     environment:
       GENEREVIEW_LINK_LOG_LEVEL: INFO
       LOG_JSON: "true"
-      GUNICORN_WORKERS: 4
-      GUNICORN_LOG_LEVEL: warning
 
     volumes: []
     ports: !reset []
@@ -29,7 +27,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 3G        # Raised from 1G — BGE model loaded per gunicorn worker
+          memory: 3G        # BGE model + API process + colocated Postgres budget
           cpus: '1.0'
           pids: 256
         reservations:

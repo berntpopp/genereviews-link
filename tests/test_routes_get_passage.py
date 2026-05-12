@@ -220,6 +220,19 @@ async def test_get_passage_propagates_passage_role() -> None:
     assert resp.json()["passage"]["passage_role"] == "definition"
 
 
+@pytest.mark.asyncio
+async def test_get_passage_normalizes_unknown_passage_role_to_none() -> None:
+    """Unexpected DB passage_role strings must not make the route return 500."""
+    pr = _make_row(passage_role="unexpected_role")
+    app = _build_app(focal=pr)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1247:0022")
+
+    assert resp.status_code == 200
+    assert resp.json()["passage"]["passage_role"] is None
+
+
 # ---------------------------------------------------------------------------
 # heading_path_array opt-in tests (Task 11 — Spec H1)
 # ---------------------------------------------------------------------------
