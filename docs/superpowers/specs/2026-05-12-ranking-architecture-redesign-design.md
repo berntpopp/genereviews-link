@@ -343,22 +343,47 @@ New fixtures:
 
 ## Public-host deployment policy
 
-Based on 2025-2026 MCP rate-limiting best-practice consensus ([MintMCP](https://www.mintmcp.com/blog/rate-limiting-with-mcp), [Cloudflare WAF guidance](https://developers.cloudflare.com/waf/rate-limiting-rules/best-practices/), [Markaicode MCP API protection 2025](https://markaicode.com/mcp-api-protection-2025/)) and the AGENTS.md note that public hosted tools are research-use scoped: the `rerank=ce` mode is **enabled but rate-limited** on the public host, not auth-gated.
+Based on 2025-2026 MCP rate-limiting best-practice consensus ([MintMCP](https://www.mintmcp.com/blog/rate-limiting-with-mcp), [Cloudflare WAF guidance](https://developers.cloudflare.com/waf/rate-limiting-rules/best-practices/), [Markaicode MCP API protection 2025](https://markaicode.com/mcp-api-protection-2025/)) and the AGENTS.md note that public hosted tools are research-use scoped: the `rerank=ce` mode is **enabled but rate-limited** on the public host, not auth-gated. Three layers of protection — per-IP request rate, global CE concurrency cap, and privacy-safe telemetry — together prevent both runaway agent abuse and disproportionate single-client compute share.
 
 | Setting | Public host | Local Docker |
 |---|---|---|
 | `rerank=lexical / rrf / off` | Available; modest per-IP rate limit (e.g., **60 req/min**) | Unlimited |
-| `rerank=ce` | Available; **stricter per-IP rate limit (e.g., 10-20 req/min)**. No auth header required. Returns 429 on overage. | Unlimited |
-| Telemetry | Log all `ce` calls with IP + query hash so abuse patterns are visible; aggregate, no PHI | Not needed |
+| `rerank=ce` | Available; per-IP rate limit (e.g., **15 req/min**) + **global CE concurrency cap** (e.g., **max 2 in-flight `ce` requests across all workers**). No auth header required. Returns 429 on per-IP overage; returns 503 with `Retry-After` on global concurrency overage. | Unlimited |
+| Telemetry | See "Privacy-safe telemetry" below — never raw query, IP-prefix-only, HMAC-hashed query, bounded retention. | Not needed |
 
 **Reasoning for "rate-limited, not gated":**
 
 - This MCP is a **research-use** tool. Requiring auth for the high-quality mode creates friction for legitimate clinicians and researchers — exactly the audience the project exists for.
-- A 10-20 req/min cap is well above any genuine clinical workflow (you're not running `ce` 100× per minute by hand) but caps abuse at ~14K queries/day max per IP — affordable on a 6-core VPS.
-- The cautionary tale informing this design: a runaway AI agent ran a $47K cloud bill in 8 hours via a single MCP ([MintMCP](https://www.mintmcp.com/blog/rate-limiting-with-mcp)). Rate-limiting `ce` mode prevents that failure mode without locking out researchers.
-- If abuse becomes a real problem in production, the escalation path is: add auth header → reduce per-IP limit → require institutional token. Don't pre-emptively gate.
+- A 15 req/min cap is well above any genuine clinical workflow (you're not running `ce` 100× per minute by hand) but caps theoretical abuse at ~21,600 queries/day max per IP. With the global concurrency cap on top, no single client can monopolize CE compute even if it stays under the per-minute limit.
+- The cautionary tale informing this design: a runaway AI agent ran a $47K cloud bill in 8 hours via a single MCP ([MintMCP](https://www.mintmcp.com/blog/rate-limiting-with-mcp)). Layered limits make this failure mode structurally impossible: even if the per-IP limiter is somehow bypassed (e.g., distributed botnet), the global concurrency cap keeps total CE compute bounded.
+- Auth tokens are an **escalation path, not the starting point**. Move to auth only after observed abuse or if hosting costs become material.
 
-**Implementation note**: rate-limiting at the application layer is sufficient for this MCP's scale; no external gateway needed. Use FastAPI middleware (e.g., `slowapi` or a small custom middleware on the search route) keyed on `request.client.host` with per-mode budgets. If a CDN/proxy fronts the public host, honor `X-Forwarded-For`.
+**Important caveat about in-memory limiters and multi-worker deployments.** A naive in-memory per-IP rate limiter (e.g., `slowapi` with the default in-process backend) maintains separate counters per uvicorn/gunicorn worker. With N workers, the effective per-IP limit becomes N × the configured value. For a single-process deployment this is fine; for multi-worker (e.g., gunicorn with 4 workers), either:
+- Run a single worker (acceptable for this MCP's traffic profile), OR
+- Use a shared-state backend (Redis or a small Postgres advisory-lock-based counter), OR
+- Configure the per-IP limit as `(target_limit ÷ worker_count)` to compensate.
+
+The global CE concurrency cap is **always cross-worker** — implement it as a Postgres advisory lock or a single-process asyncio semaphore in a coordinator (e.g., a dedicated `gunicorn` worker handling all CE requests).
+
+**Privacy-safe telemetry.** Never log raw query text. The logging spec for `ce` calls is:
+
+```
+log line fields:
+  - timestamp
+  - ip_prefix         # /24 for IPv4, /48 for IPv6 — coarsening dilutes individual-tracking
+  - client_key        # optional: opaque token if the request carried one; null otherwise
+  - query_hmac        # HMAC-SHA256(query, rotating server secret); secret rotated weekly
+  - retrieval_mode    # 'lexical' | 'rrf' | 'ce' | 'off'
+  - latency_ms
+  - status_code
+  - top_passage_id    # first row of results, useful for abuse pattern detection
+```
+
+Retention: 30 days rolling. The rotating HMAC secret means that even within retention, the same query text from different weeks hashes differently — preventing long-term query reconstruction. No PHI by construction (no IP, no raw query, no auth identifier persisted as-is).
+
+**`X-Forwarded-For` is spoofable** unless the public host runs behind a known trusted proxy (CDN, load balancer). Only honor `X-Forwarded-For` if the incoming connection's source IP is in a trusted-proxy allowlist; otherwise use `request.client.host` directly. Misconfiguration here defeats the entire per-IP limit.
+
+**Implementation note**: rate-limiting at the application layer is sufficient for this MCP's scale; no external gateway needed. Use FastAPI middleware (e.g., `slowapi` or a small custom middleware on the search route) with the cross-worker caveats above. Document the configured limits in `genereview://usage` so LLM consumers know what to expect from a 429.
 
 ## Open questions (decide before C-γ ships, not blocking C-α)
 
