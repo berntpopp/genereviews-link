@@ -104,6 +104,9 @@ def test_usage_resource_documents_search_aliases_and_heading_filter(
     normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
     expected_fragments = (
         "`search_passages` accepts both `q` and `query`",
+        "`get_passages_batch(ids=[...])`",
+        '`sections=["management"]`',
+        '`heading_path_contains="Prevention"`',
         "Omit both and the API returns a structured 422",
         "`missing_query`",
         "Providing both with different values returns a structured 422",

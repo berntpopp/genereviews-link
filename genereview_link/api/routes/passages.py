@@ -25,7 +25,7 @@ from genereview_link.models.genereview_models import (
     ScoreBreakdown,
     SearchDiagnosticsModel,
 )
-from genereview_link.models.sections import SectionName
+from genereview_link.models.sections import SECTION_NAMES, SectionName
 from genereview_link.retrieval.embeddings import EmbeddingProvider
 from genereview_link.retrieval.repository import GeneReviewRepository, PassageRow
 from genereview_link.retrieval.rerank import (
@@ -36,6 +36,7 @@ from genereview_link.retrieval.rerank import (
 router = APIRouter(tags=["Passages"])
 
 BATCH_MAX_IDS = 20
+SECTION_VALUES_DESCRIPTION = ", ".join(f'"{section}"' for section in SECTION_NAMES)
 
 
 def _format_recommended_citation(
@@ -150,8 +151,7 @@ async def search_passages(
         list[SectionName] | None,
         Query(
             description=(
-                "Restrict to one or more canonical sections. Valid values "
-                "are listed in this parameter's JSONSchema enum."
+                f"Restrict to one or more canonical sections. Values: {SECTION_VALUES_DESCRIPTION}."
             ),
         ),
     ] = None,
@@ -187,8 +187,10 @@ async def search_passages(
         list[Literal["score_breakdown", "heading_path"]] | None,
         Query(
             description=(
-                "Optional field projection. Each listed value is dropped "
-                "from every row. Use when you only need text + passage_id."
+                'Optional field projection. Values: "score_breakdown" '
+                '(drops the opt-in score_breakdown field), "heading_path" '
+                "(drops heading_path from every row). Use when you only need "
+                "text + passage_id."
             )
         ),
     ] = None,
@@ -196,10 +198,10 @@ async def search_passages(
         list[Literal["score_breakdown", "heading_path_array"]] | None,
         Query(
             description=(
-                "Opt into default-off response fields. "
-                "'score_breakdown' returns raw lexical/dense ranks and populates "
-                "_meta.dense_model_id + embedding_dim. "
-                "'heading_path_array' returns heading_path split on ' > '."
+                'Opt into default-off response fields. Values: "score_breakdown" '
+                "(returns raw lexical/dense ranks and populates "
+                '_meta.dense_model_id + embedding_dim), "heading_path_array" '
+                "(returns heading_path split on ' > ')."
             )
         ),
     ] = None,

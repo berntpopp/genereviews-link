@@ -15,7 +15,7 @@ USAGE_RESOURCE_MARKDOWN = """\
 title, last_updated_date, gene_symbols, per-section passage_count and
 total_char_count, and the full list of tables -> `get_passage(passage_id)` OR
 `get_chapter_section(nbk_id, section)` OR `get_table(nbk_id, table_id)` OR
-`POST /passages/batch` for up to 20 passage_ids at once.
+`get_passages_batch(ids=[...])` for up to 20 passage_ids at once.
 
 ## Filters
 
@@ -37,10 +37,10 @@ is accepted.
 
 For intervention-focused or treatment-recommendation queries (e.g. risk-reducing
 surgery, prophylactic measures, treatment regimens), bias the search toward
-recommendation sections by passing `sections=["management",
-"treatment_of_manifestations", "prevention"]`. This avoids surfacing
-side-content like HRT-after-surgery or family-counseling passages above the
-actual intervention recommendations.
+recommendation sections by passing `sections=["management"]`. For subsection
+narrowing, add `heading_path_contains="Prevention"` or another heading-path
+substring. This avoids surfacing side-content like HRT-after-surgery or
+family-counseling passages above the actual intervention recommendations.
 
 For diagnostic / clinical-criteria queries, use
 `sections=["diagnosis", "clinical_features"]`.
@@ -124,9 +124,9 @@ retrying with looser parameters.
 
 ## Batch fetch
 
-`POST /passages/batch` with body `{"ids": [...]}` (1..20 ids each matching
-`^NBK\\d+:\\d{4}$`). Returns 200 with `missing_ids` listing unresolved ids,
-422 on invalid input, 413 with `code=batch_size_exceeded` on overflow.
+`get_passages_batch(ids=[...])` accepts 1..20 ids each matching
+`^NBK\\d+:\\d{4}$`. Returns `missing_ids` listing unresolved ids, structured
+422 errors on invalid input, and `code=batch_size_exceeded` on overflow.
 
 ## Affordances on existing tools
 
@@ -147,7 +147,7 @@ retrying with looser parameters.
 - `include=score_breakdown` on `search_passages`: raw lexical + dense ranks;
   also surfaces `_meta.dense_model_id` and `_meta.embedding_dim`.
 - `include=heading_path_array` on `search_passages`, `get_passage`, and
-  `POST /passages/batch`: returns `heading_path` split into a `list[str]`.
+  `get_passages_batch`: returns `heading_path` split into a `list[str]`.
 - `heading_path_contains` on `search_passages`: filters hits by a substring in
   `heading_path`.
 - `heading_path_contains` also applies to `get_chapter_section`: filters
@@ -196,7 +196,7 @@ or rerank-config changes. Re-run `tests/smoke/measure_latency.sh` to refresh.
 | `get_chapter_section` | ~1 ms |
 | `get_chapter_metadata` | ~1 ms |
 | `get_table` | ~1 ms |
-| `POST /passages/batch` (10 ids) | ~2 ms |
+| `get_passages_batch` (10 ids) | ~2 ms |
 
 ## Example: a complete grounded answer (3 tool calls)
 

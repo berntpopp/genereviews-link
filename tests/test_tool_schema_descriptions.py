@@ -44,6 +44,23 @@ def test_search_passages_mode_description_lists_values_inline() -> None:
     ) in desc
 
 
+def test_search_passages_sections_description_lists_values_inline() -> None:
+    desc = _parameter_description(_app(), "/passages/search", "get", "sections")
+
+    for section in SECTION_NAMES:
+        assert f'"{section}"' in desc
+
+
+def test_search_passages_projection_descriptions_list_values_inline() -> None:
+    exclude_desc = _parameter_description(_app(), "/passages/search", "get", "exclude")
+    include_desc = _parameter_description(_app(), "/passages/search", "get", "include")
+
+    assert '"score_breakdown"' in exclude_desc
+    assert '"heading_path"' in exclude_desc
+    assert '"score_breakdown"' in include_desc
+    assert '"heading_path_array"' in include_desc
+
+
 def test_get_chapter_section_description_lists_section_values_inline() -> None:
     desc = _parameter_description(_app(), "/chapters/{nbk_id}/sections/{section}", "get", "section")
 

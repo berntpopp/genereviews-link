@@ -201,8 +201,9 @@ class RankedPassage(BaseModel):
     - ``mode="full"`` → ``text`` populated, ``snippet`` null.
 
     Top-level rank fields are populated whenever the selected rerank mode
-    produces them: RRF rerank produces all four, lexical rerank produces
-    lexical fields only, and rerank off produces none.
+    produces them: RRF rerank produces all four when dense scores are available,
+    lexical rerank produces lexical fields, and rerank off still exposes the
+    repository lexical score while position/RRF/dense fields remain null.
     """
 
     passage_id: str
