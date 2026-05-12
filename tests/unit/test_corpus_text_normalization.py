@@ -28,7 +28,8 @@ def test_chunker_preserves_proper_case() -> None:
     joined = " ".join(c.text for c in chunks)
     assert "Lynch" in joined, "proper-noun casing lost: 'Lynch' not found"
     assert "MLH1" in joined, "gene-name casing lost: 'MLH1' not found"
-    assert "lynch syndrome" not in joined.lower().replace("lynch", "SENTINEL"), (
+    assert "Lynch syndrome" in joined, "capitalized 'Lynch syndrome' lost during chunking"
+    assert "lynch syndrome" not in joined.replace("Lynch", "X"), (
         "lowercased form 'lynch syndrome' leaked into chunk text"
     )
 

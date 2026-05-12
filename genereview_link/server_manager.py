@@ -9,6 +9,7 @@ from typing import Any
 import uvicorn
 from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -385,7 +386,7 @@ class UnifiedServerManager:
                     )
             # Fall through to FastAPI's default 422 shape for all other
             # validation errors so we don't hide unrelated problems.
-            return JSONResponse(status_code=422, content={"detail": exc.errors()})
+            return JSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
 
         app.include_router(search.router)
         app.include_router(abstract.router)

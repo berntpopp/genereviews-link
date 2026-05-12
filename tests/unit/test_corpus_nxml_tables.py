@@ -55,8 +55,8 @@ def test_table_passage_chunk_index_is_interleaved() -> None:
     # (not all at the end or all at the start)
     t_idx = tables[0].chunk_index
     narrative_indices = [p.chunk_index for p in narrative]
-    assert any(n < t_idx for n in narrative_indices) or any(n > t_idx for n in narrative_indices), (
-        "Table chunk_index should be interleaved with narrative chunk_indices"
+    assert min(narrative_indices) < t_idx < max(narrative_indices), (
+        f"table passage chunk_index {t_idx} not interleaved between narrative passages {narrative_indices}"
     )
 
 

@@ -60,6 +60,7 @@ async def get_chapter_section(
     nbk_id: Annotated[
         str,
         Path(
+            pattern=r"^NBK\d+$",
             description="Bare NCBI Bookshelf ID, e.g. 'NBK1247'.",
         ),
     ],

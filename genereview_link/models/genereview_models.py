@@ -203,7 +203,7 @@ class RankedPassage(BaseModel):
 
     passage_id: str
     nbk_id: str
-    gene_symbols: list[str] = []
+    gene_symbols: list[str] = Field(default_factory=list)
     chapter_title: str
     chapter_last_updated: date | None = None
     chapter_section: SectionName
@@ -232,7 +232,7 @@ class PassageDetail(BaseModel):
     chunk_index: int
     text: str
     char_count: int
-    gene_symbols: list[str] = []
+    gene_symbols: list[str] = Field(default_factory=list)
     heading_path_array: list[str] | None = None
     recommended_citation: str  # always populated; no default to prevent silent omission
 
@@ -346,7 +346,7 @@ class TableResponse(BaseModel):
     table_id: str
     caption: str
     heading_path: str | None = None
-    section: str
+    section: SectionName
     header: list[str]
     rows: list[list[str]]
     passage_id: str

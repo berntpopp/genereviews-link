@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Path, Request
 
 from genereview_link.api.errors import FieldError, StructuredHTTPException
 from genereview_link.api.routes.passages import _get_corpus_version, get_repository
 from genereview_link.models.genereview_models import ResponseMeta, TableResponse
+from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.repository import GeneReviewRepository
 
 router = APIRouter(tags=["Chapters"])
@@ -74,7 +75,7 @@ async def get_table(
         table_id=table.table_id,
         caption=table.caption,
         heading_path=table.heading_path,
-        section=table.section,
+        section=cast(SectionName, table.section),
         header=table.header,
         rows=table.rows,
         passage_id=table.passage_id,

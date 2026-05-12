@@ -244,7 +244,7 @@ async def test_get_chapter_metadata_unscraped_section_emits_note(pool: asyncpg.P
     assert summary.passage_count == 0
     assert summary.note is not None
     assert "summary" in summary.note.lower()
-    assert "ncbi.nlm.nih.gov" in summary.note.lower()
+    assert "https://www.ncbi.nlm.nih.gov/books/NBKNOTES" in summary.note
 
     # A non-unscraped zero-count section gets no note.
     resources = next(s for s in meta.sections if s.section == "resources")
