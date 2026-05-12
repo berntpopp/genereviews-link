@@ -849,8 +849,20 @@ def _fake_lex_row(
     rrf_score: float | None = None,
     text: str = "A" * 5000,
     heading_path: str | None = None,
+    chapter_title: str = "Chapter",
+    chapter_last_updated: Any = None,
+    passage_type: str = "narrative",
+    table_id: str | None = None,
 ) -> LexicalPassageRow:
     """Build a LexicalPassageRow with controllable text for snippet_chars tests."""
+    from datetime import date as _date
+
+    last_updated: _date | None
+    if isinstance(chapter_last_updated, str):
+        last_updated = _date.fromisoformat(chapter_last_updated)
+    else:
+        last_updated = chapter_last_updated
+
     return LexicalPassageRow(
         passage=PassageRow(
             nbk_id=passage_id.split(":")[0],
@@ -860,9 +872,11 @@ def _fake_lex_row(
             section_level=2,
             chunk_index=int(passage_id.split(":")[1]),
             text=text,
-            chapter_title="Chapter",
-            chapter_last_updated=None,
+            chapter_title=chapter_title,
+            chapter_last_updated=last_updated,
             gene_symbols=("BRCA1",),
+            passage_type=passage_type,
+            table_id=table_id,
         ),
         phrase_rank=1.0,
         strict_rank=0.5,
@@ -1081,3 +1095,107 @@ async def test_search_ids_only_mode_never_includes_heading_path_array() -> None:
     assert resp.status_code == 200
     first = resp.json()["results"][0]
     assert "heading_path_array" not in first
+
+
+# ---------------------------------------------------------------------------
+# recommended_citation + table_id tests (Task 12 — Spec I1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_recommended_citation_format() -> None:
+    """recommended_citation is always present and uses the canonical format."""
+    rows = [
+        _fake_lex_row(
+            "NBK1247:0020",
+            section="management",
+            lexical_rank=0.9,
+            chapter_title="BRCA1- and BRCA2-Associated HBOC",
+            chapter_last_updated="2026-03-25",
+        )
+    ]
+    app = _build_app_with_fake_repo(rows)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "limit": 1})
+    assert resp.status_code == 200
+    citation = resp.json()["results"][0]["recommended_citation"]
+    assert citation == (
+        "BRCA1- and BRCA2-Associated HBOC. NBK1247. "
+        "Updated 2026-03-25. Passage NBK1247:0020."
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_recommended_citation_handles_null_date() -> None:
+    """recommended_citation emits 'date n/a' when chapter_last_updated is None."""
+    rows = [
+        _fake_lex_row(
+            "NBK9999:0001",
+            section="diagnosis",
+            lexical_rank=0.5,
+            chapter_title="Unrevised Chapter",
+            chapter_last_updated=None,
+        )
+    ]
+    app = _build_app_with_fake_repo(rows)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "x", "limit": 1})
+    assert resp.status_code == 200
+    citation = resp.json()["results"][0]["recommended_citation"]
+    assert "Updated date n/a" in citation
+    assert "Passage NBK9999:0001" in citation
+
+
+@pytest.mark.asyncio
+async def test_search_table_id_populated_for_table_type_hits() -> None:
+    """table_id is populated for table-type passages and absent for narrative passages."""
+    rows = [
+        _fake_lex_row(
+            "NBK1247:0030",
+            section="management",
+            lexical_rank=0.9,
+            passage_type="table",
+            table_id="mgmt.T.targeted_therapies",
+        ),
+        _fake_lex_row(
+            "NBK1247:0031",
+            section="management",
+            lexical_rank=0.8,
+            passage_type="narrative",
+        ),
+    ]
+    app = _build_app_with_fake_repo(rows)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "limit": 2})
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    by_id = {r["passage_id"]: r for r in results}
+    assert by_id["NBK1247:0030"]["table_id"] == "mgmt.T.targeted_therapies"
+    assert by_id["NBK1247:0031"].get("table_id") is None
+
+
+@pytest.mark.asyncio
+async def test_ids_only_mode_omits_recommended_citation_and_table_id() -> None:
+    """ids_only early-return does not include recommended_citation or table_id."""
+    rows = [
+        _fake_lex_row(
+            "NBK1247:0030",
+            section="management",
+            lexical_rank=0.9,
+            passage_type="table",
+            table_id="mgmt.T.x",
+        )
+    ]
+    app = _build_app_with_fake_repo(rows)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search", params={"q": "x", "mode": "ids_only", "limit": 1}
+        )
+    assert resp.status_code == 200
+    first = resp.json()["results"][0]
+    assert "recommended_citation" not in first
+    assert "table_id" not in first

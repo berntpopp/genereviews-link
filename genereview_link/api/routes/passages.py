@@ -6,6 +6,7 @@ boot). Set GENEREVIEW_EAGER_LOAD_BGE=true to use the real SentenceTransformer.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -35,6 +36,19 @@ from genereview_link.retrieval.rerank import (
 router = APIRouter(tags=["Passages"])
 
 BATCH_MAX_IDS = 20
+
+
+def _format_recommended_citation(
+    *,
+    chapter_title: str | None,
+    nbk_id: str,
+    last_updated: date | None,
+    passage_id: str,
+) -> str:
+    """Return the canonical recommended_citation string for a passage."""
+    title = chapter_title or "(untitled)"
+    date_str = last_updated.isoformat() if isinstance(last_updated, date) else "date n/a"
+    return f"{title}. {nbk_id}. Updated {date_str}. Passage {passage_id}."
 
 
 async def get_repository(request: Request) -> GeneReviewRepository:
@@ -309,6 +323,13 @@ async def search_passages(
                 char_count=len(r.passage.text),
                 score_breakdown=score_breakdown,
                 heading_path_array=heading_path_array,
+                recommended_citation=_format_recommended_citation(
+                    chapter_title=r.passage.chapter_title,
+                    nbk_id=r.passage.nbk_id,
+                    last_updated=r.passage.chapter_last_updated,
+                    passage_id=r.passage.passage_id,
+                ),
+                table_id=r.passage.table_id if r.passage.passage_type == "table" else None,
             )
         )
 
@@ -473,6 +494,12 @@ def _passage_row_to_detail(row: PassageRow, *, include_heading_array: bool = Fal
         gene_symbols=list(row.gene_symbols),
         passage_type=row.passage_type,
         heading_path_array=heading_path_array,
+        recommended_citation=_format_recommended_citation(
+            chapter_title=row.chapter_title,
+            nbk_id=row.nbk_id,
+            last_updated=row.chapter_last_updated,
+            passage_id=row.passage_id,
+        ),
     )
 
 

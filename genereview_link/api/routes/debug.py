@@ -10,7 +10,11 @@ from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from genereview_link.api.routes.passages import get_embedding_provider, get_repository
+from genereview_link.api.routes.passages import (
+    _format_recommended_citation,
+    get_embedding_provider,
+    get_repository,
+)
 from genereview_link.config import settings
 from genereview_link.models.genereview_models import RankedPassage, ScoreBreakdown
 from genereview_link.models.sections import SectionName
@@ -74,6 +78,13 @@ async def debug_ranking(
                     section_priority=SECTION_PRIORITY.get(r.passage.chapter_section, 100),
                     final_position=pos,
                 ),
+                recommended_citation=_format_recommended_citation(
+                    chapter_title=r.passage.chapter_title,
+                    nbk_id=r.passage.nbk_id,
+                    last_updated=r.passage.chapter_last_updated,
+                    passage_id=r.passage.passage_id,
+                ),
+                table_id=r.passage.table_id if r.passage.passage_type == "table" else None,
             )
         )
     return {

@@ -249,3 +249,25 @@ async def test_get_passage_heading_path_array_opt_in_neighbors() -> None:
     assert data["passage"]["heading_path_array"] == ["A", "B"]
     assert data["neighbors_before"][0]["heading_path_array"] == ["X", "Y"]
     assert data["neighbors_after"][0]["heading_path_array"] == ["P", "Q", "R"]
+
+
+# ---------------------------------------------------------------------------
+# recommended_citation tests (Task 12 — Spec I1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_passage_recommended_citation_present() -> None:
+    """PassageDetail includes recommended_citation in the canonical format."""
+    pr = _make_row(
+        passage_id="NBK1247:0020",
+        chunk_index=20,
+        chapter_title="HBOC",
+        chapter_last_updated=date(2026, 3, 25),
+    )
+    app = _build_app(focal=pr)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1247:0020")
+    assert resp.status_code == 200
+    citation = resp.json()["passage"]["recommended_citation"]
+    assert "HBOC. NBK1247. Updated 2026-03-25. Passage NBK1247:0020." in citation

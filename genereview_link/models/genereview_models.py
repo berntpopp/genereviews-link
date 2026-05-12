@@ -214,6 +214,8 @@ class RankedPassage(BaseModel):
     char_count: int
     score_breakdown: ScoreBreakdown | None = None
     heading_path_array: list[str] | None = None
+    recommended_citation: str  # always populated; no default to prevent silent omission
+    table_id: str | None = None  # populated only when passage_type='table'
 
 
 class PassageDetail(BaseModel):
@@ -232,6 +234,7 @@ class PassageDetail(BaseModel):
     char_count: int
     gene_symbols: list[str] = []
     heading_path_array: list[str] | None = None
+    recommended_citation: str  # always populated; no default to prevent silent omission
 
 
 class SearchDiagnosticsModel(BaseModel):
