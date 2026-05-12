@@ -81,6 +81,19 @@ def test_chapter_section_response_meta_alias_is_underscore_meta() -> None:
     assert "meta" not in dumped
 
 
+def test_chapter_section_response_has_note_field() -> None:
+    response = ChapterSectionResponse(
+        nbk_id="NBK1247",
+        chapter_title="BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+        chapter_section="summary",
+        passages=[],
+        passage_count=0,
+        note="Summary is not currently indexed; use the NCBI Bookshelf chapter.",
+    )
+
+    assert response.note is not None
+
+
 def test_passage_window_response_meta_alias_is_underscore_meta() -> None:
     detail = PassageDetail(
         passage_id="p1",

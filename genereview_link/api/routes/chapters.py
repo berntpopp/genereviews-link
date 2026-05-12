@@ -17,8 +17,12 @@ from genereview_link.models.genereview_models import (
     SectionSummary,
     TableSummary,
 )
-from genereview_link.models.sections import SectionName, canonicalize_nbk_id
-from genereview_link.retrieval.repository import GeneReviewRepository
+from genereview_link.models.sections import (
+    SYSTEMATICALLY_UNSCRAPED_SECTIONS,
+    SectionName,
+    canonicalize_nbk_id,
+)
+from genereview_link.retrieval.repository import GeneReviewRepository, _note_for_empty_section
 
 router = APIRouter(tags=["Chapters"])
 
@@ -119,6 +123,28 @@ async def get_chapter_section(
     nbk_id = canonicalize_nbk_id(nbk_id)
     passages = await repo.get_section(nbk_id, section, heading_path_contains=heading_path_contains)
     if not passages:
+        chapter = await repo.get_chapter_by_nbk(nbk_id)
+        if chapter is None:
+            raise StructuredHTTPException(
+                status_code=404,
+                code="chapter_not_found",
+                message=f"chapter {nbk_id!r} not in corpus",
+                recovery_hint="check the NBK ID; use search_passages to discover indexed chapters",
+                next_commands=[
+                    {"tool": "search_passages", "arguments": {"q": "<gene symbol or term>"}}
+                ],
+            )
+        if section in SYSTEMATICALLY_UNSCRAPED_SECTIONS:
+            return ChapterSectionResponse(
+                nbk_id=nbk_id,
+                chapter_title=chapter.title,
+                chapter_section=section,
+                chapter_last_updated=chapter.last_updated_date,
+                passages=[],
+                passage_count=0,
+                note=_note_for_empty_section(section, nbk_id),
+                meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
+            )
         raise StructuredHTTPException(
             status_code=404,
             code="section_empty_for_chapter",
