@@ -3,9 +3,14 @@
 Defines structured data models for validation and serialization.
 """
 
-from datetime import datetime
+from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from datetime import date, datetime
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field, StringConstraints
+
+from genereview_link.models.sections import SectionName
 
 
 class GeneReviewSection(BaseModel):
@@ -14,7 +19,7 @@ class GeneReviewSection(BaseModel):
     title: str = Field(description="The original title of the section.")
     content: str = Field(description="The full text content of the section.")
     level: int = Field(default=1, description="Heading level (1-6) indicating hierarchy.")
-    subsections: dict[str, "GeneReviewSection"] = Field(
+    subsections: dict[str, GeneReviewSection] = Field(
         default_factory=dict, description="Nested subsections."
     )
 
@@ -139,6 +144,20 @@ class CorpusVersion(BaseModel):
     is_active: bool
 
 
+COPYRIGHT_LINE = "© 1993–present University of Washington"  # noqa: RUF001 — canonical typography
+
+ATTRIBUTION_TEXT = (
+    f"GeneReviews® content {COPYRIGHT_LINE}; "
+    "sourced from NCBI Bookshelf. Full terms via the genereview://license resource."
+)
+
+ATTRIBUTION_TEXT_FULL = (
+    "GeneReviews® content © 1993–present University of Washington; "  # noqa: RUF001
+    "sourced from NCBI Bookshelf — GeneReviews. "
+    "Cite per https://www.ncbi.nlm.nih.gov/books/NBK138602/."
+)
+
+
 class LicenseNotice(BaseModel):
     """License and copyright notice for the GeneReviews data source.
 
@@ -147,7 +166,7 @@ class LicenseNotice(BaseModel):
     fetch this once and apply it to all consumed data.
     """
 
-    copyright: str = "(c) 1993-2026 University of Washington"
+    copyright: str = COPYRIGHT_LINE
     terms_url: str = "https://www.ncbi.nlm.nih.gov/books/NBK138602/"
     data_source: str = "NCBI Bookshelf — GeneReviews"
     data_source_url: str = "https://www.ncbi.nlm.nih.gov/books/NBK1116/"
@@ -155,6 +174,8 @@ class LicenseNotice(BaseModel):
         "GeneReviews(R) is a copyrighted resource. Attribute the University of "
         "Washington when redistributing. See terms_url for the full notice."
     )
+    license_spdx: str = "LicenseRef-GeneReviews"
+    attribution_text: str = ATTRIBUTION_TEXT_FULL
 
 
 class ScoreBreakdown(BaseModel):
@@ -172,13 +193,190 @@ class ScoreBreakdown(BaseModel):
 
 
 class RankedPassage(BaseModel):
-    """A passage returned by /passages/search, annotated with ranking scores."""
+    """A passage returned by /passages/search, annotated with ranking scores.
+
+    Either ``text`` or ``snippet`` is populated, never both. The route's
+    ``mode`` query parameter controls which:
+    - ``mode="brief"`` (default) → ``snippet`` populated, ``text`` null.
+    - ``mode="full"`` → ``text`` populated, ``snippet`` null.
+    """
 
     passage_id: str
     nbk_id: str
-    gene_symbols: list[str] = []
-    chapter_section: str
+    gene_symbols: list[str] = Field(default_factory=list)
+    chapter_title: str
+    chapter_last_updated: date | None = None
+    chapter_section: SectionName
     heading_path: str | None = None
+    passage_type: str = "narrative"
+    text: str | None = None
+    snippet: str | None = None
+    char_count: int
+    score_breakdown: ScoreBreakdown | None = None
+    heading_path_array: list[str] | None = None
+    recommended_citation: str  # always populated; no default to prevent silent omission
+    table_id: str | None = None  # populated only when passage_type='table'
+    source_url: str  # always populated; chapter-level NCBI Bookshelf URL
+
+
+class PassageDetail(BaseModel):
+    """Returned by GET /passages/{passage_id}."""
+
+    passage_id: str
+    nbk_id: str
+    chapter_title: str
+    chapter_last_updated: date | None = None
+    chapter_section: SectionName
+    heading_path: str | None = None
+    passage_type: str = "narrative"
+    section_level: int
+    chunk_index: int
     text: str
     char_count: int
-    score_breakdown: ScoreBreakdown
+    gene_symbols: list[str] = Field(default_factory=list)
+    heading_path_array: list[str] | None = None
+    recommended_citation: str  # always populated; no default to prevent silent omission
+    source_url: str  # always populated; chapter-level NCBI Bookshelf URL
+
+
+class SearchDiagnosticsModel(BaseModel):
+    """Diagnostics emitted under ``_meta.diagnostics`` when a search returns zero results."""
+
+    lexical_hits: int
+    lexical_hits_after_filters: int
+    applied_filters: list[str]
+    suggestions: list[str]
+
+
+class ResponseMeta(BaseModel):
+    """Per-response metadata (attribution, corpus version) emitted under ``_meta``."""
+
+    attribution: str = Field(default=ATTRIBUTION_TEXT)
+    corpus_version: str | None = None
+    diagnostics: SearchDiagnosticsModel | None = None
+    license_summary: str = "Research use only; cite per genereview://license"
+    dense_model_id: str | None = None
+    embedding_dim: int | None = None
+
+
+class PassageSearchResponse(BaseModel):
+    """Envelope returned by GET /passages/search."""
+
+    results: list[RankedPassage]
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+    model_config = {"populate_by_name": True}
+
+
+class PassageWindowResponse(BaseModel):
+    """Response shape for /passages/{id} (always wrapped, even when neighbors=0)."""
+
+    passage: PassageDetail
+    neighbors_before: list[PassageDetail] = Field(default_factory=list)
+    neighbors_after: list[PassageDetail] = Field(default_factory=list)
+    has_more_before: bool = False
+    has_more_after: bool = False
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}
+
+
+class PassageInSection(BaseModel):
+    """A passage as returned in a chapter section response."""
+
+    passage_id: str
+    heading_path: str | None = None
+    section_level: int
+    chunk_index: int
+    text: str
+
+
+class ChapterSectionResponse(BaseModel):
+    """Envelope returned by GET /chapters/{nbk_id}/sections/{section}."""
+
+    nbk_id: str
+    chapter_title: str
+    chapter_section: SectionName
+    chapter_last_updated: date | None = None
+    passages: list[PassageInSection]
+    passage_count: int  # always present; equals len(passages)
+    concatenated_text: str | None = None  # opt-in via include=concatenated_text
+    concatenated_char_count: int | None = None  # only when concatenated_text opted in
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+    model_config = {"populate_by_name": True}
+
+
+class SectionSummary(BaseModel):
+    """Per-section passage count and char count, emitted inside ChapterMetadataResponse."""
+
+    section: SectionName
+    passage_count: int
+    total_char_count: int
+    note: str | None = None
+
+
+class TableSummary(BaseModel):
+    """One table on a chapter: canonical slug, caption, section + heading context."""
+
+    table_id: str
+    caption: str
+    section: SectionName
+    heading_path: str
+    passage_id: str
+
+    model_config = {"populate_by_name": True}
+
+
+class ChapterMetadataResponse(BaseModel):
+    """Envelope returned by GET /chapters/{nbk_id}/metadata."""
+
+    nbk_id: str
+    title: str
+    chapter_last_updated: date | None = None
+    gene_symbols: list[str] = Field(default_factory=list)
+    sections: list[SectionSummary] = Field(default_factory=list)
+    table_count: int = 0
+    tables: list[TableSummary] = Field(default_factory=list)
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}
+
+
+class TableResponse(BaseModel):
+    """Envelope returned by GET /chapters/{nbk_id}/tables/{table_id}."""
+
+    nbk_id: str
+    table_id: str
+    caption: str
+    heading_path: str | None = None
+    section: SectionName
+    header: list[str]
+    rows: list[list[str]]
+    passage_id: str
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}
+
+
+# ---------------------------------------------------------------------------
+# Pass-3-A batch models (Task 8)
+# ---------------------------------------------------------------------------
+
+
+class PassageBatchRequest(BaseModel):
+    """Body for POST /passages/batch."""
+
+    ids: Annotated[
+        list[Annotated[str, StringConstraints(pattern=r"^NBK\d+:\d{4}$")]],
+        Field(min_length=1),
+    ]
+    include: list[Literal["heading_path_array"]] | None = None
+
+
+class PassageBatchResponse(BaseModel):
+    """Response for POST /passages/batch."""
+
+    passages: list[PassageDetail]
+    missing_ids: list[str] = Field(default_factory=list)
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}

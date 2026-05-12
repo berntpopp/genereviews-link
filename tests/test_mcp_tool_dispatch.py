@@ -33,14 +33,21 @@ def _build_app_with_state() -> FastAPI:
     fake_repo.search_passages = AsyncMock(return_value=[])
     fake_repo.active_embedding_table = AsyncMock(return_value="genereview_embeddings_bge384")
     fake_repo.dense_scores_for_passages = AsyncMock(return_value={})
+    from genereview_link.retrieval.repository import PassageRow
+
     fake_repo.get_section = AsyncMock(
         return_value=[
-            MagicMock(
+            PassageRow(
+                nbk_id="NBK1",
                 passage_id="NBK1:0001",
+                chapter_section="summary",
                 heading_path="Summary",
                 section_level=1,
                 chunk_index=0,
                 text="seeded",
+                chapter_title="Test",
+                chapter_last_updated=None,
+                gene_symbols=(),
             )
         ]
     )
@@ -58,7 +65,9 @@ async def test_passages_search_uses_app_state_repository() -> None:
             "/passages/search", params={"q": "anything", "limit": 5, "rerank": "off"}
         )
     assert resp.status_code == 200, resp.text
-    assert resp.json() == []
+    body = resp.json()
+    assert body["results"] == []
+    assert "_meta" in body
 
 
 @pytest.mark.asyncio
@@ -151,3 +160,71 @@ def test_unified_server_uses_single_app_instance(monkeypatch: pytest.MonkeyPatch
 class _DummyCtx:
     async def __aenter__(self) -> None: ...
     async def __aexit__(self, *_a: Any) -> None: ...
+
+
+@pytest.mark.asyncio
+async def test_get_passage_uses_app_state_repository() -> None:
+    """GET /passages/{passage_id} reads app.state.repository at request time."""
+    from datetime import date
+
+    from genereview_link.retrieval.repository import PassageRow
+
+    app = _build_app_with_state()
+    pr = PassageRow(
+        nbk_id="NBK1",
+        passage_id="NBK1:0001",
+        chapter_section="management",
+        heading_path="Management > X",
+        section_level=2,
+        chunk_index=1,
+        text="seeded passage",
+        chapter_title="Test",
+        chapter_last_updated=date(2025, 12, 1),
+        gene_symbols=("TG",),
+    )
+    app.state.repository.get_passage_window = AsyncMock(return_value=(pr, [], [], False, False))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1:0001")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["passage"]["chapter_title"] == "Test"
+
+
+def test_server_instructions_are_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """create_mcp_server passes instructions to FastMCP via from_fastapi kwargs."""
+    import asyncio
+
+    from fastmcp import FastMCP
+
+    from genereview_link.server_manager import UnifiedServerManager
+
+    captured: dict[str, object] = {}
+
+    def fake_from_fastapi(*args: Any, **kwargs: Any) -> MagicMock:
+        captured["instructions"] = kwargs.get("instructions")
+        captured["name"] = kwargs.get("name")
+        return MagicMock()
+
+    monkeypatch.setattr(FastMCP, "from_fastapi", staticmethod(fake_from_fastapi))
+
+    from genereview_link.config import ServerConfig
+
+    mgr = UnifiedServerManager()
+    app = mgr.create_fastapi_app(ServerConfig())
+    asyncio.run(mgr.create_mcp_server(app, ServerConfig()))
+
+    assert captured["instructions"] is not None
+    instructions = captured["instructions"]
+    assert isinstance(instructions, str)
+    assert "Canonical pipeline" in instructions
+    assert "search_passages" in instructions
+    assert "Research use only" in instructions
+
+
+def test_find_in_section_prompt_is_registered() -> None:
+    """find_in_section returns a usable prompt string."""
+    from genereview_link.mcp.prompts import find_in_section
+
+    text = find_in_section(gene_symbol="BRCA1", section="management")
+    assert "BRCA1" in text
+    assert "management" in text
+    assert "search_passages" in text

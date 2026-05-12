@@ -1,0 +1,10 @@
+<table-wrap id="t5">
+  <caption><title>Table 5</title><p>Risk-Reducing Mastectomy</p></caption>
+  <table>
+    <thead><tr><th>Variant</th><th>Drug</th><th>Min age</th></tr></thead>
+    <tbody>
+      <tr><td>Class I</td><td>elexacaftor</td><td>6 yrs</td></tr>
+      <tr><td>Class II</td><td>tezacaftor</td><td>12 yrs</td></tr>
+    </tbody>
+  </table>
+</table-wrap>

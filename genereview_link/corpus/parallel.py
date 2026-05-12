@@ -7,6 +7,7 @@ stages 4-6 of the ingest pipeline:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import tarfile
 from collections.abc import AsyncIterator, Iterator
@@ -17,9 +18,15 @@ from pathlib import Path
 import asyncpg
 
 from genereview_link.config import settings
-from genereview_link.corpus.nxml import NxmlParseError, parse_and_chunk_one
+from genereview_link.corpus.nxml import ChapterIngestAudit, NxmlParseError, parse_and_chunk_one
 from genereview_link.corpus.records import ChapterRecord, PassageRecord
 from genereview_link.corpus.sidedata import SideData
+
+# Coverage threshold: if more than this fraction of a chapter's body text is
+# unaccounted for after parsing, we log it at WARNING for operator review.
+# 0.5% allows for whitespace normalization and the "_text(child) -> .strip()"
+# leakage that's inherent in lxml's mixed-content traversal.
+INGEST_COVERAGE_WARN_THRESHOLD = 0.005
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +52,15 @@ def _iter_tarball(path: Path) -> Iterator[_RawNxml]:
             # nbk_id is resolved later via short-name + sidedata
 
 
+_ParseResult = tuple[ChapterRecord, list[PassageRecord], ChapterIngestAudit]
+
+
 def _worker_parse_chunk(
     raw_bytes: bytes,
     nbk_id: str,
     short_name: str,
     nxml_relpath: str,
-) -> tuple[ChapterRecord, list[PassageRecord]] | None:
+) -> _ParseResult | None:
     try:
         return parse_and_chunk_one(
             raw_bytes,
@@ -63,34 +73,69 @@ def _worker_parse_chunk(
         return None
 
 
+def _log_audit(audit: ChapterIngestAudit) -> None:
+    """Emit per-chapter conservation audit at INFO; WARN on shortfall."""
+    extra = audit.as_log_extra()
+    if audit.unaccounted_ratio > INGEST_COVERAGE_WARN_THRESHOLD:
+        logger.warning(
+            "ingest content-loss nbk=%s unaccounted_ratio=%.4f unknown_tags=%s",
+            audit.nbk_id,
+            audit.unaccounted_ratio,
+            audit.unknown_tags_with_text,
+            extra=extra,
+        )
+    elif audit.unknown_tags_with_text:
+        logger.warning(
+            "ingest unknown-tag nbk=%s tags=%s",
+            audit.nbk_id,
+            audit.unknown_tags_with_text,
+            extra=extra,
+        )
+    else:
+        logger.info(
+            "ingest audit nbk=%s passages=%d captured=%d body=%d list=%d def_list=%d boxed=%d",
+            audit.nbk_id,
+            audit.passage_count,
+            audit.captured_text_chars,
+            audit.body_text_chars,
+            audit.list_renders,
+            audit.def_list_renders,
+            audit.boxed_text_renders,
+            extra=extra,
+        )
+
+
 async def parse_pipeline(
     tarball_path: Path,
     sidedata: SideData,
     *,
     parse_workers: int | None = None,
 ) -> AsyncIterator[tuple[ChapterRecord, list[PassageRecord]]]:
-    """Yield (chapter, passages) per chapter; per-chapter independent."""
+    """Yield (chapter, passages) per chapter; per-chapter independent.
+
+    Per-chapter ChapterIngestAudit is logged here (INFO if clean, WARN
+    if content-loss threshold exceeded) and intentionally not surfaced
+    to the consumer to keep the iterator signature stable for callers.
+    """
     parse_workers = parse_workers or settings.INGEST_PARSE_WORKERS
     loop = asyncio.get_running_loop()
     nbk_by_short = {v: k for k, v in sidedata.short_name_by_nbk.items()}
 
     with ProcessPoolExecutor(max_workers=parse_workers) as executor:
-        in_flight: list[asyncio.Future[tuple[ChapterRecord, list[PassageRecord]] | None]] = []
+        in_flight: list[asyncio.Future[_ParseResult | None]] = []
         for raw in _iter_tarball(tarball_path):
             short_name = Path(raw.relpath).stem
             nbk_id = nbk_by_short.get(short_name, "")
             if not nbk_id:
                 logger.warning("no NBK id for short_name=%s; skipping", short_name)
                 continue
-            fut: asyncio.Future[tuple[ChapterRecord, list[PassageRecord]] | None] = (
-                loop.run_in_executor(
-                    executor,
-                    _worker_parse_chunk,
-                    raw.raw,
-                    nbk_id,
-                    short_name,
-                    raw.relpath,
-                )
+            fut: asyncio.Future[_ParseResult | None] = loop.run_in_executor(
+                executor,
+                _worker_parse_chunk,
+                raw.raw,
+                nbk_id,
+                short_name,
+                raw.relpath,
             )
             in_flight.append(fut)
             if len(in_flight) >= parse_workers * 2:
@@ -102,12 +147,16 @@ async def parse_pipeline(
                     result = await d
                     if result is None:
                         continue
-                    yield result
+                    chapter, passages, audit = result
+                    _log_audit(audit)
+                    yield chapter, passages
         for fut in asyncio.as_completed(in_flight):
             result = await fut
             if result is None:
                 continue
-            yield result
+            chapter, passages, audit = result
+            _log_audit(audit)
+            yield chapter, passages
 
 
 async def copy_chapters(
@@ -172,6 +221,9 @@ async def copy_passages(
             p.char_count,
             p.token_estimate,
             corpus_version,
+            p.passage_type,
+            p.table_id,
+            json.dumps(p.table_data) if p.table_data is not None else None,
         )
         for p in passages
     ]
@@ -190,5 +242,8 @@ async def copy_passages(
             "char_count",
             "token_estimate",
             "corpus_version",
+            "passage_type",
+            "table_id",
+            "table_data",
         ),
     )

@@ -36,8 +36,48 @@ def bge_query_text(text: str) -> str:
     return f"{BGE_QUERY_PREFIX}{text}"
 
 
-def bge_passage_text(text: str) -> str:
-    return text
+def bge_passage_text(
+    text: str,
+    *,
+    passage_type: str = "narrative",
+    max_tokens: int = 480,
+) -> str:
+    """Prepare a passage for BGE embedding input.
+
+    For ``passage_type == "table"`` the text is truncated so that the
+    caption, header row, and separator are preserved while body rows are
+    kept only up to the token budget (approximated as ``max_tokens * 4``
+    characters).  All other passage types are returned unchanged — they
+    are already token-budgeted at chunk time.
+    """
+    if passage_type != "table":
+        return text
+
+    lines = text.split("\n")
+    # Need at least: caption (0), blank (1), header (2), separator (3).
+    if len(lines) < 4:
+        return text
+
+    caption = lines[0]
+    header = lines[2]
+    separator = lines[3]
+    body_rows = lines[4:]
+
+    # Conservative char-proxy: ~4 chars per token.
+    budget_chars = max_tokens * 4
+    keep: list[str] = [caption, "", header, separator]
+    used = sum(len(line) for line in keep)
+    for row in body_rows:
+        if used + len(row) > budget_chars:
+            break
+        keep.append(row)
+        used += len(row)
+
+    result = "\n".join(keep)
+    # Only return the truncated version if it is actually shorter.
+    if len(result) >= len(text):
+        return text
+    return result
 
 
 class FakeEmbeddingProvider:

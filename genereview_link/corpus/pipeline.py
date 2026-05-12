@@ -88,6 +88,13 @@ async def atomic_swap(
         if existing:
             target = f"genereview_old_{existing.replace('-', '_').replace('.', '_')}"
             await conn.execute(f'alter schema genereview rename to "{target}"')
+            # Remove the old genereview:* migration records so the rename-rewrite
+            # below (genereview_staging:* → genereview:*) does not hit a unique
+            # constraint violation on the primary key (namespace, version).
+            await conn.execute(
+                "delete from public.schema_migrations "
+                "where namespace = 'data' and version like 'genereview:%'"
+            )
         else:
             # First ingest: drop the empty genereview schema that `db migrate`
             # provisioned so the staging rename below can land on a clean name.
