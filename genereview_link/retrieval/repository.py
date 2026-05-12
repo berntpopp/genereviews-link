@@ -165,6 +165,7 @@ class GeneReviewRepository:
         gene_symbol: str | None = None,
         nbk_id: str | None = None,
         sections: list[str] | None = None,
+        heading_path_contains: str | None = None,
         limit: int = 20,
         brief: bool = False,
         snippet_max_fragments: int = 2,
@@ -247,6 +248,7 @@ class GeneReviewRepository:
                        and ($3::text is null or $3 = any(c.gene_symbols))
                        and ($4::text is null or p.nbk_id = $4)
                        and ($5::text[] is null or p.chapter_section = any($5::text[]))
+                       and ($9::text is null or p.heading_path ILIKE '%' || $9 || '%')
                 ),
                 ranked as (
                     select
@@ -278,6 +280,7 @@ class GeneReviewRepository:
                 limit,
                 recall_query,
                 terms,
+                heading_path_contains,
             )
 
         return [

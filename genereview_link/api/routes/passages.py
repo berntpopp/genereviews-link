@@ -116,13 +116,21 @@ def _get_corpus_version(request: Request) -> str | None:
 )
 async def search_passages(
     q: Annotated[
-        str,
+        str | None,
         Query(
             min_length=1,
-            max_length=500,
-            description="Free-text query. Phrases, gene symbols, and clinical terms all work.",
+            max_length=512,
+            description=("Query string (canonical). Either q or query is required."),
         ),
-    ],
+    ] = None,
+    query: Annotated[
+        str | None,
+        Query(
+            min_length=1,
+            max_length=512,
+            description="Alias for q (cross-MCP convention).",
+        ),
+    ] = None,
     gene: Annotated[
         str | None,
         Query(
@@ -145,6 +153,14 @@ async def search_passages(
                 "Restrict to one or more canonical sections. Valid values "
                 "are listed in this parameter's JSONSchema enum."
             ),
+        ),
+    ] = None,
+    heading_path_contains: Annotated[
+        str | None,
+        Query(
+            min_length=1,
+            max_length=200,
+            description=("Case-insensitive substring filter on heading_path. Applied pre-rerank."),
         ),
     ] = None,
     mode: Annotated[
@@ -208,6 +224,23 @@ async def search_passages(
     embedder: Annotated[EmbeddingProvider, Depends(get_embedding_provider)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
 ) -> PassageSearchResponse | JSONResponse:
+    if q is not None and query is not None and q != query:
+        raise StructuredHTTPException(
+            status_code=422,
+            code="conflicting_query_param",
+            message="both q and query supplied with different values",
+            recovery_hint="pass only one of q or query, or pass the same string in both",
+        )
+    if not q and not query:
+        raise StructuredHTTPException(
+            status_code=422,
+            code="missing_query",
+            message="one of q or query is required",
+            recovery_hint="pass q='your query string'",
+        )
+    q = q or query
+    assert q is not None
+
     if gene:
         idx = getattr(request.app.state, "gene_index", None)
         if idx is not None and not idx.is_indexed(gene):
@@ -252,6 +285,7 @@ async def search_passages(
         gene_symbol=gene,
         nbk_id=nbk_id,
         sections=list(sections) if sections else None,
+        heading_path_contains=heading_path_contains,
         limit=max(limit * 3, 50),
         brief=(mode == "brief"),
         snippet_max_fragments=snippet_max_fragments,
@@ -283,6 +317,8 @@ async def search_passages(
         applied_filters.append(f"nbk_id={nbk_id}")
     if sections:
         applied_filters.append(f"sections={','.join(sections)}")
+    if heading_path_contains:
+        applied_filters.append(f"heading_path_contains={heading_path_contains}")
 
     diagnostics_model = SearchDiagnosticsModel(
         rerank_used=rerank,
@@ -300,6 +336,7 @@ async def search_passages(
                 gene_symbol=None,
                 nbk_id=None,
                 sections=None,
+                heading_path_contains=None,
                 limit=max(limit * 3, 50),
                 brief=False,
                 snippet_max_fragments=snippet_max_fragments,

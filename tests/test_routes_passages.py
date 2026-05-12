@@ -1005,11 +1005,13 @@ def _build_app_with_fake_repo(rows: list[LexicalPassageRow]) -> FastAPI:
             gene_symbol: str | None = None,
             nbk_id: str | None = None,
             sections: list[str] | None = None,
+            heading_path_contains: str | None = None,
             limit: int = 20,
             brief: bool = False,
             snippet_max_fragments: int = 2,
             snippet_max_words: int = 30,
         ) -> list[LexicalPassageRow]:
+            del heading_path_contains
             if not brief:
                 return source_rows
             # Produce a snippet whose length is proportional to snippet_max_words
