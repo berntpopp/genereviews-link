@@ -525,20 +525,57 @@ class EutilsClient:
 
         return article_data
 
-    async def get_all_links(self, pubmed_id: str) -> dict[str, list[str]]:
+    async def get_all_links(self, pubmed_id: str) -> dict[str, Any]:
         """Get all available links from a PubMed ID using elink."""
         params = {"dbfrom": "pubmed", "id": pubmed_id, "cmd": "prlinks"}
         root = await self._make_xml_request("elink.fcgi", params)
+        entries = self._parse_link_entries(root)
+        link_types = sorted({str(entry["link_type"]) for entry in entries})
 
-        urls = []
+        return {
+            "urls": [str(entry["url"]) for entry in entries],
+            "link_entries": entries,
+            "by_type": {
+                link_type: [
+                    str(entry["url"]) for entry in entries if entry["link_type"] == link_type
+                ]
+                for link_type in link_types
+            },
+        }
 
-        # Parse XML response for provider links
+    def _parse_link_entries(self, root: _StdET.Element) -> list[dict[str, str | None]]:
+        entries: list[dict[str, str | None]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def add(url: str | None, link_type: str, provider: str | None = None) -> None:
+            if not url:
+                return
+            key = (url, link_type)
+            if key in seen:
+                return
+            seen.add(key)
+            entries.append({"url": url, "link_type": link_type, "provider": provider})
+
         for obj_url in root.findall(".//ObjUrl"):
-            url_elem = obj_url.find(".//Url")
-            if url_elem is not None and url_elem.text:
-                urls.append(url_elem.text)
+            provider = obj_url.findtext("Provider/Name")
+            category = obj_url.findtext("Category")
+            link_type = "prlinks" if provider else "llinks"
+            add(obj_url.findtext("Url"), link_type, provider or category)
 
-        return {"urls": urls}
+        for link_set_db in root.findall(".//LinkSetDb"):
+            link_name = link_set_db.findtext("LinkName") or ""
+            for link in link_set_db.findall("Link"):
+                link_id = link.findtext("Id")
+                if link_id and "books" in link_name.lower():
+                    nbk_id = link_id if link_id.startswith("NBK") else f"NBK{link_id}"
+                    add(f"https://www.ncbi.nlm.nih.gov/books/{nbk_id}/", "books", "NCBI Bookshelf")
+                elif link_id and "pmc" in link_name.lower():
+                    add(
+                        f"https://www.ncbi.nlm.nih.gov/pmc/articles/PMC{link_id}/",
+                        "pmc",
+                        "PubMed Central",
+                    )
+        return entries
 
     async def scrape_genereview_comprehensive(self, book_url: str) -> dict[str, Any]:
         """Comprehensive scraping of a GeneReview book page with improved structure and fault tolerance."""

@@ -164,11 +164,23 @@ class TestLinksRoute:
     async def test_returns_links(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
-        fake_client._links = {"urls": ["https://example.com/a"]}
+        fake_client._links = {
+            "urls": ["https://example.com/a"],
+            "link_entries": [
+                {
+                    "url": "https://example.com/a",
+                    "link_type": "llinks",
+                    "provider": "Example",
+                }
+            ],
+            "by_type": {"llinks": ["https://example.com/a"]},
+        }
         resp = await http_client.get("/links/1")
         assert resp.status_code == 200
         body = resp.json()
         assert body["urls"] == ["https://example.com/a"]
+        assert body["link_entries"][0]["link_type"] == "llinks"
+        assert body["by_type"]["llinks"] == ["https://example.com/a"]
 
     @pytest.mark.asyncio
     async def test_links_500_on_error(

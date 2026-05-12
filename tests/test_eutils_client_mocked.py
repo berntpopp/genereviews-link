@@ -130,6 +130,51 @@ class TestGetBookUrlFromPmid:
 
 
 class TestGetAllLinks:
+    def test_parse_prlinks_entries(self, load_xml: Callable[[str], StdET.Element]) -> None:
+        root = load_xml("elink/PMID20301425_prlinks.xml")
+        client = EutilsClient()
+
+        entries = client._parse_link_entries(root)
+
+        assert entries == [
+            {
+                "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+                "link_type": "prlinks",
+                "provider": "NCBI Bookshelf",
+            }
+        ]
+
+    def test_parse_llinks_entries(self, load_xml: Callable[[str], StdET.Element]) -> None:
+        root = load_xml("elink/PMID20301425_llinks.xml")
+        client = EutilsClient()
+
+        entries = client._parse_link_entries(root)
+
+        assert entries == [
+            {
+                "url": "https://example.org/fulltext",
+                "link_type": "llinks",
+                "provider": "llinks",
+            }
+        ]
+
+    def test_parse_neighbor_entries(self, load_xml: Callable[[str], StdET.Element]) -> None:
+        root = load_xml("elink/PMID20301425_neighbor.xml")
+        client = EutilsClient()
+
+        entries = client._parse_link_entries(root)
+
+        assert {
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "link_type": "books",
+            "provider": "NCBI Bookshelf",
+        } in entries
+        assert {
+            "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC123456/",
+            "link_type": "pmc",
+            "provider": "PubMed Central",
+        } in entries
+
     @pytest.mark.asyncio
     @respx.mock
     async def test_parses_object_urls(self, client: EutilsClient) -> None:
@@ -144,7 +189,8 @@ class TestGetAllLinks:
             return_value=Response(200, content=xml.encode("utf-8"))
         )
         result = await client.get_all_links("20301425")
-        assert result == {"urls": ["https://example.com/a", "https://example.com/b"]}
+        assert result["urls"] == ["https://example.com/a", "https://example.com/b"]
+        assert result["by_type"]["llinks"] == ["https://example.com/a", "https://example.com/b"]
 
     @pytest.mark.asyncio
     @respx.mock
@@ -154,7 +200,7 @@ class TestGetAllLinks:
             return_value=Response(200, content=xml.encode("utf-8"))
         )
         result = await client.get_all_links("20301425")
-        assert result == {"urls": []}
+        assert result == {"urls": [], "link_entries": [], "by_type": {}}
 
 
 class TestFetchAbstractRegular:

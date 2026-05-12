@@ -38,8 +38,8 @@ async def get_links(
     # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient
     # until repository is populated.
     try:
-        result = await client.get_all_links(pubmed_id)
-        out = LinkData(urls=result.get("urls", []))
+        payload = await client.get_all_links(pubmed_id)
+        out = LinkData(**payload)
         if fresh:
             out.corpus_version = f"live:{datetime.now(UTC).isoformat()}"
         return out

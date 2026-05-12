@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<eLinkResult>
+  <LinkSet>
+    <IdUrlList>
+      <IdUrlSet>
+        <Id>20301425</Id>
+        <ObjUrl>
+          <Url>https://www.ncbi.nlm.nih.gov/books/NBK1247/</Url>
+          <Provider>
+            <Name>NCBI Bookshelf</Name>
+          </Provider>
+        </ObjUrl>
+      </IdUrlSet>
+    </IdUrlList>
+  </LinkSet>
+</eLinkResult>
