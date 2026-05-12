@@ -203,3 +203,49 @@ async def test_get_passage_exposes_passage_type_table() -> None:
         resp = await c.get("/passages/NBK1247:0099")
     assert resp.status_code == 200
     assert resp.json()["passage"]["passage_type"] == "table"
+
+
+# ---------------------------------------------------------------------------
+# heading_path_array opt-in tests (Task 11 — Spec H1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_passage_heading_path_array_absent_by_default() -> None:
+    """heading_path_array is absent from the focal passage unless opted in."""
+    pr = _make_row(passage_id="NBK1247:0010", chunk_index=10, heading_path="A > B > C")
+    app = _build_app(focal=pr)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1247:0010")
+    assert resp.status_code == 200
+    assert resp.json()["passage"].get("heading_path_array") is None
+
+
+@pytest.mark.asyncio
+async def test_get_passage_heading_path_array_opt_in() -> None:
+    """include=heading_path_array splits heading_path on ' > ' for the focal passage."""
+    pr = _make_row(passage_id="NBK1247:0010", chunk_index=10, heading_path="A > B > C")
+    app = _build_app(focal=pr)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1247:0010", params={"include": "heading_path_array"})
+    assert resp.status_code == 200
+    assert resp.json()["passage"]["heading_path_array"] == ["A", "B", "C"]
+
+
+@pytest.mark.asyncio
+async def test_get_passage_heading_path_array_opt_in_neighbors() -> None:
+    """include=heading_path_array also populates heading_path_array on neighbor passages."""
+    focal = _make_row(passage_id="NBK1247:0010", chunk_index=10, heading_path="A > B")
+    before_row = _make_row(passage_id="NBK1247:0009", chunk_index=9, heading_path="X > Y")
+    after_row = _make_row(passage_id="NBK1247:0011", chunk_index=11, heading_path="P > Q > R")
+    app = _build_app(focal=focal, before=[before_row], after=[after_row])
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/NBK1247:0010",
+            params={"neighbors": 1, "include": "heading_path_array"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["passage"]["heading_path_array"] == ["A", "B"]
+    assert data["neighbors_before"][0]["heading_path_array"] == ["X", "Y"]
+    assert data["neighbors_after"][0]["heading_path_array"] == ["P", "Q", "R"]

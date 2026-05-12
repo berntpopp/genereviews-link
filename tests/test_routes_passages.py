@@ -848,6 +848,7 @@ def _fake_lex_row(
     lexical_rank: float = 0.9,
     rrf_score: float | None = None,
     text: str = "A" * 5000,
+    heading_path: str | None = None,
 ) -> LexicalPassageRow:
     """Build a LexicalPassageRow with controllable text for snippet_chars tests."""
     return LexicalPassageRow(
@@ -855,7 +856,7 @@ def _fake_lex_row(
             nbk_id=passage_id.split(":")[0],
             passage_id=passage_id,
             chapter_section=section,
-            heading_path=f"{section.capitalize()} > X",
+            heading_path=heading_path if heading_path is not None else f"{section.capitalize()} > X",
             section_level=2,
             chunk_index=int(passage_id.split(":")[1]),
             text=text,
@@ -1009,3 +1010,74 @@ async def test_search_without_score_breakdown_omits_model_meta() -> None:
     # dense_model_id and embedding_dim must be absent or None
     assert meta.get("dense_model_id") is None
     assert meta.get("embedding_dim") is None
+
+
+# ---------------------------------------------------------------------------
+# heading_path_array opt-in tests (Task 11 — Spec H1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_heading_path_array_absent_by_default() -> None:
+    """heading_path_array is absent from results unless include=heading_path_array."""
+    rows = [
+        _fake_lex_row(
+            "NBK1247:0010",
+            section="management",
+            lexical_rank=0.9,
+            heading_path="Management > Treatment > Targeted Therapies",
+        )
+    ]
+    app = _build_app_with_fake_repo(rows)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "limit": 1})
+    assert resp.status_code == 200
+    result = resp.json()["results"][0]
+    assert result.get("heading_path_array") is None
+
+
+@pytest.mark.asyncio
+async def test_search_heading_path_array_opt_in() -> None:
+    """include=heading_path_array splits heading_path on ' > ' and returns the array."""
+    rows = [
+        _fake_lex_row(
+            "NBK1247:0010",
+            section="management",
+            lexical_rank=0.9,
+            heading_path="Management > Treatment > Targeted Therapies",
+        )
+    ]
+    app = _build_app_with_fake_repo(rows)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "limit": 1, "include": "heading_path_array"},
+        )
+    assert resp.status_code == 200
+    arr = resp.json()["results"][0]["heading_path_array"]
+    assert arr == ["Management", "Treatment", "Targeted Therapies"]
+
+
+@pytest.mark.asyncio
+async def test_search_ids_only_mode_never_includes_heading_path_array() -> None:
+    """ids_only mode early-return is not affected by include=heading_path_array."""
+    rows = [
+        _fake_lex_row(
+            "NBK1247:0010",
+            section="management",
+            lexical_rank=0.9,
+            heading_path="Management > X",
+        )
+    ]
+    app = _build_app_with_fake_repo(rows)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "mode": "ids_only", "include": "heading_path_array"},
+        )
+    assert resp.status_code == 200
+    first = resp.json()["results"][0]
+    assert "heading_path_array" not in first

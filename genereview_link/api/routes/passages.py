@@ -153,12 +153,13 @@ async def search_passages(
         ),
     ] = None,
     include: Annotated[
-        list[Literal["score_breakdown"]] | None,
+        list[Literal["score_breakdown", "heading_path_array"]] | None,
         Query(
             description=(
-                "Opt into default-off response fields. Currently supports "
-                "'score_breakdown' (raw lexical/dense ranks). Use for ranker "
-                "debugging."
+                "Opt into default-off response fields. "
+                "'score_breakdown' returns raw lexical/dense ranks and populates "
+                "_meta.dense_model_id + embedding_dim. "
+                "'heading_path_array' returns heading_path split on ' > '."
             )
         ),
     ] = None,
@@ -269,6 +270,7 @@ async def search_passages(
 
     include_set = set(include or [])
     include_score_breakdown = "score_breakdown" in include_set
+    include_heading_array = "heading_path_array" in include_set
 
     out: list[RankedPassage] = []
     for pos, r in enumerate(ranked, start=1):
@@ -287,6 +289,11 @@ async def search_passages(
             if include_score_breakdown
             else None
         )
+        heading_path_array = (
+            r.passage.heading_path.split(" > ")
+            if include_heading_array and r.passage.heading_path
+            else None
+        )
         out.append(
             RankedPassage(
                 passage_id=r.passage.passage_id,
@@ -301,6 +308,7 @@ async def search_passages(
                 snippet=r.snippet if mode == "brief" else None,
                 char_count=len(r.passage.text),
                 score_breakdown=score_breakdown,
+                heading_path_array=heading_path_array,
             )
         )
 
@@ -336,11 +344,13 @@ async def search_passages(
     else:
         meta = ResponseMeta(corpus_version=corpus, diagnostics=diagnostics_model)
 
-    # score_breakdown is opt-in (absent by default). Always exclude it from
-    # model_dump, then re-inject only when the caller requested it.
+    # score_breakdown and heading_path_array are opt-in (absent by default).
+    # Always exclude them from model_dump, then re-inject only when requested.
     excluded: set[str] = {str(field) for field in (exclude or [])}
     if not include_score_breakdown:
         excluded.add("score_breakdown")
+    if not include_heading_array:
+        excluded.add("heading_path_array")
 
     if excluded:
         return JSONResponse(
@@ -399,6 +409,12 @@ async def get_passage(
             ),
         ),
     ] = False,
+    include: Annotated[
+        list[Literal["heading_path_array"]] | None,
+        Query(
+            description="Opt into heading_path_array (heading_path split on ' > ').",
+        ),
+    ] = None,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
 ) -> PassageWindowResponse:
@@ -420,26 +436,16 @@ async def get_passage(
             ],
         )
 
-    def _to_detail(row: PassageRow) -> PassageDetail:
-        return PassageDetail(
-            passage_id=row.passage_id,
-            nbk_id=row.nbk_id,
-            chapter_title=row.chapter_title or "",
-            chapter_last_updated=row.chapter_last_updated,
-            chapter_section=cast(SectionName, row.chapter_section),
-            heading_path=row.heading_path,
-            passage_type=row.passage_type,
-            section_level=row.section_level,
-            chunk_index=row.chunk_index,
-            text=row.text,
-            char_count=len(row.text),
-            gene_symbols=list(row.gene_symbols),
-        )
+    include_heading_array = "heading_path_array" in set(include or [])
 
     return PassageWindowResponse(  # type: ignore[call-arg]
-        passage=_to_detail(focal),
-        neighbors_before=[_to_detail(r) for r in before],
-        neighbors_after=[_to_detail(r) for r in after],
+        passage=_passage_row_to_detail(focal, include_heading_array=include_heading_array),
+        neighbors_before=[
+            _passage_row_to_detail(r, include_heading_array=include_heading_array) for r in before
+        ],
+        neighbors_after=[
+            _passage_row_to_detail(r, include_heading_array=include_heading_array) for r in after
+        ],
         has_more_before=has_more_before,
         has_more_after=has_more_after,
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
@@ -448,6 +454,11 @@ async def get_passage(
 
 def _passage_row_to_detail(row: PassageRow, *, include_heading_array: bool = False) -> PassageDetail:
     """Convert a PassageRow to a PassageDetail response model."""
+    heading_path_array = (
+        row.heading_path.split(" > ")
+        if include_heading_array and row.heading_path
+        else None
+    )
     return PassageDetail(
         nbk_id=row.nbk_id,
         passage_id=row.passage_id,
@@ -461,6 +472,7 @@ def _passage_row_to_detail(row: PassageRow, *, include_heading_array: bool = Fal
         char_count=len(row.text),
         gene_symbols=list(row.gene_symbols),
         passage_type=row.passage_type,
+        heading_path_array=heading_path_array,
     )
 
 

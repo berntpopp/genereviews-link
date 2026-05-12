@@ -210,3 +210,37 @@ async def test_batch_200_corpus_version_from_app_state() -> None:
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["_meta"]["corpus_version"] == "2026-01-15"
+
+
+# ---------------------------------------------------------------------------
+# heading_path_array opt-in tests (Task 11 — Spec H1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_batch_heading_path_array_absent_by_default() -> None:
+    """heading_path_array is absent from batch results unless include=['heading_path_array']."""
+    row = _make_row(passage_id="NBK1247:0001", chunk_index=1, heading_path="A > B > C")
+    app = _build_app({"NBK1247:0001": row})
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.post("/passages/batch", json={"ids": ["NBK1247:0001"]})
+
+    assert resp.status_code == 200
+    assert resp.json()["passages"][0].get("heading_path_array") is None
+
+
+@pytest.mark.asyncio
+async def test_batch_heading_path_array_opt_in() -> None:
+    """include=['heading_path_array'] splits heading_path on ' > ' for each passage."""
+    row = _make_row(passage_id="NBK1247:0001", chunk_index=1, heading_path="A > B > C")
+    app = _build_app({"NBK1247:0001": row})
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.post(
+            "/passages/batch",
+            json={"ids": ["NBK1247:0001"], "include": ["heading_path_array"]},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["passages"][0]["heading_path_array"] == ["A", "B", "C"]

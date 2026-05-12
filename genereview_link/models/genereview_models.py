@@ -213,6 +213,7 @@ class RankedPassage(BaseModel):
     snippet: str | None = None
     char_count: int
     score_breakdown: ScoreBreakdown | None = None
+    heading_path_array: list[str] | None = None
 
 
 class PassageDetail(BaseModel):
@@ -230,6 +231,7 @@ class PassageDetail(BaseModel):
     text: str
     char_count: int
     gene_symbols: list[str] = []
+    heading_path_array: list[str] | None = None
 
 
 class SearchDiagnosticsModel(BaseModel):
