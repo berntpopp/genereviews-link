@@ -131,7 +131,6 @@ class TestPassagesSearchRoute:
                 recall_rank=0.3,
                 recall_overlap_count=2,
                 lexical_rank=0.6,
-                lexical_rank_position=2,
             )
         ]
         resp = await http_client.get("/passages/search?q=BRCA1&rerank=rrf")
@@ -139,7 +138,7 @@ class TestPassagesSearchRoute:
         p = resp.json()["results"][0]
         assert p["rrf_score"] is not None
         assert p["lexical_score"] == 0.6
-        assert p["lexical_rank_position"] == 2
+        assert p["lexical_rank_position"] == 1
         assert p["dense_rank_position"] == 1
         assert "score_breakdown" not in p
 
