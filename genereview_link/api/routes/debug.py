@@ -60,6 +60,7 @@ async def debug_ranking(
                 chapter_last_updated=r.passage.chapter_last_updated,
                 chapter_section=cast(SectionName, r.passage.chapter_section),
                 heading_path=r.passage.heading_path,
+                passage_type=r.passage.passage_type,
                 text=r.passage.text,
                 char_count=len(r.passage.text),
                 score_breakdown=ScoreBreakdown(

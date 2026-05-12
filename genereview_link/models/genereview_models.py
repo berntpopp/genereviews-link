@@ -197,6 +197,7 @@ class RankedPassage(BaseModel):
     chapter_last_updated: date | None = None
     chapter_section: SectionName
     heading_path: str | None = None
+    passage_type: str = "narrative"
     text: str | None = None
     snippet: str | None = None
     char_count: int
@@ -212,6 +213,7 @@ class PassageDetail(BaseModel):
     chapter_last_updated: date | None = None
     chapter_section: SectionName
     heading_path: str | None = None
+    passage_type: str = "narrative"
     section_level: int
     chunk_index: int
     text: str

@@ -548,3 +548,68 @@ async def test_search_diagnostics_via_exclude_path() -> None:
     diag = data["_meta"].get("diagnostics")
     assert diag is not None
     assert "suggestions" in diag
+
+
+# ---------------------------------------------------------------------------
+# passage_type exposure tests
+# ---------------------------------------------------------------------------
+
+
+def _make_table_row() -> LexicalPassageRow:
+    """Return a LexicalPassageRow with passage_type='table'."""
+    return LexicalPassageRow(
+        passage=PassageRow(
+            nbk_id="NBK1",
+            passage_id="NBK1:0099",
+            chapter_section="management",
+            heading_path="Management > Table 1",
+            section_level=2,
+            chunk_index=99,
+            text="Table cell content",
+            chapter_title="Chapter",
+            chapter_last_updated=None,
+            gene_symbols=("TG",),
+            passage_type="table",
+        ),
+        phrase_rank=1.0,
+        strict_rank=0.5,
+        recall_rank=0.4,
+        recall_overlap_count=1,
+        lexical_rank=1.0,
+        snippet="**Table** cell content",
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_exposes_passage_type_table() -> None:
+    """When a result has passage_type='table', the JSON shape exposes it."""
+    from unittest.mock import MagicMock
+
+    repo = MagicMock()
+    repo.search_passages = AsyncMock(return_value=[_make_table_row()])
+    repo.active_embedding_table = AsyncMock(return_value="t")
+    repo.dense_scores_for_passages = AsyncMock(return_value={})
+
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "table"})
+
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert len(results) == 1
+    assert results[0]["passage_type"] == "table"
+
+
+@pytest.mark.asyncio
+async def test_search_narrative_passage_type_default() -> None:
+    """A standard narrative passage exposes passage_type='narrative'."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+    assert results[0]["passage_type"] == "narrative"

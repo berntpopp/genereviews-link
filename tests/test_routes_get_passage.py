@@ -169,3 +169,37 @@ async def test_unknown_passage_returns_structured_404() -> None:
     assert detail["code"] == "passage_not_found"
     assert "NBKxxxx:NNNN" in detail["recovery_hint"]
     assert detail["next_commands"][0]["tool"] == "search_passages"
+
+
+@pytest.mark.asyncio
+async def test_get_passage_exposes_passage_type_narrative() -> None:
+    """GET /passages/{id} exposes passage_type='narrative' for standard passages."""
+    pr = _make_row()
+    app = _build_app(focal=pr)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1247:0022")
+    assert resp.status_code == 200
+    assert resp.json()["passage"]["passage_type"] == "narrative"
+
+
+@pytest.mark.asyncio
+async def test_get_passage_exposes_passage_type_table() -> None:
+    """GET /passages/{id} exposes passage_type='table' when the row has that type."""
+    pr = PassageRow(
+        nbk_id="NBK1247",
+        passage_id="NBK1247:0099",
+        chapter_section="management",
+        heading_path="Management > Table 1",
+        section_level=2,
+        chunk_index=99,
+        text="Table cell content",
+        chapter_title="BRCA1- and BRCA2-Associated HBOC",
+        chapter_last_updated=date(2025, 12, 1),
+        gene_symbols=("BRCA1",),
+        passage_type="table",
+    )
+    app = _build_app(focal=pr)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1247:0099")
+    assert resp.status_code == 200
+    assert resp.json()["passage"]["passage_type"] == "table"
