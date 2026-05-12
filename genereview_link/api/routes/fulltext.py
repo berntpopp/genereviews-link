@@ -76,7 +76,7 @@ def _filter_sections(
         canonical = _SECTION_ALIASES.get(token, token)
         if canonical in sections:
             matched[canonical] = sections[canonical]
-            continue
+            token_matched = True
 
         for key in keys:
             if canonical in key.lower():

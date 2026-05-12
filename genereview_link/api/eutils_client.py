@@ -24,6 +24,12 @@ warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 logger = get_logger(__name__)
 
 
+def _itertext(elem: _StdET.Element | None) -> str:
+    if elem is None:
+        return ""
+    return " ".join("".join(elem.itertext()).split())
+
+
 class EutilsClient:
     """A client for interacting with NCBI E-utils and scraping GeneReviews."""
 
@@ -449,23 +455,26 @@ class EutilsClient:
         if pmid is not None:
             article_data["pmid"] = pmid.text or ""
 
-        # Extract title - ArticleTitle for the specific chapter
         title = book_document.find(".//ArticleTitle")
-        if title is not None:
-            article_data["title"] = title.text or ""
+        if title is None:
+            title = book_document.find(".//BookTitle")
+        if title is None:
+            title = book_document.find(".//Book/BookTitle")
+        article_data["title"] = _itertext(title)
 
         # Extract abstract - handle multiple AbstractText elements
-        abstract_texts = []
+        abstract_texts: list[str] = []
         for abstract_text in book_document.findall(".//Abstract/AbstractText"):
-            if abstract_text.text:
-                label = abstract_text.get("Label", "")
-                text = abstract_text.text.strip()
-                if label and label.upper() != "UNLABELLED":
-                    abstract_texts.append(f"{label}: {text}")
-                else:
-                    abstract_texts.append(text)
+            label = abstract_text.get("Label") or abstract_text.get("NlmCategory") or ""
+            text = _itertext(abstract_text)
+            if not text:
+                continue
+            if label and label.upper() != "UNLABELLED":
+                abstract_texts.append(f"{label}: {text}")
+            else:
+                abstract_texts.append(text)
 
-        article_data["abstract"] = " ".join(abstract_texts)
+        article_data["abstract"] = "\n\n".join(abstract_texts)
 
         # Extract authors - look for AuthorList with Type="authors"
         authors = []
@@ -486,7 +495,7 @@ class EutilsClient:
         # Extract journal/book information
         book_title = book_document.find(".//Book/BookTitle")
         if book_title is not None:
-            article_data["journal"] = book_title.text or "GeneReviews"
+            article_data["journal"] = _itertext(book_title) or "GeneReviews"
         else:
             article_data["journal"] = "GeneReviews"
 

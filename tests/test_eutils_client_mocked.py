@@ -6,8 +6,13 @@ would otherwise only be hit by live NCBI traffic.
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as StdET
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 import respx
+from defusedxml import ElementTree as ET  # noqa: N817 - drop-in replacement for stdlib ET
 from httpx import Response
 
 from genereview_link.api.eutils_client import EutilsClient
@@ -18,6 +23,15 @@ from genereview_link.config import settings
 def client() -> EutilsClient:
     """Fresh client per test - we never share state across tests."""
     return EutilsClient()
+
+
+@pytest.fixture
+def load_xml() -> Callable[[str], StdET.Element]:
+    def _load_xml(name: str) -> StdET.Element:
+        fixture_path = Path(__file__).parent / "fixtures" / name
+        return ET.fromstring(fixture_path.read_text(encoding="utf-8"))
+
+    return _load_xml
 
 
 def _eutils_url(endpoint: str) -> str:
@@ -195,6 +209,19 @@ class TestFetchAbstractRegular:
 
 
 class TestFetchAbstractBook:
+    def test_parse_book_article_preserves_title_and_labeled_abstract(self, load_xml) -> None:
+        root = load_xml("efetch/NBK1247_book_article.xml")
+        article = root.find(".//PubmedBookArticle")
+        client = EutilsClient()
+
+        parsed = client._parse_book_article(article, "20301425")
+
+        assert parsed["title"]
+        assert "DIAGNOSIS/TESTING:" in parsed["abstract"]
+        assert "GENETIC COUNSELING:" in parsed["abstract"]
+        assert "autosomal dominant manner" in parsed["abstract"]
+        assert not parsed["abstract"].endswith("of")
+
     @pytest.mark.asyncio
     @respx.mock
     async def test_parses_book_article(self, client: EutilsClient) -> None:
