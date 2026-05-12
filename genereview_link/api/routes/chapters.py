@@ -92,6 +92,18 @@ async def get_chapter_section(
             ),
         ),
     ] = False,
+    heading_path_contains: Annotated[
+        str | None,
+        Query(
+            max_length=200,
+            description=(
+                "Optional substring match on passage heading_path (case-insensitive). "
+                "Use to narrow a section to a specific subsection. Example: "
+                "heading_path_contains='Risk-Reducing Surgery' on section=management "
+                "returns only the surgery subsection's passages instead of all 10."
+            ),
+        ),
+    ] = None,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
 ) -> ChapterSectionResponse | JSONResponse:
@@ -102,7 +114,9 @@ async def get_chapter_section(
 
     Latency: ~1ms p50.
     """
-    passages = await repo.get_section(nbk_id, section)
+    passages = await repo.get_section(
+        nbk_id, section, heading_path_contains=heading_path_contains
+    )
     if not passages:
         raise StructuredHTTPException(
             status_code=404,

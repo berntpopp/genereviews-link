@@ -336,7 +336,13 @@ class GeneReviewRepository:
             )
         return _to_chapter_row(row) if row else None
 
-    async def get_section(self, nbk_id: str, chapter_section: str) -> list[PassageRow]:
+    async def get_section(
+        self,
+        nbk_id: str,
+        chapter_section: str,
+        *,
+        heading_path_contains: str | None = None,
+    ) -> list[PassageRow]:
         async with self._acquire() as conn:
             await conn.execute("set search_path to genereview, public")
             rows = await conn.fetch(
@@ -350,10 +356,12 @@ class GeneReviewRepository:
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
                  where p.nbk_id = $1 and p.chapter_section = $2
+                   and ($3::text is null or p.heading_path ilike '%' || $3 || '%')
                  order by p.chunk_index
                 """,
                 nbk_id,
                 chapter_section,
+                heading_path_contains,
             )
         return [self._row_to_passage(r) for r in rows]
 

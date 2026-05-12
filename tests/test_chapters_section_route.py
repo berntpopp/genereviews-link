@@ -457,3 +457,63 @@ async def test_chapter_section_concatenated_text_includes_char_count() -> None:
     body = resp.json()
     assert body["concatenated_text"] is not None
     assert body["concatenated_char_count"] == len(body["concatenated_text"])
+
+
+# ---------------------------------------------------------------------------
+# heading_path_contains filter tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chapter_section_heading_path_contains_filters_passages() -> None:
+    """heading_path_contains is forwarded to repo.get_section as a kwarg."""
+    app = FastAPI()
+    app.include_router(chapters_routes.router)
+    repo = MagicMock()
+    repo.get_section = AsyncMock(
+        return_value=[
+            PassageRow(
+                nbk_id="NBK1247",
+                passage_id="NBK1247:0001",
+                chapter_section="diagnosis",
+                heading_path="Diagnosis > Clinical Diagnosis",
+                section_level=2,
+                chunk_index=0,
+                text="Clinical diagnosis text.",
+            )
+        ]
+    )
+    app.state.repository = repo
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK1247/sections/diagnosis",
+            params={"heading_path_contains": "Clinical Diagnosis"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body["passages"], list)
+    assert body["passage_count"] == 1
+    # Verify the kwarg was forwarded to get_section
+    repo.get_section.assert_awaited_once()
+    call_kwargs = repo.get_section.call_args.kwargs
+    assert call_kwargs["heading_path_contains"] == "Clinical Diagnosis"
+
+
+@pytest.mark.asyncio
+async def test_chapter_section_heading_path_contains_over_200_chars_returns_422() -> None:
+    """heading_path_contains values exceeding max_length=200 must be rejected with 422."""
+    app = FastAPI()
+    app.include_router(chapters_routes.router)
+    repo = MagicMock()
+    repo.get_section = AsyncMock(return_value=[])
+    app.state.repository = repo
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK1247/sections/diagnosis",
+            params={"heading_path_contains": "x" * 201},
+        )
+
+    assert resp.status_code == 422
