@@ -10,7 +10,7 @@ Lift the GeneReview-Link MCP server from consumer-rated **9/10 → ≥9.5/10** b
 
 ## Scope
 
-Single phase (**Phase 9 — Ergonomics-v3**), 13 tasks, code-only changes. May include a chapters-only metadata reingest (~30 sec, no passage rewrite) gated on the Task B1 findings. Tag: `phase-9-ergonomics-v3`.
+Single phase (**Phase 9 — Ergonomics-v3**), 14 tasks, code-only changes. May include a chapters-only metadata reingest (~30 sec, no passage rewrite) gated on the Task B1 findings. Tag: `phase-9-ergonomics-v3`.
 
 **Explicit non-goals (deferred to Pass-3-B):**
 - `since=YYYY-MM-DD` recency filter on `search_passages`.
@@ -45,9 +45,17 @@ Two LLM-consumer reviews (2026-05-12) rated the server **9/10 overall**, with co
 - #9 Rerank-mode recall hint missing → documented in usage resource.
 - #10 No `_meta.license_summary` one-liner for stateless subagents → added.
 
+**From Review #3 (CF-session grounded review):**
+- #1 Table IDs not listed in metadata → Task C1 `tables: list[TableSummary]` (with `heading_path` added per this review's emphasis on context).
+- #2 Slug vs numeric table-ID naming unclear → Task A1 usage resource "Table ID naming" section pins the canonical form.
+- #6 Server instructions too long for some clients → Tasks A1–A3 split into trim + usage resource.
+- #7 `table_id` not on table-type search hits → Task J1 adds `table_id` field to `RankedPassage` when `passage_type='table'`.
+- #9 No per-passage recommended citation → Task J1 adds always-on `recommended_citation: str` to `RankedPassage` and `PassageDetail`.
+
 **Items intentionally deferred from each review:**
 - Review #1: #5 neighbors (already shipped, surfaced via usage resource), #6 list_chapters, #7 since filter, #15 prompts surface, #16 streaming, #17 cite(), #18 PMID cross-link.
 - Review #2: #7 related_chapters, #8 fields= allowlist (YAGNI given `exclude` + `ids_only`).
+- Review #3: #3 `text_kind` discriminator (breaking change; defer), #5 `answer_question()` composite tool (Pass-3-B / Pass-3-C), #8 `get_variant()` / responsive_variants (out of ergonomics scope — content-pipeline work), #10 proactive diagnostics on non-empty results (Pass-3-B).
 
 ## Architecture
 
@@ -96,11 +104,15 @@ H. heading_path opt-in array (1 task)
    H1  include=heading_path_array → heading_path_array: list[str] | None
        on search_passages + get_passage responses
 
+J. Search-hit citation + table jump (1 task)
+   J1  Always-on recommended_citation: str on RankedPassage + PassageDetail
+       AND table_id: str | None on RankedPassage for passage_type='table' hits
+
 I. Phase gate (1 task)
    I1  make ci-local + tests/smoke/phase_9.sh + annotated tag
 ```
 
-**Total:** 13 tasks. Single phase tag. Tests + smoke at the end. May or may not include a partial reingest (Task B branching).
+**Total:** 14 tasks. Single phase tag. Tests + smoke at the end. May or may not include a partial reingest (Task B branching).
 
 ## API shapes
 
@@ -129,10 +141,11 @@ not for clinical decision support.
 
 ```python
 class TableSummary(BaseModel):
-    table_id: str
+    table_id: str            # canonical NXML slug (e.g. "cf.T.cystic_fibrosis_targeted_therapies")
     caption: str
     section: SectionName
-    passage_id: str   # NBKxxxx:NNNN, fetchable via get_passage
+    heading_path: str        # e.g. "Management > Treatment > Table 6"
+    passage_id: str          # NBKxxxx:NNNN, fetchable via get_passage
 
 class SectionSummary(BaseModel):
     section: SectionName
@@ -264,13 +277,30 @@ class ResponseMeta(BaseModel):
 class RankedPassage(BaseModel):
     # existing fields preserved...
     heading_path_array: list[str] | None = None    # NEW
+    recommended_citation: str                       # NEW (Task J1) — always populated
+    table_id: str | None = None                     # NEW (Task J1) — populated only when passage_type='table'
 
 class PassageDetail(BaseModel):
     # existing fields preserved...
     heading_path_array: list[str] | None = None    # NEW
+    recommended_citation: str                       # NEW (Task J1) — always populated
 ```
 
-When opted in: populated as `heading_path.split(" > ") if heading_path else None`. Mode `ids_only` ignores this flag (documented).
+When opted in for `heading_path_array`: populated as `heading_path.split(" > ") if heading_path else None`. Mode `ids_only` ignores this flag (documented).
+
+### `recommended_citation` + `table_id` on search hits (Task J1)
+
+**`recommended_citation`** — always populated on `RankedPassage` (in brief / full modes; absent in `ids_only` by design) and `PassageDetail`. Format:
+
+```
+{chapter_title}. NBK{id}. Updated {chapter_last_updated|"date n/a"}. Passage {passage_id}.
+```
+
+Worked example: `"BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer. NBK1247. Updated 2026-03-25. Passage NBK1247:0020."` When `chapter_last_updated` is `None`, the date segment becomes `Updated date n/a` (rather than omitting) so the citation grammar stays uniform.
+
+LLMs paste this verbatim to satisfy the citation contract; the alternative `cite()` server-side tool in Pass-3-B can either reuse this string or generate richer formatted bibliographies.
+
+**`table_id`** — populated on `RankedPassage` only when `passage_type == 'table'`. Sourced from `PassageRow.table_id` (already projected in Pass-2 Task 19). Eliminates the round-trip a caller would otherwise need to discover the canonical slug from a table-type search hit. Use case: search hit comes back with `passage_type='table'` → caller immediately calls `get_table(nbk_id, table_id)` without parsing `heading_path`.
 
 ## Task B branching
 
@@ -330,10 +360,16 @@ The `genereview://usage` markdown resource has these sections, in order:
    - get_passage(neighbors=0..5, cross_sections=true|false): always-wrapped response shape.
    - passage_id format: ^NBK\d+:\d{4}$ (regex-validated on input).
    - passage_type field on every search hit: "narrative" or "table".
+   - table_id field on every passage_type='table' search hit (canonical NXML slug, jump straight to get_table).
+   - recommended_citation field on every search hit and passage detail: one-line citation ready to paste.
    - include=score_breakdown: opt-in raw ranks. Also surfaces _meta.dense_model_id + embedding_dim.
    - include=heading_path_array: opt-in structured heading list.
    - include=concatenated_text on get_chapter_section.
    - exclude=score_breakdown / exclude=heading_path: shrink payloads.
+## Table ID naming
+   The canonical `table_id` is the NXML slug attribute (e.g. `cf.T.cystic_fibrosis_targeted_therapies`,
+   `brca1.molgen.TA`), NOT a numeric "Table N" label. The numeric label is only a presentation
+   hint embedded in heading_path. Use the slug for get_table calls and tables-list lookups.
 ## Chapter date semantics
    [populated by Task B2 based on findings]
 ## Latency profile (p50)
@@ -361,6 +397,7 @@ Per-task TDD where possible. Critical test additions:
 - **G1 (license enrichment):** Resource test asserts new fields. REST `/license` route enriched identically (mirror).
 - **G2 (model metadata):** Search test asserts `dense_model_id` + `embedding_dim` populated only when `include=score_breakdown`.
 - **H1 (heading_path array):** Test asserts split correctness for chapters with deep nesting; null when source `heading_path` is null.
+- **J1 (citation + table_id):** Route tests: (a) `recommended_citation` matches the exact format `"{title}. {nbk_id}. Updated {date}. Passage {pid}."` for a seeded passage; (b) `table_id` populated on `passage_type='table'` search hits and absent on narrative hits; (c) `ids_only` mode omits `recommended_citation` and `table_id` by design.
 
 Phase gate (Task I1) writes `tests/smoke/phase_9.sh` covering every new endpoint and shape against the live gr-pg corpus on `127.0.0.1:8765`.
 
@@ -404,7 +441,7 @@ Pass-3-A is done when:
 
 - **Placeholder scan:** Task B2 has three branches; each is concretely defined. No "TBD" anywhere.
 - **Internal consistency:** Trimmed instructions reference `POST /passages/batch` (Task F1); resource manifest references both `license` and `usage` (Tasks A2 + G1); all new fields named consistently between API shapes and test sections.
-- **Scope check:** 13 tasks, one phase, code-only with a possible 30-sec reingest. Right-sized for a single implementation plan.
+- **Scope check:** 14 tasks, one phase, code-only with a possible 30-sec reingest. Right-sized for a single implementation plan.
 - **Ambiguity check:** Task B branching is the only soft area; the three outcomes + their B2 actions are pinned to avoid drift.
 
 ## Cross-references
