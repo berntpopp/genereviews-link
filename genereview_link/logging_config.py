@@ -70,7 +70,6 @@ def configure_structlog() -> None:
         add_correlation_id,
         structlog.stdlib.PositionalArgumentsFormatter(),
         structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
     ]
 
     processors: list[Processor]
@@ -78,6 +77,7 @@ def configure_structlog() -> None:
         # Production: JSON logging
         processors = [
             *common_processors,
+            structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(serializer=json_serializer),
         ]
     else:
