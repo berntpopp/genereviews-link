@@ -381,7 +381,7 @@ class EutilsClient:
         if medline_citation is not None:
             pmid = medline_citation.find(".//PMID")
             if pmid is not None:
-                article_data["pmid"] = pmid.text or ""
+                article_data["pmid"] = _itertext(pmid)
 
         # Extract article details
         article_elem = article.find(".//Article")
@@ -389,18 +389,19 @@ class EutilsClient:
             # Title
             title = article_elem.find(".//ArticleTitle")
             if title is not None:
-                article_data["title"] = title.text or ""
+                article_data["title"] = _itertext(title)
 
             # Abstract
-            abstract_texts = []
+            abstract_texts: list[str] = []
             for abstract_text in article_elem.findall(".//Abstract/AbstractText"):
-                if abstract_text.text:
-                    label = abstract_text.get("Label", "")
-                    text = abstract_text.text.strip()
-                    if label:
-                        abstract_texts.append(f"{label}: {text}")
-                    else:
-                        abstract_texts.append(text)
+                label = abstract_text.get("Label") or abstract_text.get("NlmCategory") or ""
+                text = _itertext(abstract_text)
+                if not text:
+                    continue
+                if label:
+                    abstract_texts.append(f"{label}: {text}")
+                else:
+                    abstract_texts.append(text)
 
             article_data["abstract"] = " ".join(abstract_texts)
 
@@ -412,16 +413,18 @@ class EutilsClient:
                     last_name = author.find(".//LastName")
                     first_name = author.find(".//ForeName")
                     if last_name is not None:
-                        name = last_name.text or ""
-                        if first_name is not None and first_name.text:
-                            name = f"{first_name.text} {name}"
+                        name = _itertext(last_name)
+                        if first_name is not None:
+                            first = _itertext(first_name)
+                            if first:
+                                name = f"{first} {name}"
                         authors.append(name)
             article_data["authors"] = authors  # type: ignore[assignment]
 
             # Journal
             journal = article_elem.find(".//Journal/Title")
             if journal is not None:
-                article_data["journal"] = journal.text or ""
+                article_data["journal"] = _itertext(journal)
 
             # Publication date
             pub_date = article_elem.find(".//PubDate")
@@ -431,12 +434,10 @@ class EutilsClient:
                 day = pub_date.find(".//Day")
 
                 date_parts = []
-                if year is not None and year.text:
-                    date_parts.append(year.text)
-                if month is not None and month.text:
-                    date_parts.append(month.text)
-                if day is not None and day.text:
-                    date_parts.append(day.text)
+                for part in (year, month, day):
+                    text = _itertext(part)
+                    if text:
+                        date_parts.append(text)
 
                 article_data["publication_date"] = "-".join(date_parts) if date_parts else ""
 
@@ -453,7 +454,7 @@ class EutilsClient:
         # Extract PMID
         pmid = book_document.find(".//PMID")
         if pmid is not None:
-            article_data["pmid"] = pmid.text or ""
+            article_data["pmid"] = _itertext(pmid)
 
         title = book_document.find(".//ArticleTitle")
         if title is None:
@@ -485,9 +486,11 @@ class EutilsClient:
                     last_name = author.find(".//LastName")
                     first_name = author.find(".//ForeName")
                     if last_name is not None:
-                        name = last_name.text or ""
-                        if first_name is not None and first_name.text:
-                            name = f"{first_name.text} {name}"
+                        name = _itertext(last_name)
+                        if first_name is not None:
+                            first = _itertext(first_name)
+                            if first:
+                                name = f"{first} {name}"
                         authors.append(name)
                 break  # Use first authors list found
         article_data["authors"] = authors  # type: ignore[assignment]
@@ -507,12 +510,10 @@ class EutilsClient:
             day = contrib_date.find(".//Day")
 
             date_parts = []
-            if year is not None and year.text:
-                date_parts.append(year.text)
-            if month is not None and month.text:
-                date_parts.append(month.text)
-            if day is not None and day.text:
-                date_parts.append(day.text)
+            for part in (year, month, day):
+                text = _itertext(part)
+                if text:
+                    date_parts.append(text)
 
             article_data["publication_date"] = "-".join(date_parts) if date_parts else ""
         else:
@@ -521,15 +522,19 @@ class EutilsClient:
             if book_pub_date is not None:
                 year = book_pub_date.find(".//Year")
                 if year is not None:
-                    article_data["publication_date"] = year.text or ""
+                    article_data["publication_date"] = _itertext(year)
 
         return article_data
 
     async def get_all_links(self, pubmed_id: str) -> dict[str, Any]:
         """Get all available links from a PubMed ID using elink."""
-        params = {"dbfrom": "pubmed", "id": pubmed_id, "cmd": "prlinks"}
+        params = {"dbfrom": "pubmed", "id": pubmed_id, "cmd": "llinks"}
         root = await self._make_xml_request("elink.fcgi", params)
         entries = self._parse_link_entries(root)
+        if not entries:
+            params = {"dbfrom": "pubmed", "id": pubmed_id, "cmd": "prlinks"}
+            root = await self._make_xml_request("elink.fcgi", params)
+            entries = self._parse_link_entries(root)
         link_types = sorted({str(entry["link_type"]) for entry in entries})
 
         return {
@@ -557,15 +562,15 @@ class EutilsClient:
             entries.append({"url": url, "link_type": link_type, "provider": provider})
 
         for obj_url in root.findall(".//ObjUrl"):
-            provider = obj_url.findtext("Provider/Name")
-            category = obj_url.findtext("Category")
+            provider = _itertext(obj_url.find("Provider/Name"))
+            category = _itertext(obj_url.find("Category"))
             link_type = "prlinks" if provider else "llinks"
-            add(obj_url.findtext("Url"), link_type, provider or category)
+            add(_itertext(obj_url.find("Url")), link_type, provider or category)
 
         for link_set_db in root.findall(".//LinkSetDb"):
-            link_name = link_set_db.findtext("LinkName") or ""
+            link_name = _itertext(link_set_db.find("LinkName"))
             for link in link_set_db.findall("Link"):
-                link_id = link.findtext("Id")
+                link_id = _itertext(link.find("Id"))
                 if link_id and "books" in link_name.lower():
                     nbk_id = link_id if link_id.startswith("NBK") else f"NBK{link_id}"
                     add(f"https://www.ncbi.nlm.nih.gov/books/{nbk_id}/", "books", "NCBI Bookshelf")

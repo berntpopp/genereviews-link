@@ -202,6 +202,29 @@ class TestGetAllLinks:
         result = await client.get_all_links("20301425")
         assert result == {"urls": [], "link_entries": [], "by_type": {}}
 
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_uses_llinks_primary_for_book_urls(self, client: EutilsClient) -> None:
+        llinks_xml = (
+            "<?xml version='1.0'?>"
+            "<eLinkResult><LinkSet><IdUrlList><IdUrlSet>"
+            "<ObjUrl>"
+            "<Url>https://www.ncbi.nlm.nih.gov/books/NBK1247/</Url>"
+            "<Category>llinks</Category>"
+            "</ObjUrl>"
+            "</IdUrlSet></IdUrlList></LinkSet></eLinkResult>"
+        )
+        route = respx.get(_eutils_url("elink.fcgi")).mock(
+            return_value=Response(200, content=llinks_xml.encode("utf-8"))
+        )
+
+        result = await client.get_all_links("20301425")
+
+        assert route.call_count == 1
+        assert route.calls[0].request.url.params["cmd"] == "llinks"
+        assert result["urls"] == ["https://www.ncbi.nlm.nih.gov/books/NBK1247/"]
+        assert result["by_type"]["llinks"] == ["https://www.ncbi.nlm.nih.gov/books/NBK1247/"]
+
 
 class TestFetchAbstractRegular:
     @pytest.mark.asyncio
@@ -252,6 +275,39 @@ class TestFetchAbstractRegular:
         assert "Smith" in result["authors"]
         assert result["journal"] == "Journal of Tests"
         assert result["publication_date"] == "2024-06-15"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_preserves_inline_xml_text(self, client: EutilsClient) -> None:
+        xml = """<?xml version="1.0"?>
+        <PubmedArticleSet>
+          <PubmedArticle>
+            <MedlineCitation>
+              <PMID>12345</PMID>
+              <Article>
+                <ArticleTitle><i>GRIN2A</i>-Related Disorders</ArticleTitle>
+                <Abstract>
+                  <AbstractText Label="CLINICAL CHARACTERISTICS"><i>GRIN2A</i>-related disorders encompass a broad phenotypic spectrum.</AbstractText>
+                  <AbstractText Label="DIAGNOSIS/TESTING">The diagnosis of a <i>GRIN2A</i>-related disorder is established by molecular genetic testing.</AbstractText>
+                </Abstract>
+              </Article>
+            </MedlineCitation>
+          </PubmedArticle>
+        </PubmedArticleSet>
+        """
+        respx.get(_eutils_url("efetch.fcgi")).mock(
+            return_value=Response(200, content=xml.encode("utf-8"))
+        )
+        result = await client.fetch_abstract("12345")
+        assert result["title"] == "GRIN2A-Related Disorders"
+        assert (
+            "CLINICAL CHARACTERISTICS: GRIN2A-related disorders encompass "
+            "a broad phenotypic spectrum."
+        ) in result["abstract"]
+        assert (
+            "DIAGNOSIS/TESTING: The diagnosis of a GRIN2A-related disorder "
+            "is established by molecular genetic testing."
+        ) in result["abstract"]
 
 
 class TestFetchAbstractBook:
@@ -312,6 +368,46 @@ class TestFetchAbstractBook:
         assert "Anne Genome" in result["authors"]
         assert result["journal"] == "GeneReviews"
         assert result["publication_date"] == "2024-01"
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_preserves_inline_xml_text(self, client: EutilsClient) -> None:
+        xml = """<?xml version="1.0"?>
+        <PubmedArticleSet>
+          <PubmedBookArticle>
+            <BookDocument>
+              <PMID>27683935</PMID>
+              <ArticleTitle><i>GRIN2A</i>-Related Disorders</ArticleTitle>
+              <Abstract>
+                <AbstractText Label="CLINICAL CHARACTERISTICS"><i>GRIN2A</i>-related disorders encompass a broad phenotypic spectrum.</AbstractText>
+                <AbstractText Label="DIAGNOSIS/TESTING">The diagnosis of a <i>GRIN2A</i>-related disorder is established by molecular genetic testing.</AbstractText>
+                <AbstractText Label="MANAGEMENT">Targeted therapy and supportive care are recommended.</AbstractText>
+              </Abstract>
+              <Book>
+                <BookTitle><i>GeneReviews</i></BookTitle>
+              </Book>
+            </BookDocument>
+          </PubmedBookArticle>
+        </PubmedArticleSet>
+        """
+        respx.get(_eutils_url("efetch.fcgi")).mock(
+            return_value=Response(200, content=xml.encode("utf-8"))
+        )
+        result = await client.fetch_abstract("27683935")
+        assert result["title"] == "GRIN2A-Related Disorders"
+        assert (
+            "CLINICAL CHARACTERISTICS: GRIN2A-related disorders encompass "
+            "a broad phenotypic spectrum."
+        ) in result["abstract"]
+        assert (
+            "DIAGNOSIS/TESTING: The diagnosis of a GRIN2A-related disorder "
+            "is established by molecular genetic testing."
+        ) in result["abstract"]
+        assert (
+            "MANAGEMENT: Targeted therapy and supportive care are recommended."
+            in result["abstract"]
+        )
+        assert result["journal"] == "GeneReviews"
 
     @pytest.mark.asyncio
     @respx.mock
