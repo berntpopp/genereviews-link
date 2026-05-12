@@ -16,6 +16,7 @@
   {
     "query": "HFE C282Y allele frequency",
     "status": "must_not_regress",
+    "regression_kind": "exact-symbol-anchor",
     "expected_top1_passage_id": "NBK1440:0051",
     "observed_batch_ae_top1_passage_id": "NBK1440:0051",
     "notes": "Locked live Batch A+E top-1. NBK1440:0051 is the HFE molecular pathogenesis table with pathogenic alleles and allele-frequency comments."
@@ -23,6 +24,7 @@
   {
     "query": "tetra-amelia gene WNT3",
     "status": "must_not_regress",
+    "regression_kind": "pending-improvement",
     "expected_top1_passage_id": "NBK131811:0005",
     "observed_batch_ae_top1_passage_id": "NBK131811:0005",
     "notes": "Locked live Batch A+E top-1 even though the current result is Coffin-Siris syndrome molecular testing rather than tetra-amelia/WNT3; this is a no-intent baseline guard."
@@ -30,6 +32,7 @@
   {
     "query": "BRCA1 founder mutation Ashkenazi",
     "status": "must_not_regress",
+    "regression_kind": "exact-symbol-anchor",
     "expected_top1_passage_id": "NBK1247:0043",
     "observed_batch_ae_top1_passage_id": "NBK1247:0043",
     "notes": "Locked live Batch A+E top-1. NBK1247:0043 is the BRCA1/BRCA2 notable pathogenic variants table and includes Ashkenazi founder variants."
