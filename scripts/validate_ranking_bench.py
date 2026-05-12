@@ -44,6 +44,61 @@ async def query_mode(
     )
 
 
+async def validate_entry(
+    client: httpx.AsyncClient,
+    e: dict,  # type: ignore[type-arg]
+    sem: asyncio.Semaphore,
+) -> None:
+    """Validate a single bench entry, skipping if already bucketed."""
+    if e.get("validation_bucket"):
+        print(  # noqa: T201
+            f"  {e['expected_top1_passage_id']}: bucket={e['validation_bucket']} (cached)",
+            flush=True,
+        )
+        return
+
+    gold = e["expected_top1_passage_id"]
+    modes = ["lexical", "rrf", "off"]
+
+    async with sem:
+        # All 3 mode queries for this entry fire concurrently inside the semaphore slot.
+        tasks = [query_mode(client, e["query"], m, gold) for m in modes]
+        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+
+    results: dict[str, tuple[bool, bool, str | None] | tuple[bool, bool, str]] = {}
+    for m, res in zip(modes, results_list, strict=True):
+        if isinstance(res, Exception):
+            results[m] = (False, False, f"error: {res}")
+        else:
+            results[m] = res  # type: ignore[assignment]
+
+    top5 = [r[0] for r in results.values() if isinstance(r[0], bool)]
+    top50 = [r[1] for r in results.values() if isinstance(r[1], bool)]
+
+    if all(top5):
+        e["validation_bucket"] = "A"
+    elif any(top50):
+        e["validation_bucket"] = "B"
+    else:
+        e["validation_bucket"] = "C"
+
+    e["validation_detail"] = {m: {"top1": r[2]} for m, r in results.items()}
+
+    print(  # noqa: T201
+        f"  {e.get('expected_top1_passage_id', '?')}: bucket={e['validation_bucket']}",
+        flush=True,
+    )
+
+
+def atomic_write(path: Path, entries: list[dict]) -> None:  # type: ignore[type-arg]
+    """Write entries to path atomically via a temp-file rename."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w") as f:
+        for e in entries:
+            f.write(json.dumps(e) + "\n")
+    tmp.replace(path)
+
+
 async def main() -> None:
     ap = argparse.ArgumentParser(
         description="Validate silver ranking bench entries against live MCP retrieval modes."
@@ -62,6 +117,18 @@ async def main() -> None:
         action="store_true",
         help="Re-validate even entries that already have a validation_bucket",
     )
+    ap.add_argument(
+        "--concurrency",
+        type=int,
+        default=8,
+        help="Max concurrent entries in flight (default 8)",
+    )
+    ap.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=20,
+        help="Write progress to disk every N entries (default 20)",
+    )
     args = ap.parse_args()
 
     entries = [
@@ -70,48 +137,22 @@ async def main() -> None:
         if line.strip() and not line.startswith("#")
     ]
 
-    async with httpx.AsyncClient(base_url=args.base_url, timeout=30.0) as client:
+    if args.force:
         for e in entries:
-            if e.get("validation_bucket") and not args.force:
-                # Already validated; preserve unless caller explicitly clears.
-                print(  # noqa: T201
-                    f"  {e['expected_top1_passage_id']}: bucket={e['validation_bucket']} (cached)",
-                    flush=True,
-                )
-                continue
+            e.pop("validation_bucket", None)
+            e.pop("validation_detail", None)
 
-            gold = e["expected_top1_passage_id"]
-            modes = ["lexical", "rrf", "off"]
-            results: dict[str, tuple[bool, bool, str | None] | tuple[bool, bool, str]] = {}
-            for m in modes:
-                try:
-                    results[m] = await query_mode(client, e["query"], m, gold)
-                except Exception as ex:
-                    results[m] = (False, False, f"error: {ex}")
+    sem = asyncio.Semaphore(args.concurrency)
 
-            top5 = [r[0] for r in results.values() if isinstance(r[0], bool)]
-            top50 = [r[1] for r in results.values() if isinstance(r[1], bool)]
+    async with httpx.AsyncClient(base_url=args.base_url, timeout=60.0) as client:
+        idx = 0
+        while idx < len(entries):
+            chunk = entries[idx : idx + args.checkpoint_every]
+            await asyncio.gather(*(validate_entry(client, e, sem) for e in chunk))
+            atomic_write(args.input, entries)  # checkpoint after each chunk
+            idx += len(chunk)
 
-            if all(top5):
-                e["validation_bucket"] = "A"
-            elif any(top50):
-                e["validation_bucket"] = "B"
-            else:
-                e["validation_bucket"] = "C"
-
-            e["validation_detail"] = {m: {"top1": r[2]} for m, r in results.items()}
-
-            print(  # noqa: T201
-                f"  {e.get('expected_top1_passage_id', '?')}: bucket={e['validation_bucket']}",
-                flush=True,
-            )
-
-    # Rewrite the file with bucket annotations.
-    with args.input.open("w") as f:
-        for e in entries:
-            f.write(json.dumps(e) + "\n")
-
-    print("buckets:", Counter(e["validation_bucket"] for e in entries))  # noqa: T201
+    print("buckets:", Counter(e.get("validation_bucket", "?") for e in entries))  # noqa: T201
 
 
 if __name__ == "__main__":
