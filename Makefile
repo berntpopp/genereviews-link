@@ -1,4 +1,4 @@
-.PHONY: help install lock upgrade sync format format-check lint lint-ci lint-fix typecheck typecheck-fast typecheck-stop typecheck-fresh test test-fast test-unit test-integration test-cov test-cov-all test-all check ci-local precommit clean dev mcp-serve mcp-serve-http docker-build docker-up docker-down docker-logs bundle-validate bundle-publish-local cuda-check eval eval-baseline
+.PHONY: help install lock upgrade sync format format-check lint lint-ci lint-fix typecheck typecheck-fast typecheck-stop typecheck-fresh test test-fast test-unit test-integration test-cov test-cov-all test-all check ci-local precommit clean dev mcp-serve mcp-serve-http docker-build docker-up docker-down docker-logs bundle-validate bundle-publish-local cuda-check eval eval-baseline bench-ranking bench-ranking-validate
 
 DOCKER_COMPOSE := $(shell if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then echo "docker compose"; elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "docker compose"; fi)
 
@@ -148,3 +148,9 @@ eval: ## Run MRR@10 / section-precision@5 against tests/eval/
 eval-baseline: ## Re-capture baseline.json (requires explicit operator confirmation)
 	@echo "Refusing — edit tests/eval/baseline.json by hand or via a tracked PR."
 	@exit 1
+
+bench-ranking:  ## Run the ranking benchmark; assumes MCP is up at MCP_BASE_URL (default http://127.0.0.1:8765).
+	uv run python scripts/bench_ranking.py --bench tests/fixtures/ranking_bench.jsonl --json-out bench_ranking_results.json
+
+bench-ranking-validate:  ## Re-validate the benchmark fixture; assumes MCP is up.
+	uv run python scripts/validate_ranking_bench.py --input tests/fixtures/ranking_bench.jsonl
