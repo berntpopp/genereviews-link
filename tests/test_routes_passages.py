@@ -304,6 +304,7 @@ async def test_search_mode_full_populates_text() -> None:
     results = body["results"]
     assert results[0]["text"] == "full text here"
     assert results[0]["snippet"] is None
+    assert body["_meta"]["diagnostics"]["rerank_used"] == "rrf"
 
 
 @pytest.mark.asyncio
@@ -518,8 +519,8 @@ async def test_search_zero_results_long_query_emits_broaden_suggestion() -> None
 
 
 @pytest.mark.asyncio
-async def test_search_nonzero_results_omits_diagnostics() -> None:
-    """When results are returned, _meta.diagnostics is absent (None serialises to null/absent)."""
+async def test_search_nonzero_results_includes_diagnostics() -> None:
+    """Successful brief searches include always-on _meta.diagnostics."""
     repo = _make_brief_repo(rows=2)
     app = _make_brief_app(repo)
 
@@ -528,7 +529,60 @@ async def test_search_nonzero_results_omits_diagnostics() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["results"]) > 0
-    assert data["_meta"].get("diagnostics") is None
+    diag = data["_meta"].get("diagnostics")
+    assert diag is not None
+    assert diag["rerank_used"] == "rrf"
+    assert diag["lexical_candidate_count"] == 2
+    assert diag["dense_candidate_count"] == 0
+    assert diag["suggestions"] == []
+
+
+@pytest.mark.asyncio
+async def test_search_empty_filtered_results_probe_unfiltered_once() -> None:
+    """Empty filtered results issue one unfiltered probe and expose drop diagnostics."""
+    from unittest.mock import MagicMock
+
+    repo = MagicMock()
+    repo.search_passages = AsyncMock(side_effect=[[], [_brief_row("NBK1:0001", "**hit**")]])
+    repo.active_embedding_table = AsyncMock(return_value="t")
+    repo.dense_scores_for_passages = AsyncMock(return_value={})
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "sections": "management"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["results"] == []
+    diag = data["_meta"]["diagnostics"]
+    assert diag["lexical_candidate_count"] == 0
+    assert diag["unfiltered_lexical_count"] == 1
+    assert "section-filter-drops-all" in diag["suggestions"]
+    assert repo.search_passages.call_count == 2
+    first_call, second_call = repo.search_passages.call_args_list
+    assert first_call.kwargs["sections"] == ["management"]
+    assert second_call.kwargs["gene_symbol"] is None
+    assert second_call.kwargs["nbk_id"] is None
+    assert second_call.kwargs["sections"] is None
+
+
+@pytest.mark.asyncio
+async def test_search_nonempty_filtered_results_do_not_probe_unfiltered() -> None:
+    """Non-empty filtered results do not issue the empty-result unfiltered probe."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "sections": "management"},
+        )
+
+    assert resp.status_code == 200
+    assert repo.search_passages.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -545,9 +599,18 @@ async def test_search_diagnostics_shape() -> None:
     assert resp.status_code == 200
     diag = resp.json()["_meta"]["diagnostics"]
     assert diag is not None
-    for key in ("lexical_hits", "lexical_hits_after_filters", "applied_filters", "suggestions"):
+    for key in (
+        "rerank_used",
+        "lexical_candidate_count",
+        "dense_candidate_count",
+        "section_filters",
+        "unfiltered_lexical_count",
+        "applied_filters",
+        "suggestions",
+    ):
         assert key in diag, f"Missing diagnostics key: {key}"
     assert isinstance(diag["applied_filters"], list)
+    assert isinstance(diag["section_filters"], list)
     assert isinstance(diag["suggestions"], list)
 
 
@@ -799,9 +862,15 @@ async def test_search_ids_only_mode_returns_lean_shape() -> None:
     assert "results" in data
     assert len(data["results"]) == 2
     first = data["results"][0]
-    assert set(first.keys()) == {"passage_id", "rrf_score", "chapter_section"}
+    assert set(first.keys()) == {
+        "passage_id",
+        "rrf_score",
+        "lexical_rank_position",
+        "chapter_section",
+    }
     assert first["passage_id"].startswith("NBK1247:")
     assert isinstance(first["rrf_score"], (float, type(None)))
+    assert first["lexical_rank_position"] == 1
     # Crucially, none of these keys appear:
     for forbidden in (
         "text",
@@ -817,6 +886,9 @@ async def test_search_ids_only_mode_returns_lean_shape() -> None:
         assert forbidden not in first, f"Forbidden key present: {forbidden}"
     assert "_meta" in data
     assert "corpus_version" in data["_meta"]
+    diag = data["_meta"].get("diagnostics")
+    assert diag is not None
+    assert diag["rerank_used"] == "rrf"
 
 
 @pytest.mark.asyncio

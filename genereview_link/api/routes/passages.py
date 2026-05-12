@@ -276,14 +276,54 @@ async def search_passages(
 
     corpus = _get_corpus_version(request)
 
+    applied_filters: list[str] = []
+    if gene:
+        applied_filters.append(f"gene={gene}")
+    if nbk_id:
+        applied_filters.append(f"nbk_id={nbk_id}")
+    if sections:
+        applied_filters.append(f"sections={','.join(sections)}")
+
+    diagnostics_model = SearchDiagnosticsModel(
+        rerank_used=rerank,
+        lexical_candidate_count=len(lex),
+        dense_candidate_count=len(dense_scores) if rerank == "rrf" else None,
+        applied_filters=applied_filters,
+        section_filters=list(sections) if sections else [],
+        suggestions=[],
+    )
+    if not ranked:
+        unfiltered_lexical_count: int | None = None
+        if applied_filters:
+            unfiltered_lex = await repo.search_passages(
+                q,
+                gene_symbol=None,
+                nbk_id=None,
+                sections=None,
+                limit=max(limit * 3, 50),
+                brief=False,
+                snippet_max_fragments=snippet_max_fragments,
+                snippet_max_words=snippet_max_words,
+            )
+            unfiltered_lexical_count = len(unfiltered_lex)
+            diagnostics_model.unfiltered_lexical_count = unfiltered_lexical_count
+        diag = build_search_diagnostics(
+            query=q,
+            applied_filters=applied_filters,
+            lexical_candidate_count=len(lex),
+            unfiltered_lexical_count=unfiltered_lexical_count,
+        )
+        diagnostics_model.suggestions = diag.suggestions
+
     if mode == "ids_only":
-        meta = ResponseMeta(corpus_version=corpus)
+        meta = ResponseMeta(corpus_version=corpus, diagnostics=diagnostics_model)
         return JSONResponse(
             {
                 "results": [
                     {
                         "passage_id": r.passage.passage_id,
                         "rrf_score": r.rrf_score,
+                        "lexical_rank_position": r.lexical_rank_position,
                         "chapter_section": r.passage.chapter_section,
                     }
                     for r in ranked
@@ -346,28 +386,6 @@ async def search_passages(
                 table_id=r.passage.table_id if r.passage.passage_type == "table" else None,
                 source_url=_format_source_url(r.passage.nbk_id),
             )
-        )
-
-    diagnostics_model: SearchDiagnosticsModel | None = None
-    if not out:
-        applied: list[str] = []
-        if gene:
-            applied.append(f"gene={gene}")
-        if sections:
-            applied.append(f"sections={','.join(sections)}")
-        if nbk_id:
-            applied.append(f"nbk_id={nbk_id}")
-        diag = build_search_diagnostics(
-            query=q,
-            applied_filters=applied,
-            lexical_hits=len(lex),
-            lexical_hits_after_filters=len(out),
-        )
-        diagnostics_model = SearchDiagnosticsModel(
-            lexical_hits=diag.lexical_hits,
-            lexical_hits_after_filters=diag.lexical_hits_after_filters,
-            applied_filters=diag.applied_filters,
-            suggestions=diag.suggestions,
         )
 
     if include_score_breakdown:

@@ -248,12 +248,15 @@ class PassageDetail(BaseModel):
 
 
 class SearchDiagnosticsModel(BaseModel):
-    """Diagnostics emitted under ``_meta.diagnostics`` when a search returns zero results."""
+    """Diagnostics emitted under ``_meta.diagnostics`` for every search response."""
 
-    lexical_hits: int
-    lexical_hits_after_filters: int
-    applied_filters: list[str]
-    suggestions: list[str]
+    rerank_used: Literal["rrf", "lexical", "off"]
+    lexical_candidate_count: int
+    dense_candidate_count: int | None = None
+    section_filters: list[str] = Field(default_factory=list)
+    unfiltered_lexical_count: int | None = None
+    applied_filters: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
 
 
 class ResponseMeta(BaseModel):
