@@ -25,6 +25,22 @@ total_char_count, and the full list of tables -> `get_passage(passage_id)` OR
   enum)
 - `nbk_id` (matches `^NBK\\d+$`)
 
+## Query tuning
+
+For intervention-focused or treatment-recommendation queries (e.g. risk-reducing
+surgery, prophylactic measures, treatment regimens), bias the search toward
+recommendation sections by passing `sections=["management",
+"treatment_of_manifestations", "prevention"]`. This avoids surfacing
+side-content like HRT-after-surgery or family-counseling passages above the
+actual intervention recommendations.
+
+For diagnostic / clinical-criteria queries, use
+`sections=["diagnosis", "clinical_features"]`.
+
+For variant nomenclature lookups (e.g. `p.Glu168Ter`, rare allele symbols), set
+`rerank="lexical"` — dense retrieval can pull near-misses for exact-string
+queries.
+
 ## Rerank modes
 
 - **rrf** (default): RRF-blended lexical + dense. Best for general
@@ -34,10 +50,21 @@ total_char_count, and the full list of tables -> `get_passage(passage_id)` OR
   question where dense recall hurts.
 - **off**: raw repo order (no section_priority tiebreak); debugging only.
 
+**Score visibility**: every search hit always carries an `rrf_score` field (the
+RRF-blended score; comparable across hits for the same query but not across
+queries). To inspect per-component lexical/dense ranks, add
+`include=score_breakdown` — that also surfaces `_meta.dense_model_id` and
+`_meta.embedding_dim` for reproducibility. When a top hit looks off, fetch
+ranks 2-3 too and compare scores before committing.
+
 ## Response modes
 
 - **brief** (default): each row carries a ts_headline snippet with **bold**
-  highlights. Approximately 3 KB per response at `limit=5`.
+  highlights. Approximately 3 KB per response at `limit=5`. The `text` field
+  is `null` on every hit in **brief** mode by design — only the `snippet`
+  carries content. To receive the full passage text inline (skipping the
+  follow-up `get_passage` call), use **`mode=full`** instead. Larger payload,
+  fewer round-trips.
 - **full**: each row carries the entire passage text. Approximately 10-50 KB
   per row.
 - **ids_only**: each row is the lean `{passage_id, rrf_score, chapter_section}`
@@ -51,6 +78,11 @@ Range 80..800; default 400. Translates to ts_headline `MaxFragments` and
 `MaxWords` so callers can budget context spend.
 
 ## Diagnostics on empty results
+
+`_meta.diagnostics` is `null` on every response that returns results — that's
+expected, not missing data. It populates **only** when `results: []`, with a
+structured suggestions list pointing at the likely cause (gene filter killed
+all hits, sections filter excluded everything, query too narrow).
 
 When `results` is empty, `_meta.diagnostics` carries a structured
 suggestions list. Concrete example:
