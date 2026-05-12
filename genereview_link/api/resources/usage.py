@@ -24,8 +24,16 @@ total_char_count, and the full list of tables -> `get_passage(passage_id)` OR
 - `sections` (list of canonical names; see the `section` parameter's JSONSchema
   enum)
 - `nbk_id` (matches `^NBK\\d+$`)
+- `heading_path_contains` (substring match on heading path; available on
+  `search_passages` and `get_chapter_section`)
 
 ## Query tuning
+
+`search_passages` accepts both `q` and `query` for the search string. Omit both
+and the API returns a structured 422 error with code `missing_query`. Providing
+both with different values returns a structured 422 conflict error with code
+`conflicting_query_param`; when both are present with the same value, the request
+is accepted.
 
 For intervention-focused or treatment-recommendation queries (e.g. risk-reducing
 surgery, prophylactic measures, treatment regimens), bias the search toward
@@ -50,12 +58,14 @@ queries.
   question where dense recall hurts.
 - **off**: raw repo order (no section_priority tiebreak); debugging only.
 
-**Score visibility**: every search hit always carries an `rrf_score` field (the
-RRF-blended score; comparable across hits for the same query but not across
-queries). To inspect per-component lexical/dense ranks, add
-`include=score_breakdown` — that also surfaces `_meta.dense_model_id` and
-`_meta.embedding_dim` for reproducibility. When a top hit looks off, fetch
-ranks 2-3 too and compare scores before committing.
+**Score visibility**: when `rerank="rrf"`, every search hit produced by rerank
+exposes `rrf_score`, `lexical_score`, `lexical_rank_position`, and
+`dense_rank_position` as top-level fields. Scores are comparable across hits for
+the same query but not across queries. `score_breakdown` remains the opt-in deep
+view: add `include=score_breakdown` to inspect raw lexical + dense ranks and
+surface `_meta.dense_model_id` and `_meta.embedding_dim` for reproducibility.
+When a top hit looks off, fetch ranks 2-3 too and compare scores before
+committing.
 
 ## Response modes
 
@@ -67,43 +77,49 @@ ranks 2-3 too and compare scores before committing.
   fewer round-trips.
 - **full**: each row carries the entire passage text. Approximately 10-50 KB
   per row.
-- **ids_only**: each row is the lean `{passage_id, rrf_score, chapter_section}`
-  shape only. Approximately 70% smaller than brief. Use for bulk-triage
-  workflows; `include` flags, `recommended_citation`, and `table_id` are NOT
-  emitted in this mode.
+- **ids_only**: each row is the lean
+  `{passage_id, rrf_score, lexical_rank_position, chapter_section}` shape only.
+  Approximately 70% smaller than brief. Use for bulk-triage workflows;
+  `include` flags, `recommended_citation`, and `table_id` are NOT emitted in
+  this mode.
 
 ## `snippet_chars` (brief mode only)
 
 Range 80..800; default 400. Translates to ts_headline `MaxFragments` and
 `MaxWords` so callers can budget context spend.
 
-## Diagnostics on empty results
+## Diagnostics
 
-`_meta.diagnostics` is `null` on every response that returns results — that's
-expected, not missing data. It populates **only** when `results: []`, with a
-structured suggestions list pointing at the likely cause (gene filter killed
-all hits, sections filter excluded everything, query too narrow).
+`_meta.diagnostics` is present on every search response, including `ids_only`.
+`lexical_candidate_count` and `dense_candidate_count` are post-filter candidate
+counts, after SQL filters such as `gene`, `sections`, `nbk_id`, and
+`heading_path_contains` have been applied. `dense_candidate_count` is `null`
+when dense retrieval is not run (`rerank="lexical"` or `off`).
 
-When `results` is empty, `_meta.diagnostics` carries a structured
-suggestions list. Concrete example:
+When `results` is empty, `_meta.diagnostics` also carries a structured
+suggestions list. `unfiltered_lexical_count` is normally `null`, and is
+populated on empty filtered responses after the second unfiltered lexical probe.
+A non-zero `unfiltered_lexical_count` plus suggestion codes indicates filters
+likely dropped candidates. Concrete example:
 
 ```json
 {
   "_meta": {
     "diagnostics": {
-      "lexical_hits": 12,
-      "lexical_hits_after_filters": 0,
+      "lexical_candidate_count": 0,
+      "dense_candidate_count": 0,
+      "unfiltered_lexical_count": 12,
       "applied_filters": ["sections=management"],
       "suggestions": [
-        "try other sections — current sections filter excludes all hits"
+        "section-filter-drops-all"
       ]
     }
   }
 }
 ```
 
-Rules: `gene-filter-kills-hits`, `broaden-long-query`,
-`section-filter-drops-all`. Inspect `_meta.diagnostics.suggestions` before
+Rules: `gene-filter-drops-all`, `broaden-query`, `section-filter-drops-all`,
+`nbk-id-filter-drops-all`. Inspect `_meta.diagnostics.suggestions` before
 retrying with looser parameters.
 
 ## Batch fetch
@@ -132,6 +148,10 @@ retrying with looser parameters.
   also surfaces `_meta.dense_model_id` and `_meta.embedding_dim`.
 - `include=heading_path_array` on `search_passages`, `get_passage`, and
   `POST /passages/batch`: returns `heading_path` split into a `list[str]`.
+- `heading_path_contains` on `search_passages`: filters hits by a substring in
+  `heading_path`.
+- `heading_path_contains` also applies to `get_chapter_section`: filters
+  returned section passages by a substring in `heading_path`.
 - `include=concatenated_text` on `get_chapter_section`: returns the section
   text joined into a single string.
 - `dedupe=true&include=concatenated_text` on `get_chapter_section`: strips
