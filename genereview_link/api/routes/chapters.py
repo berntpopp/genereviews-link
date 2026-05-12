@@ -135,7 +135,7 @@ async def get_chapter_section(
                 ],
             )
         if section in SYSTEMATICALLY_UNSCRAPED_SECTIONS:
-            return ChapterSectionResponse(
+            return ChapterSectionResponse(  # type: ignore[call-arg]
                 nbk_id=nbk_id,
                 chapter_title=chapter.title,
                 chapter_section=section,

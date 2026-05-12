@@ -377,7 +377,7 @@ async def search_passages(
 
     if mode == "ids_only":
         meta = ResponseMeta(corpus_version=corpus, diagnostics=diagnostics_model)
-        return IdsOnlySearchResponse(
+        return IdsOnlySearchResponse(  # type: ignore[call-arg]
             results=[
                 IdsOnlyPassage(
                     passage_id=r.passage.passage_id,
