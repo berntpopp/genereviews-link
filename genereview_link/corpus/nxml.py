@@ -66,10 +66,11 @@ def parse_and_chunk_one(
     # Hand-crafted fixtures use the older BITS pattern:
     #   <pub-date pub-type="initial|updated|last-revision">
     # Probe the production pattern first; fall back to fixtures pattern.
+    # T1 findings (2026-05-12): see docs/superpowers/specs/2026-05-12-task-b1-findings.md
+    # for the chapter-date semantics audit. Outcome categorized as (a).
     _ph = meta.find("pub-history")
     if _ph is not None:
         initial = _parse_pub_date(_ph.find("date[@date-type='created']"))
-        # "revised" is the most recent revision; fall back to "updated"
         _rev = _ph.find("date[@date-type='revised']") or _ph.find("date[@date-type='updated']")
         updated = _parse_pub_date(_rev)
     else:
