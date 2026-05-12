@@ -227,6 +227,20 @@ class UnifiedServerManager:
                     error=str(exc),
                 )
 
+        # --- Gene symbol index (cached for fuzzy alias suggestions) ---
+        app.state.gene_index = None
+        if app.state.pool is not None:
+            try:
+                from genereview_link.services.gene_index import load_gene_index
+
+                app.state.gene_index = await load_gene_index(app.state.pool)
+                logger.info(
+                    "loaded gene_index",
+                    count=len(app.state.gene_index.symbols),
+                )
+            except Exception as exc:
+                logger.warning("gene_index load failed", error=str(exc))
+
         # --- Embedding provider ---
         if settings.GENEREVIEW_EAGER_LOAD_BGE:
             from genereview_link.retrieval.embeddings import SentenceTransformerEmbeddingProvider
