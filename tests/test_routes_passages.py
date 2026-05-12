@@ -978,8 +978,7 @@ def _make_ids_only_repo(passage_ids: list[str], sections: list[str] | None = Non
 
 @pytest.mark.asyncio
 async def test_search_ids_only_mode_returns_lean_shape() -> None:
-    """mode='ids_only' returns {passage_id, rrf_score, chapter_section} per result;
-    no text, no snippet, no chapter_title, no score_breakdown."""
+    """mode='ids_only' returns only the advertised five slim fields per result."""
     repo = _make_ids_only_repo(
         passage_ids=["NBK1247:0010", "NBK1247:0011"],
         sections=["management", "diagnosis"],
@@ -996,17 +995,19 @@ async def test_search_ids_only_mode_returns_lean_shape() -> None:
     assert "results" in data
     assert len(data["results"]) == 2
     first = data["results"][0]
-    assert set(first.keys()) == {
+    expected_keys = {
         "passage_id",
+        "nbk_id",
         "rrf_score",
         "lexical_rank_position",
         "chapter_section",
-        "passage_role",
     }
+    assert set(first.keys()) == expected_keys
+    assert all(set(result.keys()) == expected_keys for result in data["results"])
     assert first["passage_id"].startswith("NBK1247:")
+    assert first["nbk_id"] == "NBK1247"
     assert isinstance(first["rrf_score"], (float, type(None)))
     assert first["lexical_rank_position"] == 1
-    assert first["passage_role"] is None
     # Crucially, none of these keys appear:
     for forbidden in (
         "text",
@@ -1016,6 +1017,7 @@ async def test_search_ids_only_mode_returns_lean_shape() -> None:
         "recommended_citation",
         "heading_path_array",
         "passage_type",
+        "passage_role",
         "table_id",
         "source_url",
     ):

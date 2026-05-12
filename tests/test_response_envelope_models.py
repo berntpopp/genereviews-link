@@ -8,6 +8,8 @@ from genereview_link.models.genereview_models import (
     ATTRIBUTION_TEXT,
     COPYRIGHT_LINE,
     ChapterSectionResponse,
+    IdsOnlyPassage,
+    IdsOnlySearchResponse,
     LicenseNotice,
     PassageDetail,
     PassageSearchResponse,
@@ -38,6 +40,31 @@ def test_passage_search_response_meta_alias_is_underscore_meta():
     dumped = r.model_dump(by_alias=True)
     assert "_meta" in dumped
     assert "meta" not in dumped
+
+
+def test_ids_only_response_model_uses_slim_rows() -> None:
+    response = IdsOnlySearchResponse(
+        results=[
+            IdsOnlyPassage(
+                passage_id="NBK1247:0024",
+                nbk_id="NBK1247",
+                chapter_section="management",
+                rrf_score=0.1,
+                lexical_rank_position=2,
+            )
+        ]
+    )
+
+    dumped = response.model_dump(by_alias=True)
+
+    assert set(dumped["results"][0]) == {
+        "passage_id",
+        "nbk_id",
+        "chapter_section",
+        "rrf_score",
+        "lexical_rank_position",
+    }
+    assert "_meta" in dumped
 
 
 def test_chapter_section_response_meta_alias_is_underscore_meta() -> None:

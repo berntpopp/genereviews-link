@@ -280,6 +280,24 @@ class ResponseMeta(BaseModel):
     embedding_dim: int | None = None
 
 
+class IdsOnlyPassage(BaseModel):
+    """Lean row shape for search_passages(mode='ids_only')."""
+
+    passage_id: str
+    nbk_id: str
+    chapter_section: SectionName
+    rrf_score: float | None = None
+    lexical_rank_position: int | None = None
+
+
+class IdsOnlySearchResponse(BaseModel):
+    """Envelope returned by GET /passages/search when mode=ids_only."""
+
+    results: list[IdsOnlyPassage]
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+    model_config = {"populate_by_name": True}
+
+
 class PassageSearchResponse(BaseModel):
     """Envelope returned by GET /passages/search."""
 
