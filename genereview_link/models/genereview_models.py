@@ -199,6 +199,10 @@ class RankedPassage(BaseModel):
     ``mode`` query parameter controls which:
     - ``mode="brief"`` (default) → ``snippet`` populated, ``text`` null.
     - ``mode="full"`` → ``text`` populated, ``snippet`` null.
+
+    Top-level rank fields are populated whenever the selected rerank mode
+    produces them: RRF rerank produces all four, lexical rerank produces
+    lexical fields only, and rerank off produces none.
     """
 
     passage_id: str
@@ -212,6 +216,10 @@ class RankedPassage(BaseModel):
     text: str | None = None
     snippet: str | None = None
     char_count: int
+    rrf_score: float | None = None
+    lexical_score: float | None = None
+    lexical_rank_position: int | None = None
+    dense_rank_position: int | None = None
     score_breakdown: ScoreBreakdown | None = None
     heading_path_array: list[str] | None = None
     recommended_citation: str  # always populated; no default to prevent silent omission

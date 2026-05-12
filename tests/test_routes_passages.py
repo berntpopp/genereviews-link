@@ -120,6 +120,30 @@ class TestPassagesSearchRoute:
         assert "score_breakdown" not in p
 
     @pytest.mark.asyncio
+    async def test_returns_top_level_rank_fields_by_default(
+        self, http_client: AsyncClient, fake_repo: Any
+    ) -> None:
+        fake_repo.search_passages.return_value = [
+            LexicalPassageRow(
+                passage=_make_passage_row(),
+                phrase_rank=0.5,
+                strict_rank=0.4,
+                recall_rank=0.3,
+                recall_overlap_count=2,
+                lexical_rank=0.6,
+                lexical_rank_position=2,
+            )
+        ]
+        resp = await http_client.get("/passages/search?q=BRCA1&rerank=rrf")
+        assert resp.status_code == 200
+        p = resp.json()["results"][0]
+        assert p["rrf_score"] is not None
+        assert p["lexical_score"] == 0.6
+        assert p["lexical_rank_position"] == 2
+        assert p["dense_rank_position"] == 1
+        assert "score_breakdown" not in p
+
+    @pytest.mark.asyncio
     async def test_missing_q_returns_422(self, http_client: AsyncClient) -> None:
         resp = await http_client.get("/passages/search")
         assert resp.status_code == 422

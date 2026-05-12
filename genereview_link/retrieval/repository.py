@@ -67,6 +67,7 @@ class LexicalPassageRow:
     recall_overlap_count: int
     lexical_rank: float
     snippet: str | None = None
+    lexical_rank_position: int | None = None
     dense_rank: int | None = None
     rrf_score: float | None = None
 

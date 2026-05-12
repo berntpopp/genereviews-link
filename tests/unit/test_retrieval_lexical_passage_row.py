@@ -30,6 +30,19 @@ def test_lexical_passage_row_carries_rrf_fields() -> None:
     assert row.rrf_score == 0.024
 
 
+def test_lexical_passage_row_carries_lexical_rank_position() -> None:
+    row = LexicalPassageRow(
+        passage=_make_passage(),
+        phrase_rank=0.0,
+        strict_rank=0.0,
+        recall_rank=0.0,
+        recall_overlap_count=0,
+        lexical_rank=0.5,
+        lexical_rank_position=2,
+    )
+    assert row.lexical_rank_position == 2
+
+
 def test_lexical_passage_row_rrf_fields_default_to_none() -> None:
     """Existing call sites that omit dense_rank/rrf_score must still work."""
     row = LexicalPassageRow(
@@ -42,3 +55,4 @@ def test_lexical_passage_row_rrf_fields_default_to_none() -> None:
     )
     assert row.dense_rank is None
     assert row.rrf_score is None
+    assert row.lexical_rank_position is None

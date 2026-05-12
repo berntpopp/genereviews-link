@@ -331,6 +331,10 @@ async def search_passages(
                 text=r.passage.text if mode == "full" else None,
                 snippet=r.snippet if mode == "brief" else None,
                 char_count=len(r.passage.text),
+                rrf_score=r.rrf_score,
+                lexical_score=r.lexical_rank,
+                lexical_rank_position=r.lexical_rank_position,
+                dense_rank_position=r.dense_rank,
                 score_breakdown=score_breakdown,
                 heading_path_array=heading_path_array,
                 recommended_citation=_format_recommended_citation(
