@@ -21,9 +21,10 @@ router = APIRouter(tags=["License"])
     operation_id="get_license",
 )
 async def get_license() -> LicenseNotice:
-    """Return the copyright and attribution notice for GeneReviews data.
+    """Get attribution and citation terms for the GeneReviews corpus.
 
-    GeneReviews(R) is copyrighted by the University of Washington. Callers
-    that redistribute responses from this API must include this attribution.
+    Use this tool when emitting a citation block, compiling a research-use
+    disclosure, or verifying redistribution terms before exporting passages.
+    Returns the same content as the genereview://license resource.
     """
     return LicenseNotice()
