@@ -223,9 +223,10 @@ class GeneReviewRepository:
                         phraseto_tsquery('english', $2) as phrase_query,
                         websearch_to_tsquery('english', $2) as strict_query,
                         to_tsquery('english', $7) as recall_query,
+                        $8::text[] as recall_terms,
                         $1::text as _ignored
                 ),
-                cand as (
+                scored as (
                     select
                         p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
                         p.section_level, p.chunk_index, p.text,
@@ -239,13 +240,10 @@ class GeneReviewRepository:
                         ts_rank_cd(p.search_vector, q.recall_query) as recall_rank,
                         (
                             select count(*)
-                              from (
-                                  select distinct token
-                                    from regexp_split_to_table(lower(p.text), '[^a-zA-Z0-9]+') as token
-                                   where length(token) >= 3
-                              ) pt
-                             where pt.token = any($8::text[])
-                        ) as recall_overlap_count
+                              from unnest(q.recall_terms) as term
+                             where p.search_vector @@ plainto_tsquery('english', term)
+                        )::int as recall_overlap_count,
+                        cardinality(q.recall_terms)::int as recall_terms_count
                       from genereview_passages p
                       join genereview_chapters c on c.nbk_id = p.nbk_id, q
                      where (
@@ -260,20 +258,17 @@ class GeneReviewRepository:
                 ),
                 ranked as (
                     select
-                        nbk_id, passage_id, chapter_section, heading_path,
-                        section_level, chunk_index, text,
-                        gene_symbols, chapter_title, chapter_last_updated, chapter_ingested_at,
-                        passage_type, passage_role, table_id, table_data,
-                        phrase_rank, strict_rank, recall_rank, recall_overlap_count,
+                        *,
                         (phrase_rank * 3.0 + strict_rank * 2.0 + recall_rank)
                           * case
                               when phrase_rank = 0 and strict_rank = 0 and recall_rank > 0
-                                and array_length(regexp_split_to_array($2, E'\\s+'), 1) >= 4
-                                and recall_overlap_count <= 1
+                                and recall_terms_count >= 4
+                                and recall_overlap_count <= 2
                               then least(1.0, greatest(0.25, char_length(text)::double precision / 400.0))
                               else 1.0
                             end as lexical_rank
-                      from cand
+                      from scored
+                     where recall_overlap_count >= greatest(1, ceiling(0.25 * recall_terms_count)::int)
                      order by lexical_rank desc, nbk_id, passage_id
                      limit $6
                 )

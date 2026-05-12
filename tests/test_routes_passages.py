@@ -1265,6 +1265,33 @@ async def test_search_snippet_chars_out_of_range_returns_422() -> None:
             assert resp.status_code == 422, f"snippet_chars={value} should reject"
 
 
+@pytest.mark.asyncio
+async def test_lexical_variant_query_with_context_keeps_brca_hits() -> None:
+    rows = [
+        _fake_lex_row(
+            "NBK1247:0010",
+            section="management",
+            lexical_rank=0.9,
+            text="BRCA1 c.5266dupC founder variant in Ashkenazi populations.",
+        )
+    ]
+    app = _build_app_with_fake_repo(rows)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        response = await c.get(
+            "/passages/search",
+            params={
+                "q": "c.5266dupC BRCA1 founder variant Ashkenazi",
+                "rerank": "lexical",
+                "limit": 5,
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert any(row["nbk_id"] == "NBK1247" for row in data["results"])
+
+
 # ---------------------------------------------------------------------------
 # _meta.dense_model_id + _meta.embedding_dim under include=score_breakdown
 # (Task 10 — Spec G2)

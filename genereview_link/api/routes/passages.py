@@ -232,7 +232,8 @@ async def search_passages(
                 'Values: "rrf" (default; reciprocal-rank fusion of weighted lexical '
                 "+ dense embedding rank - best for clinical-concept queries), "
                 '"lexical" (weighted lexical score with section-priority tiebreaker - '
-                'best for exact gene-symbol or variant strings), "off" (raw repository '
+                "best for exact gene-symbol or variant strings; for multi-token "
+                'clinical concept queries, use "rrf"), "off" (raw repository '
                 "order - debugging only; do not rely on ordering)."
             ),
         ),
