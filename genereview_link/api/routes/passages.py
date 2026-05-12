@@ -14,6 +14,8 @@ from fastapi.responses import JSONResponse
 from genereview_link.api.diagnostics import build_search_diagnostics
 from genereview_link.api.errors import FieldError, StructuredHTTPException
 from genereview_link.models.genereview_models import (
+    PassageBatchRequest,
+    PassageBatchResponse,
     PassageDetail,
     PassageSearchResponse,
     PassageWindowResponse,
@@ -31,6 +33,8 @@ from genereview_link.retrieval.rerank import (
 )
 
 router = APIRouter(tags=["Passages"])
+
+BATCH_MAX_IDS = 20
 
 
 async def get_repository(request: Request) -> GeneReviewRepository:
@@ -430,5 +434,83 @@ async def get_passage(
         neighbors_after=[_to_detail(r) for r in after],
         has_more_before=has_more_before,
         has_more_after=has_more_after,
+        meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
+    )
+
+
+def _passage_row_to_detail(row: PassageRow, *, include_heading_array: bool = False) -> PassageDetail:
+    """Convert a PassageRow to a PassageDetail response model."""
+    return PassageDetail(
+        nbk_id=row.nbk_id,
+        passage_id=row.passage_id,
+        chapter_title=row.chapter_title or "",
+        chapter_last_updated=row.chapter_last_updated,
+        chapter_section=cast(SectionName, row.chapter_section),
+        heading_path=row.heading_path,
+        section_level=row.section_level,
+        chunk_index=row.chunk_index,
+        text=row.text,
+        char_count=len(row.text),
+        gene_symbols=list(row.gene_symbols),
+        passage_type=row.passage_type,
+    )
+
+
+@router.post(
+    "/passages/batch",
+    response_model=PassageBatchResponse,
+    response_model_by_alias=True,
+    operation_id="get_passages_batch",
+    summary="Fetch up to 20 passages by id in a single request.",
+    description=(
+        "Returns the requested passages in the same order as the input ``ids`` list.\n\n"
+        "Returns 200 even with partial misses; ``missing_ids`` lists unresolved ids.\n\n"
+        "Returns 422 on empty list or per-id regex failure (FastAPI/Pydantic validation).\n\n"
+        "Returns 413 with ``code='batch_size_exceeded'`` when the list has more than 20 ids."
+    ),
+)
+async def get_passages_batch(
+    body: PassageBatchRequest,
+    request: Request,
+    repo: Annotated[GeneReviewRepository, Depends(get_repository)],
+) -> PassageBatchResponse:
+    """Fetch up to 20 passages by id in a single request.
+
+    Returns 200 even with partial misses; missing_ids lists unresolved ids.
+    Returns 422 on empty list or per-id regex failure (FastAPI/Pydantic validation).
+    Returns 413 with code='batch_size_exceeded' when the list has more than 20 ids.
+    """
+    if len(body.ids) > BATCH_MAX_IDS:
+        raise StructuredHTTPException(
+            status_code=413,
+            code="batch_size_exceeded",
+            message=f"batch size {len(body.ids)} exceeds limit {BATCH_MAX_IDS}",
+            recovery_hint=f"split the request into chunks of {BATCH_MAX_IDS} ids each",
+            next_commands=[
+                {
+                    "tool": "get_passages_batch",
+                    "arguments": {"ids": body.ids[:BATCH_MAX_IDS]},
+                },
+            ],
+        )
+
+    include_set = set(body.include or [])
+    include_heading_array = "heading_path_array" in include_set
+
+    found: list[PassageDetail] = []
+    missing: list[str] = []
+
+    async with repo._acquire() as conn:
+        await conn.execute("set search_path to genereview, public")
+        for pid in body.ids:
+            row = await repo._fetch_passage_row(conn, pid)
+            if row is None:
+                missing.append(pid)
+                continue
+            found.append(_passage_row_to_detail(row, include_heading_array=include_heading_array))
+
+    return PassageBatchResponse(  # type: ignore[call-arg]
+        passages=found,
+        missing_ids=missing,
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )

@@ -3,9 +3,12 @@
 Defines structured data models for validation and serialization.
 """
 
-from datetime import date, datetime
+from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from datetime import date, datetime
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field, StringConstraints
 
 from genereview_link.models.sections import SectionName
 
@@ -16,7 +19,7 @@ class GeneReviewSection(BaseModel):
     title: str = Field(description="The original title of the section.")
     content: str = Field(description="The full text content of the section.")
     level: int = Field(default=1, description="Heading level (1-6) indicating hierarchy.")
-    subsections: dict[str, "GeneReviewSection"] = Field(
+    subsections: dict[str, GeneReviewSection] = Field(
         default_factory=dict, description="Nested subsections."
     )
 
@@ -331,6 +334,31 @@ class TableResponse(BaseModel):
     header: list[str]
     rows: list[list[str]]
     passage_id: str
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}
+
+
+# ---------------------------------------------------------------------------
+# Pass-3-A batch models (Task 8)
+# ---------------------------------------------------------------------------
+
+
+class PassageBatchRequest(BaseModel):
+    """Body for POST /passages/batch."""
+
+    ids: Annotated[
+        list[Annotated[str, StringConstraints(pattern=r"^NBK\d+:\d{4}$")]],
+        Field(min_length=1),
+    ]
+    include: list[Literal["heading_path_array"]] | None = None
+
+
+class PassageBatchResponse(BaseModel):
+    """Response for POST /passages/batch."""
+
+    passages: list[PassageDetail]
+    missing_ids: list[str] = Field(default_factory=list)
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
 
     model_config = {"populate_by_name": True}
