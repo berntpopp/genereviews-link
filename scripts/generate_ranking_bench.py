@@ -22,6 +22,10 @@ fetch_seed_passages() to avoid repeated open/close overhead across 32 chapters.
 Resumability: already_processed() reads existing JSONL entries and skips any
 passage whose passage_id has already been used as a seed. Re-running after
 interruption picks up exactly where it left off.
+
+Parallelism: --concurrency N (default 4) runs up to N codex exec calls
+concurrently via asyncio.Semaphore + asyncio.gather. An asyncio.Lock guards
+the JSONL file writes so lines are never interleaved.
 """
 
 from __future__ import annotations
@@ -29,7 +33,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import subprocess
 import tempfile
 from pathlib import Path
 
@@ -111,35 +114,42 @@ def _parse_codex_json(raw: str) -> dict:
     raise ValueError("unbalanced braces in codex output")
 
 
-def run_codex(prompt: str) -> dict:
-    """Run codex exec non-interactively, parse JSON output from the last agent message.
+async def run_codex_async(prompt: str, timeout: float = 180.0) -> dict:
+    """Async equivalent of run_codex via asyncio.create_subprocess_exec.
 
     Uses --output-last-message to capture only the final agent response,
     which is what we parse as JSON. Timeout is 180s to accommodate reasoning.
     """
-    with tempfile.NamedTemporaryFile("r+", suffix=".txt", delete=False) as f:
-        out_path = f.name
+    fd, out_path_str = tempfile.mkstemp(suffix=".txt")
+    import os
+
+    os.close(fd)
+    out_path = Path(out_path_str)
     try:
-        subprocess.run(  # noqa: S603 - CODEX_BIN is a constant, not user input
-            [
-                CODEX_BIN,
-                "exec",
-                "-c",
-                "model_reasoning_effort=medium",
-                "--skip-git-repo-check",
-                "--output-last-message",
-                out_path,
-                "-",
-            ],
-            input=prompt,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=180,
+        proc = await asyncio.create_subprocess_exec(
+            CODEX_BIN,
+            "exec",
+            "-c",
+            "model_reasoning_effort=medium",
+            "--skip-git-repo-check",
+            "--output-last-message",
+            str(out_path),
+            "-",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        raw = Path(out_path).read_text()
+        _, stderr = await asyncio.wait_for(
+            proc.communicate(prompt.encode("utf-8")), timeout=timeout
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"codex exec failed (rc={proc.returncode}): "
+                f"{stderr.decode('utf-8', errors='replace')[:500]}"
+            )
+        raw = out_path.read_text()
     finally:
-        Path(out_path).unlink(missing_ok=True)
+        out_path.unlink(missing_ok=True)
     return _parse_codex_json(raw)
 
 
@@ -159,6 +169,51 @@ def already_processed(jsonl_path: Path) -> set[str]:
     return seen
 
 
+async def process_passage(
+    chapter: dict,
+    seed: dict,
+    template: str,
+    sem: asyncio.Semaphore,
+    out_lock: asyncio.Lock,
+    out_handle,  # type: ignore[type-arg]
+) -> None:
+    pid: str = seed["passage_id"]
+    nbk_id: str = chapter["nbk_id"]
+    prompt = render_prompt(template, chapter["title"], seed)
+    async with sem:
+        try:
+            response = await run_codex_async(prompt)
+        except Exception as e:
+            print(f"  codex error on {pid}: {e}", flush=True)  # noqa: T201
+            return
+
+    if response.get("skip"):
+        print(f"  skip {pid}: {response.get('reason')}", flush=True)  # noqa: T201
+        return
+
+    queries: list[dict] = response.get("queries", [])
+    n_q = len(queries)
+    async with out_lock:
+        for q in queries:
+            entry = {
+                "query": q["query"],
+                "expected_top1_passage_id": pid,
+                "expected_top5_passage_ids": [pid],
+                "status": "silver",
+                "source": "codex_generated_2026-05-13",
+                "intent": q.get("intent", "other"),
+                "section": seed["chapter_section"],
+                "chapter_nbk_id": nbk_id,
+                "notes": (
+                    f"Codex-generated from {pid}, "
+                    f"style={q.get('style')}."
+                ),
+            }
+            out_handle.write(json.dumps(entry) + "\n")
+        out_handle.flush()
+    print(f"  ok {pid}: {n_q} queries", flush=True)  # noqa: T201
+
+
 async def main() -> None:
     ap = argparse.ArgumentParser(
         description="Generate silver ranking benchmark entries via Codex"
@@ -173,70 +228,45 @@ async def main() -> None:
         type=Path,
         default=Path("tests/fixtures/ranking_bench.jsonl"),
     )
+    ap.add_argument(
+        "--concurrency",
+        type=int,
+        default=4,
+        help="Max parallel codex exec calls (default 4)",
+    )
     args = ap.parse_args()
 
     worklist: list[dict] = json.loads(args.worklist.read_text())
     template: str = PROMPT_PATH.read_text()
     seen = already_processed(args.output)
     print(f"resuming: {len(seen)} passages already processed", flush=True)  # noqa: T201
+    print(f"concurrency: {args.concurrency}", flush=True)  # noqa: T201
 
     pool = await create_pool()
+    sem = asyncio.Semaphore(args.concurrency)
+    out_lock = asyncio.Lock()
     try:
+        # Build the full work list first (one Codex call per passage).
+        work: list[tuple[dict, dict]] = []
+        for chapter in worklist:
+            nbk_id: str = chapter["nbk_id"]
+            title: str = chapter["title"]
+            print(f"chapter {nbk_id}: {title}", flush=True)  # noqa: T201
+            seeds = await fetch_seed_passages(pool, nbk_id)
+            for seed in seeds:
+                pid: str = seed["passage_id"]
+                if pid in seen:
+                    print(f"  skip (already processed) {pid}", flush=True)  # noqa: T201
+                    continue
+                work.append((chapter, dict(seed)))
+        print(f"work queue: {len(work)} passages", flush=True)  # noqa: T201
+
         with args.output.open("a") as out:
-            for chapter in worklist:
-                nbk_id: str = chapter["nbk_id"]
-                title: str = chapter["title"]
-                print(f"chapter {nbk_id}: {title}", flush=True)  # noqa: T201
-                seeds = await fetch_seed_passages(pool, nbk_id)
-                for seed in seeds:
-                    pid: str = seed["passage_id"]
-                    if pid in seen:
-                        print(f"  skip (already processed) {pid}", flush=True)  # noqa: T201
-                        continue
-                    prompt = render_prompt(template, title, dict(seed))
-                    try:
-                        response = run_codex(prompt)
-                    except subprocess.CalledProcessError as e:
-                        print(  # noqa: T201
-                            f"  codex error on {pid}: returncode={e.returncode} stderr={e.stderr[:200]}",
-                            flush=True,
-                        )
-                        continue
-                    except (subprocess.TimeoutExpired, ValueError) as e:
-                        print(f"  codex error on {pid}: {e}", flush=True)  # noqa: T201
-                        continue
-
-                    if response.get("skip"):
-                        print(  # noqa: T201
-                            f"  skip {pid}: {response.get('reason')}",
-                            flush=True,
-                        )
-                        seen.add(pid)
-                        continue
-
-                    queries: list[dict] = response.get("queries", [])
-                    for q in queries:
-                        entry = {
-                            "query": q["query"],
-                            "expected_top1_passage_id": pid,
-                            "expected_top5_passage_ids": [pid],
-                            "status": "silver",
-                            "source": "codex_generated_2026-05-13",
-                            "intent": q.get("intent", "other"),
-                            "section": seed["chapter_section"],
-                            "chapter_nbk_id": nbk_id,
-                            "notes": (
-                                f"Codex-generated from {pid}, "
-                                f"style={q.get('style')}."
-                            ),
-                        }
-                        out.write(json.dumps(entry) + "\n")
-                        out.flush()
-                    seen.add(pid)
-                    print(  # noqa: T201
-                        f"  ok {pid}: {len(queries)} queries",
-                        flush=True,
-                    )
+            tasks = [
+                process_passage(chapter, seed, template, sem, out_lock, out)
+                for chapter, seed in work
+            ]
+            await asyncio.gather(*tasks)
     finally:
         await pool.close()
 
