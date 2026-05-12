@@ -18,6 +18,7 @@ from genereview_link.models.genereview_models import (
     PassageBatchRequest,
     PassageBatchResponse,
     PassageDetail,
+    PassageRole,
     PassageSearchResponse,
     PassageWindowResponse,
     RankedPassage,
@@ -30,6 +31,7 @@ from genereview_link.retrieval.embeddings import EmbeddingProvider
 from genereview_link.retrieval.repository import GeneReviewRepository, PassageRow
 from genereview_link.retrieval.rerank import (
     SECTION_PRIORITY,
+    detect_query_intents,
     rerank_with_embeddings,
 )
 
@@ -60,6 +62,10 @@ def _format_source_url(nbk_id: str) -> str:
     the chapter URL still resolves the "no URL anywhere on responses" gap.
     """
     return f"https://www.ncbi.nlm.nih.gov/books/{nbk_id}/"
+
+
+def _passage_role(role: str | None) -> PassageRole | None:
+    return cast(PassageRole, role) if role is not None else None
 
 
 async def get_repository(request: Request) -> GeneReviewRepository:
@@ -248,6 +254,7 @@ async def search_passages(
         )
     q = q or query
     assert q is not None
+    query_intents = detect_query_intents(q)
 
     if gene:
         idx = getattr(request.app.state, "gene_index", None)
@@ -313,7 +320,7 @@ async def search_passages(
         # Truly raw lexical order from the repo (no section_priority tiebreak).
         ranked = list(lex)
     else:
-        ranked, _diag = rerank_with_embeddings(lex, dense_scores)
+        ranked, _diag = rerank_with_embeddings(lex, dense_scores, query_intents=query_intents)
     ranked = ranked[:limit]
 
     corpus = _get_corpus_version(request)
@@ -335,6 +342,7 @@ async def search_passages(
         applied_filters=applied_filters,
         section_filters=list(sections) if sections else [],
         suggestions=[],
+        query_intents=query_intents,
     )
     if not ranked:
         unfiltered_lexical_count: int | None = None
@@ -370,6 +378,7 @@ async def search_passages(
                         "rrf_score": r.rrf_score,
                         "lexical_rank_position": r.lexical_rank_position,
                         "chapter_section": r.passage.chapter_section,
+                        "passage_role": _passage_role(r.passage.passage_role),
                     }
                     for r in ranked
                 ],
@@ -389,6 +398,10 @@ async def search_passages(
                 phrase_rank=r.phrase_rank,
                 strict_rank=r.strict_rank,
                 recall_rank=r.recall_rank,
+                adjusted_score=r.adjusted_score,
+                role_multiplier=r.role_multiplier,
+                intent_section_boost=r.intent_section_boost,
+                passage_role=_passage_role(r.passage.passage_role),
                 dense_score=dense_scores.get(r.passage.passage_id),
                 dense_rank=r.dense_rank,
                 rrf_score=r.rrf_score,
@@ -413,6 +426,7 @@ async def search_passages(
                 chapter_section=cast(SectionName, r.passage.chapter_section),
                 heading_path=r.passage.heading_path,
                 passage_type=r.passage.passage_type,
+                passage_role=_passage_role(r.passage.passage_role),
                 text=r.passage.text if mode == "full" else None,
                 snippet=r.snippet if mode == "brief" else None,
                 char_count=len(r.passage.text),
@@ -571,6 +585,7 @@ def _passage_row_to_detail(
         char_count=len(row.text),
         gene_symbols=list(row.gene_symbols),
         passage_type=row.passage_type,
+        passage_role=_passage_role(row.passage_role),
         heading_path_array=heading_path_array,
         recommended_citation=_format_recommended_citation(
             chapter_title=row.chapter_title,

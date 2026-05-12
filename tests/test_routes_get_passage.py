@@ -25,6 +25,7 @@ def _make_row(
     chapter_title: str = "BRCA1- and BRCA2-Associated HBOC",
     chapter_last_updated: date = date(2025, 12, 1),
     gene_symbols: tuple[str, ...] = ("BRCA1", "BRCA2"),
+    passage_role: str | None = None,
 ) -> PassageRow:
     return PassageRow(
         nbk_id=nbk_id,
@@ -37,6 +38,7 @@ def _make_row(
         chapter_title=chapter_title,
         chapter_last_updated=chapter_last_updated,
         gene_symbols=gene_symbols,
+        passage_role=passage_role,
     )
 
 
@@ -203,6 +205,19 @@ async def test_get_passage_exposes_passage_type_table() -> None:
         resp = await c.get("/passages/NBK1247:0099")
     assert resp.status_code == 200
     assert resp.json()["passage"]["passage_type"] == "table"
+
+
+@pytest.mark.asyncio
+async def test_get_passage_propagates_passage_role() -> None:
+    """GET /passages/{id} preserves passage_role from the repository row."""
+    pr = _make_row(passage_role="definition")
+    app = _build_app(focal=pr)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1247:0022")
+
+    assert resp.status_code == 200
+    assert resp.json()["passage"]["passage_role"] == "definition"
 
 
 # ---------------------------------------------------------------------------

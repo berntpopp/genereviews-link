@@ -56,3 +56,11 @@ def test_lexical_passage_row_rrf_fields_default_to_none() -> None:
     assert row.dense_rank is None
     assert row.rrf_score is None
     assert row.lexical_rank_position is None
+    assert row.adjusted_score is None
+    assert row.role_multiplier == 1.0
+    assert row.intent_section_boost == 0.0
+
+
+def test_passage_row_passage_role_defaults_to_none() -> None:
+    row = _make_passage()
+    assert row.passage_role is None

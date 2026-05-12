@@ -116,6 +116,8 @@ class TestPassagesSearchRoute:
         assert p["passage_id"] == "p1"
         assert p["nbk_id"] == "NBK1"
         assert p["chapter_section"] == "summary"
+        assert "passage_role" in p
+        assert p["passage_role"] is None
         # score_breakdown is opt-in; absent by default
         assert "score_breakdown" not in p
 
@@ -289,6 +291,8 @@ async def test_search_default_mode_is_brief_and_limit_is_5() -> None:
     assert results[0]["snippet"] is not None
     assert results[0]["text"] is None
     assert results[0]["chapter_title"] == "Chapter"
+    assert "passage_role" in results[0]
+    assert results[0]["passage_role"] is None
 
 
 @pytest.mark.asyncio
@@ -437,6 +441,10 @@ async def test_search_includes_score_breakdown_when_requested() -> None:
     assert "score_breakdown" in p
     sb = p["score_breakdown"]
     assert sb["final_position"] == 1
+    assert sb["adjusted_score"] is None
+    assert sb["role_multiplier"] == 1.0
+    assert sb["intent_section_boost"] == 0.0
+    assert sb["passage_role"] is None
     # All ScoreBreakdown fields must be present
     for field in (
         "lexical_rank",
@@ -447,6 +455,58 @@ async def test_search_includes_score_breakdown_when_requested() -> None:
         "final_position",
     ):
         assert field in sb, f"Missing ScoreBreakdown field: {field}"
+
+
+@pytest.mark.asyncio
+async def test_search_propagates_passage_role_and_score_adjustment_fields() -> None:
+    """Search result and score_breakdown preserve role/adjustment fields from rows."""
+    from unittest.mock import MagicMock
+
+    repo = MagicMock()
+    repo.search_passages = AsyncMock(
+        return_value=[
+            LexicalPassageRow(
+                passage=PassageRow(
+                    nbk_id="NBK1",
+                    passage_id="NBK1:0001",
+                    chapter_section="management",
+                    heading_path="Management",
+                    section_level=1,
+                    chunk_index=1,
+                    text="role-aware passage",
+                    chapter_title="Chapter",
+                    gene_symbols=("TG",),
+                    passage_role="evidence",
+                ),
+                phrase_rank=1.0,
+                strict_rank=0.5,
+                recall_rank=0.4,
+                recall_overlap_count=1,
+                lexical_rank=1.0,
+                adjusted_score=1.25,
+                role_multiplier=1.2,
+                intent_section_boost=0.05,
+            )
+        ]
+    )
+    repo.active_embedding_table = AsyncMock(return_value="t")
+    repo.dense_scores_for_passages = AsyncMock(return_value={})
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "include": "score_breakdown"},
+        )
+
+    assert resp.status_code == 200
+    result = resp.json()["results"][0]
+    assert result["passage_role"] == "evidence"
+    sb = result["score_breakdown"]
+    assert sb["adjusted_score"] == 1.25
+    assert sb["role_multiplier"] == 1.2
+    assert sb["intent_section_boost"] == 0.05
+    assert sb["passage_role"] == "evidence"
 
 
 @pytest.mark.asyncio
@@ -538,6 +598,34 @@ async def test_search_nonzero_results_includes_diagnostics() -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_diagnostics_includes_management_query_intent() -> None:
+    """Management-oriented queries expose detected query_intents in diagnostics."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1 treatment options"})
+
+    assert resp.status_code == 200
+    diag = resp.json()["_meta"]["diagnostics"]
+    assert diag["query_intents"] == ["management"]
+
+
+@pytest.mark.asyncio
+async def test_search_diagnostics_query_intents_empty_for_neutral_query() -> None:
+    """Neutral queries expose an empty query_intents list in diagnostics."""
+    repo = _make_brief_repo(rows=2)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1"})
+
+    assert resp.status_code == 200
+    diag = resp.json()["_meta"]["diagnostics"]
+    assert diag["query_intents"] == []
+
+
+@pytest.mark.asyncio
 async def test_search_empty_filtered_results_probe_unfiltered_once() -> None:
     """Empty filtered results issue one unfiltered probe and expose drop diagnostics."""
     from unittest.mock import MagicMock
@@ -607,6 +695,7 @@ async def test_search_diagnostics_shape() -> None:
         "unfiltered_lexical_count",
         "applied_filters",
         "suggestions",
+        "query_intents",
     ):
         assert key in diag, f"Missing diagnostics key: {key}"
     assert isinstance(diag["applied_filters"], list)
@@ -867,10 +956,12 @@ async def test_search_ids_only_mode_returns_lean_shape() -> None:
         "rrf_score",
         "lexical_rank_position",
         "chapter_section",
+        "passage_role",
     }
     assert first["passage_id"].startswith("NBK1247:")
     assert isinstance(first["rrf_score"], (float, type(None)))
     assert first["lexical_rank_position"] == 1
+    assert first["passage_role"] is None
     # Crucially, none of these keys appear:
     for forbidden in (
         "text",

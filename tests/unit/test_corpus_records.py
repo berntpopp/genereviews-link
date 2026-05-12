@@ -36,6 +36,7 @@ def test_passage_record_text_hash_property() -> None:
         text="The hallmark of hereditary breast and ovarian cancer.",
         char_count=53,
         token_estimate=10,
+        passage_role="evidence",
     )
     assert rec.text_hash.startswith(
         ("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f")

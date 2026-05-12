@@ -27,6 +27,7 @@ from genereview_link.corpus.sidedata import SideData
 # 0.5% allows for whitespace normalization and the "_text(child) -> .strip()"
 # leakage that's inherent in lxml's mixed-content traversal.
 INGEST_COVERAGE_WARN_THRESHOLD = 0.005
+INGEST_CROSS_REFERENCE_WARN_THRESHOLD = 0.25
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,14 @@ def _log_audit(audit: ChapterIngestAudit) -> None:
             audit.list_renders,
             audit.def_list_renders,
             audit.boxed_text_renders,
+            extra=extra,
+        )
+    if audit.cross_reference_ratio > INGEST_CROSS_REFERENCE_WARN_THRESHOLD:
+        logger.warning(
+            "ingest role-distribution nbk=%s cross_reference_ratio=%.3f role_counts=%s",
+            audit.nbk_id,
+            audit.cross_reference_ratio,
+            audit.role_counts,
             extra=extra,
         )
 
@@ -222,6 +231,7 @@ async def copy_passages(
             p.token_estimate,
             corpus_version,
             p.passage_type,
+            p.passage_role,
             p.table_id,
             json.dumps(p.table_data) if p.table_data is not None else None,
         )
@@ -243,6 +253,7 @@ async def copy_passages(
             "token_estimate",
             "corpus_version",
             "passage_type",
+            "passage_role",
             "table_id",
             "table_data",
         ),

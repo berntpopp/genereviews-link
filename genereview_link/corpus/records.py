@@ -39,6 +39,7 @@ class PassageRecord:
     text: str
     char_count: int
     token_estimate: int
+    passage_role: str
     passage_type: Literal["narrative", "table"] = "narrative"
     table_id: str | None = None
     table_data: dict[str, object] | None = (
