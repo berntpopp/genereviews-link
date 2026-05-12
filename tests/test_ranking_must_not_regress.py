@@ -17,7 +17,8 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
-BASELINE = json.loads(Path("tests/fixtures/ranking_baseline.json").read_text())
+BASELINE_PATH = Path(__file__).parent / "fixtures" / "ranking_baseline.json"
+BASELINE = json.loads(BASELINE_PATH.read_text())
 
 
 @pytest_asyncio.fixture
@@ -27,6 +28,7 @@ async def client() -> AsyncIterator[AsyncClient]:
         yield c
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "entry",
     [e for e in BASELINE if e.get("regression_kind") == "exact-symbol-anchor"],
