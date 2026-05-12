@@ -10,6 +10,7 @@ and fails CI if upgraded rerank=rrf regresses an anchor.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -19,12 +20,13 @@ from httpx import AsyncClient
 
 BASELINE_PATH = Path(__file__).parent / "fixtures" / "ranking_baseline.json"
 BASELINE = json.loads(BASELINE_PATH.read_text())
+MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "http://127.0.0.1:8765")
 
 
 @pytest_asyncio.fixture
 async def client() -> AsyncIterator[AsyncClient]:
-    """Async HTTP client pointed at the live MCP server (port 8765)."""
-    async with AsyncClient(base_url="http://127.0.0.1:8765") as c:
+    """Async HTTP client pointed at the live MCP server (MCP_BASE_URL env)."""
+    async with AsyncClient(base_url=MCP_BASE_URL) as c:
         yield c
 
 
