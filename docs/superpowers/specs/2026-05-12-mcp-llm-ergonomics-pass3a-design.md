@@ -10,7 +10,7 @@ Lift the GeneReview-Link MCP server from consumer-rated **9/10 → ≥9.5/10** b
 
 ## Scope
 
-Single phase (**Phase 9 — Ergonomics-v3**), 14 tasks, code-only changes. May include a chapters-only metadata reingest (~30 sec, no passage rewrite) gated on the Task B1 findings. Tag: `phase-9-ergonomics-v3`.
+Single phase (**Phase 9 — Ergonomics-v3**), 17 tasks, code-only changes. May include a chapters-only metadata reingest (~30 sec, no passage rewrite) gated on the Task B1 findings. Tag: `phase-9-ergonomics-v3`.
 
 **Explicit non-goals (deferred to Pass-3-B):**
 - `since=YYYY-MM-DD` recency filter on `search_passages`.
@@ -114,7 +114,7 @@ J. Phase gate (1 task)
    J1  make ci-local + tests/smoke/phase_9.sh + annotated tag
 ```
 
-**Total:** 14 tasks. Single phase tag. Tests + smoke at the end. May or may not include a partial reingest (Task B branching).
+**Total:** 17 tasks. Single phase tag. Tests + smoke at the end. May or may not include a partial reingest (Task B branching).
 
 ## API shapes
 
@@ -452,7 +452,7 @@ Pass-3-A is done when:
 
 - **Placeholder scan:** Task B2 has three branches; each is concretely defined. No "TBD" anywhere.
 - **Internal consistency:** Trimmed instructions reference `POST /passages/batch` (Task F1); resource manifest references both `license` and `usage` (Tasks A2 + G1); all new fields named consistently between API shapes and test sections.
-- **Scope check:** 14 tasks, one phase, code-only with a possible 30-sec reingest. Right-sized for a single implementation plan.
+- **Scope check:** 17 tasks, one phase, code-only with a possible 30-sec reingest. Right-sized for a single implementation plan.
 - **Ambiguity check:** Task B branching is the only soft area; the three outcomes + their B2 actions are pinned to avoid drift.
 
 ## Cross-references
