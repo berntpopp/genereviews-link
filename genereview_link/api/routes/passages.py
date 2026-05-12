@@ -15,6 +15,8 @@ from fastapi.responses import JSONResponse
 from genereview_link.api.diagnostics import build_search_diagnostics
 from genereview_link.api.errors import FieldError, StructuredHTTPException
 from genereview_link.models.genereview_models import (
+    IdsOnlyPassage,
+    IdsOnlySearchResponse,
     PassageBatchRequest,
     PassageBatchResponse,
     PassageDetail,
@@ -26,7 +28,7 @@ from genereview_link.models.genereview_models import (
     ScoreBreakdown,
     SearchDiagnosticsModel,
 )
-from genereview_link.models.sections import SECTION_NAMES, SectionName
+from genereview_link.models.sections import SECTION_NAMES, SectionName, canonicalize_nbk_id
 from genereview_link.retrieval.embeddings import EmbeddingProvider
 from genereview_link.retrieval.repository import GeneReviewRepository, PassageRow
 from genereview_link.retrieval.rerank import (
@@ -97,7 +99,7 @@ def _get_corpus_version(request: Request) -> str | None:
 
 @router.get(
     "/passages/search",
-    response_model=PassageSearchResponse,
+    response_model=PassageSearchResponse | IdsOnlySearchResponse,
     response_model_by_alias=True,
     operation_id="search_passages",
     summary="Hybrid lexical + dense RAG search across GeneReviews passages.",
@@ -240,7 +242,7 @@ async def search_passages(
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     embedder: Annotated[EmbeddingProvider, Depends(get_embedding_provider)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
-) -> PassageSearchResponse | JSONResponse:
+) -> PassageSearchResponse | IdsOnlySearchResponse | JSONResponse:
     if q is not None and query is not None and q != query:
         raise StructuredHTTPException(
             status_code=422,
@@ -257,6 +259,8 @@ async def search_passages(
         )
     q = q or query
     assert q is not None
+    if nbk_id is not None:
+        nbk_id = canonicalize_nbk_id(nbk_id)
     query_intents = detect_query_intents(q)
 
     if gene:
@@ -373,20 +377,18 @@ async def search_passages(
 
     if mode == "ids_only":
         meta = ResponseMeta(corpus_version=corpus, diagnostics=diagnostics_model)
-        return JSONResponse(
-            {
-                "results": [
-                    {
-                        "passage_id": r.passage.passage_id,
-                        "rrf_score": r.rrf_score,
-                        "lexical_rank_position": r.lexical_rank_position,
-                        "chapter_section": r.passage.chapter_section,
-                        "passage_role": _passage_role(r.passage.passage_role),
-                    }
-                    for r in ranked
-                ],
-                "_meta": meta.model_dump(by_alias=True),
-            }
+        return IdsOnlySearchResponse(  # type: ignore[call-arg]
+            results=[
+                IdsOnlyPassage(
+                    passage_id=r.passage.passage_id,
+                    nbk_id=r.passage.nbk_id,
+                    chapter_section=cast(SectionName, r.passage.chapter_section),
+                    rrf_score=r.rrf_score,
+                    lexical_rank_position=r.lexical_rank_position,
+                )
+                for r in ranked
+            ],
+            meta=meta,
         )
 
     include_set = set(include or [])

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from genereview_link.models.sections import SECTION_NAMES, SectionName
+from genereview_link.models.sections import SECTION_NAMES, SectionName, canonicalize_nbk_id
 from genereview_link.retrieval.rerank import SECTION_PRIORITY
 
 
@@ -38,3 +38,10 @@ def test_section_name_is_literal_type() -> None:
     from typing import get_args
 
     assert tuple(get_args(SectionName)) == SECTION_NAMES
+
+
+def test_canonicalize_nbk_id_strips_leading_zeroes() -> None:
+    assert canonicalize_nbk_id("NBK0001247") == "NBK1247"
+    assert canonicalize_nbk_id("NBK1247") == "NBK1247"
+    assert canonicalize_nbk_id("NBK0") == "NBK0"
+    assert canonicalize_nbk_id("ABC") == "ABC"

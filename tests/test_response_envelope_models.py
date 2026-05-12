@@ -7,8 +7,13 @@ from datetime import date
 from genereview_link.models.genereview_models import (
     ATTRIBUTION_TEXT,
     COPYRIGHT_LINE,
+    AbstractData,
     ChapterSectionResponse,
+    FullTextData,
+    IdsOnlyPassage,
+    IdsOnlySearchResponse,
     LicenseNotice,
+    LinkData,
     PassageDetail,
     PassageSearchResponse,
     PassageWindowResponse,
@@ -40,6 +45,31 @@ def test_passage_search_response_meta_alias_is_underscore_meta():
     assert "meta" not in dumped
 
 
+def test_ids_only_response_model_uses_slim_rows() -> None:
+    response = IdsOnlySearchResponse(
+        results=[
+            IdsOnlyPassage(
+                passage_id="NBK1247:0024",
+                nbk_id="NBK1247",
+                chapter_section="management",
+                rrf_score=0.1,
+                lexical_rank_position=2,
+            )
+        ]
+    )
+
+    dumped = response.model_dump(by_alias=True)
+
+    assert set(dumped["results"][0]) == {
+        "passage_id",
+        "nbk_id",
+        "chapter_section",
+        "rrf_score",
+        "lexical_rank_position",
+    }
+    assert "_meta" in dumped
+
+
 def test_chapter_section_response_meta_alias_is_underscore_meta() -> None:
     r = ChapterSectionResponse(
         nbk_id="NBK1",
@@ -52,6 +82,19 @@ def test_chapter_section_response_meta_alias_is_underscore_meta() -> None:
     dumped = r.model_dump(by_alias=True)
     assert "_meta" in dumped
     assert "meta" not in dumped
+
+
+def test_chapter_section_response_has_note_field() -> None:
+    response = ChapterSectionResponse(
+        nbk_id="NBK1247",
+        chapter_title="BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+        chapter_section="summary",
+        passages=[],
+        passage_count=0,
+        note="Summary is not currently indexed; use the NCBI Bookshelf chapter.",
+    )
+
+    assert response.note is not None
 
 
 def test_passage_window_response_meta_alias_is_underscore_meta() -> None:
@@ -84,3 +127,27 @@ def test_license_notice_and_attribution_share_copyright_year():
     assert "1993" in notice.copyright
     assert notice.copyright == COPYRIGHT_LINE
     assert COPYRIGHT_LINE in ATTRIBUTION_TEXT
+
+
+def test_live_passthrough_meta_uses_underscore_alias() -> None:
+    abstract = AbstractData(
+        pmid="20301425",
+        title="BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+        abstract="GeneReviews abstract",
+        journal="GeneReviews",
+        publication_date="1998",
+    )
+    link_data = LinkData(urls=["https://www.ncbi.nlm.nih.gov/books/NBK1247/"])
+    fulltext = FullTextData(
+        nbk_id="NBK1247",
+        url="https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+        title="BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+    )
+
+    for model in (abstract, link_data, fulltext):
+        dumped = model.model_dump(by_alias=True)
+
+        assert "_meta" in dumped
+        assert "meta" not in dumped
+        assert dumped["_meta"]["corpus_version"] is None
+        assert dumped["_meta"]["attribution"]

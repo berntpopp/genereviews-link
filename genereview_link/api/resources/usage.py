@@ -103,7 +103,7 @@ These boosts are server-inferred, not user-tunable, and surfaced in
 - **full**: each row carries the entire passage text. Approximately 10-50 KB
   per row.
 - **ids_only**: each row is the lean
-  `{passage_id, rrf_score, lexical_rank_position, chapter_section, passage_role}`
+  `{passage_id, nbk_id, rrf_score, lexical_rank_position, chapter_section}`
   shape only. Role-affected `adjusted_score` is not emitted in this mode; use
   `mode=brief|full&include=score_breakdown` to inspect it.
   Approximately 70% smaller than brief. Use for bulk-triage workflows;
@@ -181,10 +181,9 @@ retrying with looser parameters.
   `heading_path`.
 - `heading_path_contains` also applies to `get_chapter_section`: filters
   returned section passages by a substring in `heading_path`.
-- `include=concatenated_text` on `get_chapter_section`: returns the section
-  text joined into a single string.
-- `dedupe=true&include=concatenated_text` on `get_chapter_section`: strips
-  overlapping text between adjacent chunks.
+- `include=["concatenated_text"]` returns joined text with chunk overlap
+  stripped by default. Pass `dedupe=false` only for corpus-auditing workflows
+  that need literal stored chunk text.
 - `exclude=score_breakdown` / `exclude=heading_path` on `search_passages`:
   shrink payloads.
 

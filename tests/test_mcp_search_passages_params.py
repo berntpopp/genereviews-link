@@ -58,6 +58,10 @@ async def _call_search_passages(client: Client[Any], arguments: dict[str, Any]) 
     result = await client.call_tool("search_passages", arguments)
     assert result.structured_content is not None
     assert isinstance(result.structured_content, dict)
+    if set(result.structured_content) == {"result"}:
+        wrapped = result.structured_content["result"]
+        assert isinstance(wrapped, dict)
+        return wrapped
     return result.structured_content
 
 
@@ -100,3 +104,39 @@ async def test_mcp_search_passages_conflicting_q_and_query_returns_structured_er
     error_text = result.content[0].text
     assert "conflicting_query_param" in error_text
     assert "both q and query supplied with different values" in error_text
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_passages_ids_only_schema_uses_slim_rows() -> None:
+    mcp, _repo = await _build_mcp()
+    tool = next(tool for tool in await mcp.list_tools() if tool.name == "search_passages")
+
+    def find_schema(node: Any, title: str) -> dict[str, Any] | None:
+        if isinstance(node, dict):
+            if node.get("title") == title:
+                return node
+            for value in node.values():
+                found = find_schema(value, title)
+                if found is not None:
+                    return found
+        elif isinstance(node, list):
+            for item in node:
+                found = find_schema(item, title)
+                if found is not None:
+                    return found
+        return None
+
+    ids_only_schema = find_schema(tool.output_schema, "IdsOnlyPassage")
+
+    assert ids_only_schema is not None
+    assert set(ids_only_schema["properties"]) == {
+        "passage_id",
+        "nbk_id",
+        "chapter_section",
+        "rrf_score",
+        "lexical_rank_position",
+    }
+    assert "chapter_title" not in ids_only_schema["properties"]
+    assert "char_count" not in ids_only_schema["properties"]
+    assert "recommended_citation" not in ids_only_schema["properties"]
+    assert "source_url" not in ids_only_schema["properties"]

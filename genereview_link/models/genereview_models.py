@@ -50,6 +50,10 @@ class AbstractData(BaseModel):
     journal: str = Field(description="Journal name.")
     publication_date: str = Field(description="Publication date.")
     corpus_version: str | None = None
+    meta: ResponseMeta = Field(
+        alias="_meta", default_factory=lambda: ResponseMeta.live_passthrough()
+    )
+    model_config = {"populate_by_name": True}
 
 
 class LinkData(BaseModel):
@@ -60,6 +64,10 @@ class LinkData(BaseModel):
         description="All available URLs for the publication.",
     )
     corpus_version: str | None = None
+    meta: ResponseMeta = Field(
+        alias="_meta", default_factory=lambda: ResponseMeta.live_passthrough()
+    )
+    model_config = {"populate_by_name": True}
 
 
 class Reference(BaseModel):
@@ -99,6 +107,10 @@ class FullTextData(BaseModel):
     )
     error: str | None = Field(default=None, description="Error message if scraping failed.")
     corpus_version: str | None = None
+    meta: ResponseMeta = Field(
+        alias="_meta", default_factory=lambda: ResponseMeta.live_passthrough()
+    )
+    model_config = {"populate_by_name": True}
 
 
 class GeneReview(BaseModel):
@@ -279,6 +291,35 @@ class ResponseMeta(BaseModel):
     dense_model_id: str | None = None
     embedding_dim: int | None = None
 
+    @classmethod
+    def live_passthrough(cls) -> ResponseMeta:
+        """Metadata for live NCBI passthrough responses not tied to an indexed corpus."""
+        return cls(corpus_version=None)
+
+
+AbstractData.model_rebuild()
+LinkData.model_rebuild()
+FullTextData.model_rebuild()
+GeneReview.model_rebuild()
+
+
+class IdsOnlyPassage(BaseModel):
+    """Lean row shape for search_passages(mode='ids_only')."""
+
+    passage_id: str
+    nbk_id: str
+    chapter_section: SectionName
+    rrf_score: float | None = None
+    lexical_rank_position: int | None = None
+
+
+class IdsOnlySearchResponse(BaseModel):
+    """Envelope returned by GET /passages/search when mode=ids_only."""
+
+    results: list[IdsOnlyPassage]
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+    model_config = {"populate_by_name": True}
+
 
 class PassageSearchResponse(BaseModel):
     """Envelope returned by GET /passages/search."""
@@ -322,6 +363,7 @@ class ChapterSectionResponse(BaseModel):
     passage_count: int  # always present; equals len(passages)
     concatenated_text: str | None = None  # opt-in via include=concatenated_text
     concatenated_char_count: int | None = None  # only when concatenated_text opted in
+    note: str | None = None
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
     model_config = {"populate_by_name": True}
 

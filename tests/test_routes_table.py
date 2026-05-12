@@ -90,6 +90,16 @@ async def test_get_table_returns_200_for_known_table() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_table_canonicalizes_zero_padded_nbk() -> None:
+    app = _build_app(table=_make_table_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK0001247/tables/t5")
+
+    assert resp.status_code == 200, resp.text
+    app.state.repository.get_table.assert_awaited_once_with("NBK1247", "t5")
+
+
+@pytest.mark.asyncio
 async def test_get_table_response_shape() -> None:
     app = _build_app(table=_make_table_row())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:

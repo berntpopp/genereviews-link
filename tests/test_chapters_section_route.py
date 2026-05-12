@@ -16,7 +16,7 @@ from genereview_link.api.routes import chapters as chapters_routes
 from genereview_link.api.routes.passages import get_embedding_provider, get_repository
 from genereview_link.config import ServerConfig
 from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
-from genereview_link.retrieval.repository import GeneReviewRepository, PassageRow
+from genereview_link.retrieval.repository import ChapterRow, GeneReviewRepository, PassageRow
 from genereview_link.server_manager import UnifiedServerManager
 
 
@@ -129,11 +129,33 @@ class TestChapterSectionRoute:
         assert resp.status_code == 404
 
 
-def _build_app(*, passages: list[PassageRow]) -> FastAPI:
+def _make_chapter_row(nbk_id: str = "NBK1247") -> ChapterRow:
+    return ChapterRow(
+        nbk_id=nbk_id,
+        short_name=nbk_id,
+        title="BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+        pubmed_id="20301425",
+        gene_symbols=("BRCA1", "BRCA2"),
+        omim_ids=(),
+        authors=None,
+        initial_pub_date=None,
+        last_updated_date=date(2025, 12, 1),
+    )
+
+
+_DEFAULT_CHAPTER = object()
+
+
+def _build_app(
+    *, passages: list[PassageRow], chapter: ChapterRow | None | object = _DEFAULT_CHAPTER
+) -> FastAPI:
     app = FastAPI()
     app.include_router(chapters_routes.router)
     repo = MagicMock()
     repo.get_section = AsyncMock(return_value=passages)
+    repo.get_chapter_by_nbk = AsyncMock(
+        return_value=_make_chapter_row() if chapter is _DEFAULT_CHAPTER else chapter
+    )
     app.state.repository = repo
     return app
 
@@ -213,6 +235,31 @@ async def test_section_not_found_returns_structured_payload():
     nc = detail["next_commands"][0]
     assert nc["tool"] == "search_passages"
     assert nc["arguments"]["nbk_id"] == "NBK1247"
+
+
+@pytest.mark.asyncio
+async def test_summary_section_returns_noted_empty_response_for_known_chapter() -> None:
+    app = _build_app(passages=[], chapter=_make_chapter_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/sections/summary")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["nbk_id"] == "NBK1247"
+    assert body["chapter_section"] == "summary"
+    assert body["passages"] == []
+    assert body["passage_count"] == 0
+    assert "https://www.ncbi.nlm.nih.gov/books/NBK1247/" in body["note"]
+
+
+@pytest.mark.asyncio
+async def test_summary_section_returns_404_for_unknown_chapter() -> None:
+    app = _build_app(passages=[], chapter=None)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK9999999/sections/summary")
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "chapter_not_found"
 
 
 @pytest.mark.asyncio
@@ -346,26 +393,8 @@ def _build_app_with_overlap() -> FastAPI:
 
 
 @pytest.mark.asyncio
-async def test_dedupe_true_strips_overlap_region() -> None:
-    """dedupe=true with include=concatenated_text removes the shared suffix/prefix."""
-    app = _build_app_with_overlap()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get(
-            "/chapters/NBK9999/sections/management",
-            params={"include": "concatenated_text", "dedupe": "true"},
-        )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "concatenated_text" in data
-    text = data["concatenated_text"]
-    assert text == _EXPECTED_DEDUPED
-    # Overlap region appears exactly once
-    assert text.count(_OVERLAP) == 1
-
-
-@pytest.mark.asyncio
-async def test_dedupe_false_default_preserves_overlap() -> None:
-    """Default (dedupe=false) keeps the naive join with separator — no stripping."""
+async def test_dedupe_true_default_strips_overlap() -> None:
+    """Default include=concatenated_text strips the shared suffix/prefix."""
     app = _build_app_with_overlap()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get(
@@ -374,10 +403,23 @@ async def test_dedupe_false_default_preserves_overlap() -> None:
         )
     assert resp.status_code == 200
     data = resp.json()
-    text = data["concatenated_text"]
-    assert text == _EXPECTED_PLAIN
-    # Overlap region appears twice (once per chunk)
-    assert text.count(_OVERLAP) == 2
+    assert data["concatenated_char_count"] == len(data["concatenated_text"])
+    assert data["concatenated_char_count"] < sum(len(p["text"]) for p in data["passages"])
+    assert data["concatenated_text"] == _EXPECTED_DEDUPED
+
+
+@pytest.mark.asyncio
+async def test_dedupe_false_preserves_literal_chunk_text() -> None:
+    """dedupe=false keeps the naive join with separator and no stripping."""
+    app = _build_app_with_overlap()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK9999/sections/management",
+            params={"include": "concatenated_text", "dedupe": "false"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["concatenated_text"] == "\n\n".join(p["text"] for p in data["passages"])
 
 
 @pytest.mark.asyncio

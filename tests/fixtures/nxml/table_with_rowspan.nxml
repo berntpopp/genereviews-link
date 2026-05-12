@@ -1,0 +1,16 @@
+<table-wrap id="T.rowspan">
+  <caption><title>Rowspan sample</title></caption>
+  <table>
+    <thead>
+      <tr><th>Condition</th><th>Action</th><th>Frequency</th></tr>
+    </thead>
+    <tbody>
+      <tr><td rowspan="4">Breast cancer</td><td>Self-exam</td><td>Monthly</td></tr>
+      <tr><td>Clinical exam</td><td>Every 6-12 months</td></tr>
+      <tr><td>Mammogram</td><td>Annually</td></tr>
+      <tr><td>MRI</td><td>Annually</td></tr>
+      <tr><td>Ovarian cancer</td><td colspan="2">No effective screening</td></tr>
+      <tr><td>A</td><th>B</th><td>C</td></tr>
+    </tbody>
+  </table>
+</table-wrap>

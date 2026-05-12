@@ -17,6 +17,7 @@ from genereview_link.models.genereview_models import (
     FullTextMetadata,
     GeneReviewSection,
 )
+from genereview_link.models.sections import canonicalize_nbk_id
 
 router = APIRouter(prefix="/fulltext", tags=["Full Text"])
 
@@ -97,6 +98,7 @@ async def get_fulltext(
     # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient
     # until repository is populated.
     try:
+        nbk_id = canonicalize_nbk_id(nbk_id)
         # Clean up NBK ID - remove NBK prefix if present and ensure it's valid
         clean_id = re.sub(r"^NBK", "", nbk_id)
         if not clean_id.isdigit():
