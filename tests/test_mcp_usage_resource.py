@@ -155,7 +155,7 @@ def test_usage_resource_documents_dedupe_default(monkeypatch: pytest.MonkeyPatch
 
     normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
     expected = (
-        "`include=[\"concatenated_text\"]` returns joined text with chunk overlap "
+        '`include=["concatenated_text"]` returns joined text with chunk overlap '
         "stripped by default. Pass `dedupe=false` only for corpus-auditing workflows "
         "that need literal stored chunk text."
     )

@@ -35,6 +35,7 @@ def canonicalize_nbk_id(raw: str) -> str:
         return raw
     return f"NBK{match.group(1)}"
 
+
 SYSTEMATICALLY_UNSCRAPED_SECTIONS: frozenset[str] = frozenset({"summary"})
 """Canonical section names that the current NXML scraper deliberately does NOT extract.
 
