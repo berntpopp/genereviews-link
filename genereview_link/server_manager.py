@@ -530,6 +530,20 @@ class UnifiedServerManager:
                 }
             )
 
+        # Register genereview://usage as an MCP resource.
+        # Provides a detailed usage guide for the GeneReview-Link MCP server.
+        from genereview_link.api.resources.usage import USAGE_RESOURCE_MARKDOWN
+
+        @mcp.resource(
+            "genereview://usage",
+            name="usage",
+            description="Detailed usage guide for the GeneReview-Link MCP server.",
+            mime_type="text/markdown",
+        )
+        def usage_resource() -> str:
+            """Detailed usage guide for the GeneReview-Link MCP server."""
+            return USAGE_RESOURCE_MARKDOWN
+
         # Register prompts on the constructed MCP server.
         from genereview_link.mcp.prompts import register_prompts
 
