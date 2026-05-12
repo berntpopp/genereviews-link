@@ -23,3 +23,11 @@ SectionName = Literal[
 ]
 
 SECTION_NAMES: tuple[str, ...] = get_args(SectionName)
+
+SYSTEMATICALLY_UNSCRAPED_SECTIONS: frozenset[str] = frozenset({"summary"})
+"""Canonical section names that the current NXML scraper deliberately does NOT extract.
+
+When get_chapter_metadata sees `passage_count == 0` for one of these, it emits a
+SectionSummary.note explaining the absence. Keep this set small and explicit—if it
+grows past ~3 entries, reconsider whether the scraper itself should change instead.
+"""

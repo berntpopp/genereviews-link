@@ -6,7 +6,7 @@ import asyncpg
 import pytest
 
 from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
-from genereview_link.models.sections import SECTION_NAMES
+from genereview_link.models.sections import SECTION_NAMES, SYSTEMATICALLY_UNSCRAPED_SECTIONS
 from genereview_link.retrieval.repository import GeneReviewRepository
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -212,3 +212,49 @@ async def test_get_chapter_metadata_section_total_char_count(pool: asyncpg.Pool)
     assert by_section["diagnosis"].total_char_count == 600
     # Sections with no passages get 0.
     assert by_section["summary"].total_char_count == 0
+
+
+@pytest.mark.integration
+async def test_get_chapter_metadata_unscraped_section_emits_note(pool: asyncpg.Pool) -> None:
+    """A canonical section in SYSTEMATICALLY_UNSCRAPED_SECTIONS with zero passages
+    gets a non-empty note explaining the absence."""
+    await _seed(pool)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "insert into genereview.genereview_chapters "
+            "(nbk_id, short_name, title, gene_symbols, omim_ids, nxml_relpath, corpus_version) "
+            "values ('NBKNOTES', 'notes', 'Notes Test', '{}', '{}', 'NBKNOTES.xml', '2026-01-01') "
+            "on conflict do nothing"
+        )
+        # No 'summary' rows. Add a single narrative passage in another section.
+        await conn.execute(
+            "insert into genereview.genereview_passages "
+            "(nbk_id, passage_id, chapter_section, "
+            "section_level, chunk_index, text, text_hash, char_count, token_estimate, "
+            "corpus_version, passage_type) "
+            "values ('NBKNOTES','NBKNOTES:0000','diagnosis',1,0,'dx text','fake_hash',7,0,'2026-01-01','narrative') "
+            "on conflict do nothing"
+        )
+
+    repo = GeneReviewRepository(pool)
+    meta = await repo.get_chapter_metadata("NBKNOTES")
+    assert meta is not None
+
+    summary = next(s for s in meta.sections if s.section == "summary")
+    assert summary.passage_count == 0
+    assert summary.note is not None
+    assert "summary" in summary.note.lower()
+    assert "ncbi.nlm.nih.gov" in summary.note.lower()
+
+    # A non-unscraped zero-count section gets no note.
+    resources = next(s for s in meta.sections if s.section == "resources")
+    assert resources.passage_count == 0
+    assert resources.note is None
+
+    # A section with passages (diagnosis) also gets no note.
+    diagnosis = next(s for s in meta.sections if s.section == "diagnosis")
+    assert diagnosis.passage_count == 1
+    assert diagnosis.note is None
+
+    # Sanity-check: 'summary' is indeed in SYSTEMATICALLY_UNSCRAPED_SECTIONS.
+    assert "summary" in SYSTEMATICALLY_UNSCRAPED_SECTIONS

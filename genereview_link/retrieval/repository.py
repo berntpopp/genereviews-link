@@ -10,7 +10,7 @@ from typing import Any
 import asyncpg
 
 from genereview_link.config import settings
-from genereview_link.models.sections import SECTION_NAMES
+from genereview_link.models.sections import SECTION_NAMES, SYSTEMATICALLY_UNSCRAPED_SECTIONS
 
 
 @dataclass(frozen=True, slots=True)
@@ -539,7 +539,11 @@ class GeneReviewRepository:
                 section=name,
                 passage_count=counts.get(name, {}).get("passage_count", 0),
                 total_char_count=counts.get(name, {}).get("total_char_count", 0),
-                note=None,
+                note=(
+                    _note_for_empty_section(name, nbk_id)
+                    if counts.get(name, {}).get("passage_count", 0) == 0
+                    else None
+                ),
             )
             for name in SECTION_NAMES
         )
@@ -636,6 +640,19 @@ class GeneReviewRepository:
                 pids,
             )
         return {r["passage_id"]: float(r["score"]) for r in rows}
+
+
+def _note_for_empty_section(section: str, nbk_id: str) -> str | None:
+    """Return an explanatory note when a zero-passage section is deliberately unscraped.
+
+    Returns None for sections that are simply empty (e.g. not yet ingested).
+    """
+    if section in SYSTEMATICALLY_UNSCRAPED_SECTIONS:
+        return (
+            f"section {section!r} is not scraped from NCBI Bookshelf NXML; "
+            f"see the chapter abstract at https://www.ncbi.nlm.nih.gov/books/{nbk_id}"
+        )
+    return None
 
 
 def _to_chapter_row(row: asyncpg.Record) -> ChapterRow:
