@@ -714,3 +714,123 @@ async def test_search_next_commands_populated_for_unknown_gene() -> None:
     # Each command has a gene argument from the suggestions
     genes_in_commands = [cmd["arguments"]["gene"] for cmd in cmds]
     assert any("BRCA" in g for g in genes_in_commands)
+
+
+# ---------------------------------------------------------------------------
+# ids_only mode tests (Task 5 — Spec D1)
+# ---------------------------------------------------------------------------
+
+
+def _make_ids_only_repo(passage_ids: list[str], sections: list[str] | None = None) -> Any:
+    """Build a fake repo returning rows for the given passage_ids."""
+    from unittest.mock import MagicMock
+
+    _sections = sections or ["management"] * len(passage_ids)
+    rows = [
+        LexicalPassageRow(
+            passage=PassageRow(
+                nbk_id=pid.split(":")[0],
+                passage_id=pid,
+                chapter_section=sec,
+                heading_path=f"{sec.capitalize()} > X",
+                section_level=2,
+                chunk_index=int(pid.split(":")[1]),
+                text="Some passage text for testing purposes.",
+                chapter_title="Chapter",
+                chapter_last_updated=None,
+                gene_symbols=("BRCA1",),
+            ),
+            phrase_rank=1.0,
+            strict_rank=0.5,
+            recall_rank=0.4,
+            recall_overlap_count=1,
+            lexical_rank=0.9 - i * 0.1,
+            snippet=f"**bold** snippet {i}",
+        )
+        for i, (pid, sec) in enumerate(zip(passage_ids, _sections, strict=True))
+    ]
+    repo = MagicMock()
+    repo.search_passages = AsyncMock(return_value=rows)
+    repo.active_embedding_table = AsyncMock(return_value="t")
+    repo.dense_scores_for_passages = AsyncMock(return_value={})
+    return repo
+
+
+@pytest.mark.asyncio
+async def test_search_ids_only_mode_returns_lean_shape() -> None:
+    """mode='ids_only' returns {passage_id, rrf_score, chapter_section} per result;
+    no text, no snippet, no chapter_title, no score_breakdown."""
+    repo = _make_ids_only_repo(
+        passage_ids=["NBK1247:0010", "NBK1247:0011"],
+        sections=["management", "diagnosis"],
+    )
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "mode": "ids_only", "limit": 5})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "results" in data
+    assert len(data["results"]) == 2
+    first = data["results"][0]
+    assert set(first.keys()) == {"passage_id", "rrf_score", "chapter_section"}
+    assert first["passage_id"].startswith("NBK1247:")
+    assert isinstance(first["rrf_score"], (float, type(None)))
+    # Crucially, none of these keys appear:
+    for forbidden in (
+        "text",
+        "snippet",
+        "chapter_title",
+        "score_breakdown",
+        "recommended_citation",
+        "heading_path_array",
+        "passage_type",
+        "table_id",
+    ):
+        assert forbidden not in first, f"Forbidden key present: {forbidden}"
+    assert "_meta" in data
+    assert "corpus_version" in data["_meta"]
+
+
+@pytest.mark.asyncio
+async def test_search_ids_only_mode_is_rejected_for_invalid_mode() -> None:
+    """An unknown mode value is rejected with 422."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "mode": "bogus_mode"})
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_search_ids_only_mode_respects_limit() -> None:
+    """ids_only mode respects the limit parameter."""
+    repo = _make_ids_only_repo(
+        passage_ids=[f"NBK1247:{i:04d}" for i in range(10)],
+    )
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "mode": "ids_only", "limit": 3})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["results"]) <= 3
+
+
+@pytest.mark.asyncio
+async def test_search_ids_only_corpus_version_in_meta() -> None:
+    """ids_only response carries _meta.corpus_version from app.state."""
+    repo = _make_ids_only_repo(passage_ids=["NBK1247:0001"])
+    app = _make_brief_app(repo)
+    app.state.corpus_version = "2026-03-01"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "mode": "ids_only"})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["_meta"]["corpus_version"] == "2026-03-01"

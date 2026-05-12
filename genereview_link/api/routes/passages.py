@@ -120,15 +120,14 @@ async def search_passages(
         ),
     ] = None,
     mode: Annotated[
-        Literal["brief", "full"],
+        Literal["brief", "full", "ids_only"],
         Query(
             description=(
-                "brief (default): each row carries a ts_headline snippet "
-                "(2 fragments, ~30-60 words total, **bold** highlights around "
-                "query terms - roughly 300-500 chars per row, so <= ~3 KB "
-                "total at limit=5). full: each row carries the entire "
-                "passage text - pick this only when you have already chosen "
-                "the row(s) you want to read."
+                "brief (default): each row carries a ts_headline snippet (~3 KB at limit=5). "
+                "full: each row carries the entire passage text (~10-50 KB/row). "
+                "ids_only: returns only passage_id + rrf_score + chapter_section per row "
+                "(~70% smaller than brief). Use for bulk-triage workflows; "
+                "include/exclude flags and recommended_citation are not emitted in this mode."
             ),
         ),
     ] = "brief",
@@ -226,6 +225,24 @@ async def search_passages(
         ranked, _diag = rerank_with_embeddings(lex, dense_scores)
     ranked = ranked[:limit]
 
+    corpus = _get_corpus_version(request)
+
+    if mode == "ids_only":
+        meta = ResponseMeta(corpus_version=corpus)
+        return JSONResponse(
+            {
+                "results": [
+                    {
+                        "passage_id": r.passage.passage_id,
+                        "rrf_score": r.rrf_score,
+                        "chapter_section": r.passage.chapter_section,
+                    }
+                    for r in ranked
+                ],
+                "_meta": meta.model_dump(by_alias=True),
+            }
+        )
+
     include_set = set(include or [])
     include_score_breakdown = "score_breakdown" in include_set
 
@@ -262,8 +279,6 @@ async def search_passages(
                 score_breakdown=score_breakdown,
             )
         )
-
-    corpus = _get_corpus_version(request)
 
     diagnostics_model: SearchDiagnosticsModel | None = None
     if not out:
