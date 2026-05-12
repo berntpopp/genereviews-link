@@ -8,7 +8,8 @@ from typing import Any
 
 import uvicorn
 from asgi_correlation_id import CorrelationIdMiddleware
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP
@@ -334,6 +335,52 @@ class UnifiedServerManager:
                     "hint": "Pass ?fresh=true to fetch from NCBI live",
                 },
             )
+
+        # Custom 422 handler for the case where an MCP client mistakenly passes
+        # `q` as a nested JSON object (e.g. {"q": {"text": "BRCA1"}}) instead
+        # of a plain string.  FastAPI's default 422 body exposes raw Pydantic
+        # error dicts that are difficult for LLMs to parse and act on.
+        #
+        # NOTE: an integration test via TestClient cannot easily reproduce this
+        # failure path because /passages/search is a GET endpoint whose `q`
+        # parameter arrives via the query string — the TestClient has no way to
+        # submit a nested object through a query-string parameter.  The handler
+        # is covered by a direct unit test in
+        # tests/test_api_request_validation.py that constructs a synthetic
+        # RequestValidationError and calls the handler function directly.
+        @app.exception_handler(RequestValidationError)
+        async def query_must_be_string_handler(
+            request: Request, exc: RequestValidationError
+        ) -> JSONResponse:
+            for err in exc.errors():
+                loc = err.get("loc", ())
+                if "q" in loc and err.get("type") in {
+                    "string_type",
+                    "value_error",
+                    "dict_type",
+                }:
+                    return JSONResponse(
+                        status_code=422,
+                        content={
+                            "detail": {
+                                "code": "query_must_be_string",
+                                "message": "q must be a top-level string",
+                                "recovery_hint": (
+                                    "pass q as a top-level string parameter, "
+                                    "not a nested object"
+                                ),
+                                "next_commands": [
+                                    {
+                                        "tool": "search_passages",
+                                        "arguments": {"q": "<your query string>"},
+                                    }
+                                ],
+                            }
+                        },
+                    )
+            # Fall through to FastAPI's default 422 shape for all other
+            # validation errors so we don't hide unrelated problems.
+            return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
         app.include_router(search.router)
         app.include_router(abstract.router)
