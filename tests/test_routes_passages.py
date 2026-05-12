@@ -358,6 +358,21 @@ async def test_search_filter_uses_nbk_id_not_nbk() -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_filter_canonicalizes_zero_padded_nbk_id() -> None:
+    repo = _make_brief_repo(rows=1)
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "nbk_id": "NBK0001247"},
+        )
+
+    assert resp.status_code == 200
+    assert repo.search_passages.call_args.kwargs["nbk_id"] == "NBK1247"
+
+
+@pytest.mark.asyncio
 async def test_search_response_includes_meta_attribution() -> None:
     """Search response wraps results in an envelope with _meta.attribution."""
     repo = _make_brief_repo(rows=7)

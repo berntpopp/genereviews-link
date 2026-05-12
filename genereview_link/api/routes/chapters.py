@@ -17,7 +17,7 @@ from genereview_link.models.genereview_models import (
     SectionSummary,
     TableSummary,
 )
-from genereview_link.models.sections import SectionName
+from genereview_link.models.sections import SectionName, canonicalize_nbk_id
 from genereview_link.retrieval.repository import GeneReviewRepository
 
 router = APIRouter(tags=["Chapters"])
@@ -116,6 +116,7 @@ async def get_chapter_section(
 
     Latency: ~1ms p50.
     """
+    nbk_id = canonicalize_nbk_id(nbk_id)
     passages = await repo.get_section(nbk_id, section, heading_path_contains=heading_path_contains)
     if not passages:
         raise StructuredHTTPException(
@@ -198,6 +199,7 @@ async def get_chapter_metadata(
 
     Latency: ~1ms p50.
     """
+    nbk_id = canonicalize_nbk_id(nbk_id)
     meta = await repo.get_chapter_metadata(nbk_id)
     if meta is None:
         raise StructuredHTTPException(

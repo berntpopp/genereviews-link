@@ -74,6 +74,16 @@ async def test_get_chapter_metadata_returns_200_for_known_nbk() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_chapter_metadata_canonicalizes_zero_padded_nbk() -> None:
+    app = _build_app(metadata=_make_metadata_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK0001247/metadata")
+
+    assert resp.status_code == 200, resp.text
+    app.state.repository.get_chapter_metadata.assert_awaited_once_with("NBK1247")
+
+
+@pytest.mark.asyncio
 async def test_get_chapter_metadata_includes_gene_symbols() -> None:
     app = _build_app(metadata=_make_metadata_row())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:

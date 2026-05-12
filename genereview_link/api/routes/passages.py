@@ -28,7 +28,7 @@ from genereview_link.models.genereview_models import (
     ScoreBreakdown,
     SearchDiagnosticsModel,
 )
-from genereview_link.models.sections import SECTION_NAMES, SectionName
+from genereview_link.models.sections import SECTION_NAMES, SectionName, canonicalize_nbk_id
 from genereview_link.retrieval.embeddings import EmbeddingProvider
 from genereview_link.retrieval.repository import GeneReviewRepository, PassageRow
 from genereview_link.retrieval.rerank import (
@@ -259,6 +259,8 @@ async def search_passages(
         )
     q = q or query
     assert q is not None
+    if nbk_id is not None:
+        nbk_id = canonicalize_nbk_id(nbk_id)
     query_intents = detect_query_intents(q)
 
     if gene:

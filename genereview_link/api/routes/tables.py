@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Path, Request
 from genereview_link.api.errors import FieldError, StructuredHTTPException
 from genereview_link.api.routes.passages import _get_corpus_version, get_repository
 from genereview_link.models.genereview_models import ResponseMeta, TableResponse
-from genereview_link.models.sections import SectionName
+from genereview_link.models.sections import SectionName, canonicalize_nbk_id
 from genereview_link.retrieval.repository import GeneReviewRepository
 
 router = APIRouter(tags=["Chapters"])
@@ -47,6 +47,7 @@ async def get_table(
 
     Latency: ~1ms p50.
     """
+    nbk_id = canonicalize_nbk_id(nbk_id)
     table = await repo.get_table(nbk_id, table_id)
     if table is None:
         # Discover valid table IDs for this chapter to help the caller self-correct.

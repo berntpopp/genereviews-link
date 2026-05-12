@@ -8,6 +8,7 @@ API surface and the rerank module.
 
 from __future__ import annotations
 
+import re
 from typing import Literal, get_args
 
 SectionName = Literal[
@@ -23,6 +24,16 @@ SectionName = Literal[
 ]
 
 SECTION_NAMES: tuple[str, ...] = get_args(SectionName)
+
+_NBK_PATTERN = re.compile(r"^NBK0*(\d+)$")
+
+
+def canonicalize_nbk_id(raw: str) -> str:
+    """Strip leading zeroes from the numeric portion of an NBK ID."""
+    match = _NBK_PATTERN.fullmatch(raw)
+    if match is None:
+        return raw
+    return f"NBK{match.group(1)}"
 
 SYSTEMATICALLY_UNSCRAPED_SECTIONS: frozenset[str] = frozenset({"summary"})
 """Canonical section names that the current NXML scraper deliberately does NOT extract.
