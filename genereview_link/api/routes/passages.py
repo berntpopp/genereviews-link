@@ -102,7 +102,10 @@ def _get_corpus_version(request: Request) -> str | None:
     operation_id="search_passages",
     summary="Hybrid lexical + dense RAG search across GeneReviews passages.",
     description=(
-        "Returns ranked passages from the active GeneReviews corpus.\n\n"
+        "Returns ranked passages from the active GeneReviews corpus. "
+        'For intervention/treatment queries, pass sections=["management"]; '
+        'for diagnostic-criteria queries, pass sections=["diagnosis", "clinical_features"]. '
+        "This is the biggest precision lever.\n\n"
         "**Rerank modes:**\n"
         "- `rrf` (default): RRF over three-tsquery lexical + BGE-small "
         "dense cosine. Balanced quality. Use this for general questions.\n"

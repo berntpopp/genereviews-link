@@ -20,7 +20,12 @@ router = APIRouter(tags=["Chapters"])
     response_model=TableResponse,
     response_model_by_alias=True,
     operation_id="get_table",
-    summary="Fetch a single chapter table as structured rows",
+    summary="Fetch a known GeneReviews table_id as structured rows",
+    description=(
+        "Fetch a known GeneReviews table_id as structured rows. Call "
+        "get_chapter_metadata first to discover tables[] entries and avoid "
+        "guessing numeric table labels."
+    ),
 )
 async def get_table(
     nbk_id: Annotated[
@@ -39,14 +44,7 @@ async def get_table(
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
 ) -> TableResponse:
-    """Fetch a single chapter table as structured rows.
-
-    Use after search_passages or get_chapter_metadata to retrieve a
-    specific table's data when you need row-level access (the table is
-    also retrievable as a passage_type='table' passage via search_passages).
-
-    Latency: ~1ms p50.
-    """
+    """Fetch a known GeneReviews table_id as structured rows."""
     table = await repo.get_table(nbk_id, table_id)
     if table is None:
         # Discover valid table IDs for this chapter to help the caller self-correct.

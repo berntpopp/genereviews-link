@@ -25,6 +25,28 @@ def _parameter_description(
     return str(parameter["description"])
 
 
+def _operation(app: FastAPI, path: str, method: str) -> dict:
+    return dict(app.openapi()["paths"][path][method])
+
+
+def test_search_passages_description_leads_with_section_affordances() -> None:
+    desc = str(_operation(_app(), "/passages/search", "get")["description"])
+
+    assert 'sections=["management"]' in desc
+
+
+def test_get_chapter_metadata_summary_leads_with_outline_affordance() -> None:
+    summary = str(_operation(_app(), "/chapters/{nbk_id}/metadata", "get")["summary"])
+
+    assert summary.startswith("The chapter outline tool")
+
+
+def test_get_chapter_section_description_mentions_default_overlap_stripping() -> None:
+    desc = str(_operation(_app(), "/chapters/{nbk_id}/sections/{section}", "get")["description"])
+
+    assert "overlap stripped by default" in desc
+
+
 def test_search_passages_rerank_description_lists_values_inline() -> None:
     desc = _parameter_description(_app(), "/passages/search", "get", "rerank")
 
