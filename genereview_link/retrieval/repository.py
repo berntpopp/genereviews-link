@@ -75,6 +75,8 @@ class LexicalPassageRow:
 class SectionSummaryRow:
     section: str
     passage_count: int
+    total_char_count: int
+    note: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,7 +502,9 @@ class GeneReviewRepository:
 
             section_rows = await conn.fetch(
                 """
-                select chapter_section, count(*)::int as cnt
+                select chapter_section,
+                       count(*)::int as passage_count,
+                       coalesce(sum(char_count), 0)::int as total_char_count
                   from genereview_passages
                  where nbk_id = $1
                  group by chapter_section
@@ -523,9 +527,20 @@ class GeneReviewRepository:
                 nbk_id,
             )
 
-        counts = {r["chapter_section"]: r["cnt"] for r in section_rows}
+        counts: dict[str, dict[str, int]] = {
+            r["chapter_section"]: {
+                "passage_count": r["passage_count"],
+                "total_char_count": r["total_char_count"],
+            }
+            for r in section_rows
+        }
         sections = tuple(
-            SectionSummaryRow(section=name, passage_count=counts.get(name, 0))
+            SectionSummaryRow(
+                section=name,
+                passage_count=counts.get(name, {}).get("passage_count", 0),
+                total_char_count=counts.get(name, {}).get("total_char_count", 0),
+                note=None,
+            )
             for name in SECTION_NAMES
         )
 

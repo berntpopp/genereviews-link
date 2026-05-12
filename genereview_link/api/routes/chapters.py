@@ -193,7 +193,12 @@ async def get_chapter_metadata(
         chapter_last_updated=meta.chapter_last_updated,
         gene_symbols=list(meta.gene_symbols),
         sections=[
-            SectionSummary(section=cast(SectionName, s.section), passage_count=s.passage_count)
+            SectionSummary(
+                section=cast(SectionName, s.section),
+                passage_count=s.passage_count,
+                total_char_count=s.total_char_count,
+                note=s.note,
+            )
             for s in meta.sections
         ],
         table_count=meta.table_count,

@@ -283,10 +283,12 @@ class ChapterSectionResponse(BaseModel):
 
 
 class SectionSummary(BaseModel):
-    """Per-section passage count, emitted inside ChapterMetadataResponse."""
+    """Per-section passage count and char count, emitted inside ChapterMetadataResponse."""
 
     section: SectionName
     passage_count: int
+    total_char_count: int
+    note: str | None = None
 
 
 class TableSummary(BaseModel):

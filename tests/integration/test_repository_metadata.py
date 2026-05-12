@@ -172,3 +172,43 @@ async def test_get_chapter_metadata_gene_symbols_null_safe(pool: asyncpg.Pool) -
     assert isinstance(meta.gene_symbols, tuple)
     assert meta.gene_symbols == ()
     assert meta.chapter_last_updated is None
+
+
+@pytest.mark.integration
+async def test_get_chapter_metadata_section_total_char_count(pool: asyncpg.Pool) -> None:
+    """Each section's total_char_count equals SUM(char_count) over its passages."""
+    await _seed(pool)
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "insert into genereview.genereview_chapters "
+            "(nbk_id, short_name, title, gene_symbols, omim_ids, nxml_relpath, corpus_version) "
+            "values ('NBKCHRCT', 'chrct', 'CharCount Test', '{}', '{}', 'NBKCHRCT.xml', '2026-01-01') "
+            "on conflict do nothing"
+        )
+        # Two narrative passages in 'management', one in 'diagnosis'.
+        for pid, section, text in [
+            ("NBKCHRCT:0000", "management", "abc" * 100),  # 300 chars
+            ("NBKCHRCT:0001", "management", "xyz" * 50),  # 150 chars
+            ("NBKCHRCT:0002", "diagnosis", "qrs" * 200),  # 600 chars
+        ]:
+            await conn.execute(
+                "insert into genereview.genereview_passages "
+                "(nbk_id, passage_id, chapter_section, "
+                "section_level, chunk_index, text, text_hash, char_count, token_estimate, "
+                "corpus_version, passage_type) "
+                "values ('NBKCHRCT',$1,$2,1,$3,$4,'fake_hash_' || $1,length($4),0,'2026-01-01','narrative') "
+                "on conflict do nothing",
+                pid,
+                section,
+                int(pid.split(":")[1]),
+                text,
+            )
+
+    repo = GeneReviewRepository(pool)
+    meta = await repo.get_chapter_metadata("NBKCHRCT")
+    assert meta is not None
+    by_section = {s.section: s for s in meta.sections}
+    assert by_section["management"].total_char_count == 450
+    assert by_section["diagnosis"].total_char_count == 600
+    # Sections with no passages get 0.
+    assert by_section["summary"].total_char_count == 0

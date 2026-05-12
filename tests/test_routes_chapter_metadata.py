@@ -32,6 +32,7 @@ def _make_metadata_row(
         SectionSummaryRow(
             section=name,
             passage_count=5 if name == "summary" else 0,
+            total_char_count=50 if name == "summary" else 0,
         )
         for name in SECTION_NAMES
     )

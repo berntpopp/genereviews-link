@@ -51,7 +51,10 @@ def _build_app(
     from genereview_link.retrieval.repository import ChapterMetadataRow, SectionSummaryRow
 
     if chapter_exists:
-        sections = tuple(SectionSummaryRow(section=name, passage_count=0) for name in SECTION_NAMES)
+        sections = tuple(
+            SectionSummaryRow(section=name, passage_count=0, total_char_count=0)
+            for name in SECTION_NAMES
+        )
         meta_row = ChapterMetadataRow(
             nbk_id="NBK1247",
             title="BRCA1-HBOC",
