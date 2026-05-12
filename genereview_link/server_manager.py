@@ -1,9 +1,11 @@
 """Unified server manager for GeneReview Link with multiple transports."""
 
 import asyncio
+import shutil
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -56,6 +58,11 @@ REQUEST_LATENCY = Histogram(
 )
 
 
+def _bundle_bootstrap_paths(work_dir: Path) -> tuple[Path, Path]:
+    """Return bundle tarball and extraction paths under the writable work dir."""
+    return work_dir / "bundle.tar.gz", work_dir / "bundle_extract"
+
+
 async def _bootstrap() -> None:
     """Bootstrap the corpus before the pool is opened for request serving.
 
@@ -70,7 +77,6 @@ async def _bootstrap() -> None:
     import json
     import os
     import tarfile as tf_mod
-    from pathlib import Path
 
     import asyncpg
 
@@ -103,9 +109,12 @@ async def _bootstrap() -> None:
         if bundle_url:
             logger.info("downloading corpus bundle", url=bundle_url)
             sha = await fetch_sibling_sha256(bundle_url)
-            tmp = Path("/tmp") / "bundle.tar.gz"  # noqa: S108
+            work_dir = Path(settings.BUNDLE_BOOTSTRAP_DIR)
+            tmp, extract_dir = _bundle_bootstrap_paths(work_dir)
+            shutil.rmtree(extract_dir, ignore_errors=True)
+            work_dir.mkdir(parents=True, exist_ok=True)
             await download_with_integrity(bundle_url, tmp, expected_sha256=sha)
-            extract_dir = Path("/tmp/bundle_extract")  # noqa: S108
+            extract_dir.mkdir(parents=True, exist_ok=True)
             with tf_mod.open(tmp, "r:gz") as tar:
                 tar.extractall(str(extract_dir))  # noqa: S202
             manifest = json.loads((extract_dir / "manifest.json").read_text())

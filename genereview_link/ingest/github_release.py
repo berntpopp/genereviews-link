@@ -36,7 +36,7 @@ async def resolve_latest(repo: str) -> str:
 
 async def fetch_sibling_sha256(url: str) -> str:
     """Fetch <url>.sha256 sibling file and return the hex digest."""
-    async with httpx.AsyncClient(timeout=30.0) as c:
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as c:
         r = await c.get(f"{url}.sha256")
         r.raise_for_status()
         return r.text.strip().split()[0]
@@ -48,7 +48,7 @@ async def download_with_integrity(url: str, dest: Path, *, expected_sha256: str)
     dest.parent.mkdir(parents=True, exist_ok=True)
     # timeout=None is intentional: large bundles take unbounded time.
     async with (
-        httpx.AsyncClient(timeout=None) as c,  # noqa: S113
+        httpx.AsyncClient(timeout=None, follow_redirects=True) as c,  # noqa: S113
         c.stream("GET", url) as r,
     ):
         r.raise_for_status()

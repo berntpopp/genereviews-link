@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     # Corpus bootstrap modes
     # BUNDLE_URL: set to a .tar.gz URL (or "latest") to restore from a release bundle.
     BUNDLE_URL: str = ""
+    # Writable directory for bundle download/extraction during bootstrap.
+    BUNDLE_BOOTSTRAP_DIR: str = "/tmp/genereview-link"  # noqa: S108
     # BUILD_LOCAL: set to True to run a full local ingest on first boot.
     BUILD_LOCAL: bool = False
     # GITHUB_REPO: owner/repo for release resolution when BUNDLE_URL="latest".

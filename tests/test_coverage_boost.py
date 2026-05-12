@@ -1159,13 +1159,14 @@ class TestDownloadWithIntegrity:
         fake_client.stream = MagicMock(return_value=stream_cm)
         fake_client.__aenter__ = AsyncMock(return_value=fake_client)
         fake_client.__aexit__ = AsyncMock(return_value=False)
-        mocker.patch.object(gh.httpx, "AsyncClient", return_value=fake_client)
+        client_factory = mocker.patch.object(gh.httpx, "AsyncClient", return_value=fake_client)
 
         dest = tmp_path / "bundle.tar.gz"
         await gh.download_with_integrity(
             "https://example.com/bundle.tar.gz", dest, expected_sha256=expected
         )
         assert dest.read_bytes() == payload
+        assert client_factory.call_args.kwargs["follow_redirects"] is True
 
     @pytest.mark.asyncio
     async def test_download_raises_on_sha_mismatch(
@@ -1188,7 +1189,7 @@ class TestDownloadWithIntegrity:
         fake_client.stream = MagicMock(return_value=stream_cm)
         fake_client.__aenter__ = AsyncMock(return_value=fake_client)
         fake_client.__aexit__ = AsyncMock(return_value=False)
-        mocker.patch.object(gh.httpx, "AsyncClient", return_value=fake_client)
+        client_factory = mocker.patch.object(gh.httpx, "AsyncClient", return_value=fake_client)
 
         dest = tmp_path / "bundle.tar.gz"
         with pytest.raises(RuntimeError, match="sha256 mismatch"):
@@ -1197,8 +1198,28 @@ class TestDownloadWithIntegrity:
                 dest,
                 expected_sha256="0" * 64,
             )
+        assert client_factory.call_args.kwargs["follow_redirects"] is True
         # File must be cleaned up after a mismatch.
         assert not dest.exists()
+
+    @pytest.mark.asyncio
+    async def test_fetch_sibling_sha256_follows_redirects(self, mocker: MockerFixture) -> None:
+        from genereview_link.ingest import github_release as gh
+
+        fake_response = MagicMock()
+        fake_response.text = "abc123  bundle.tar.gz\n"
+        fake_response.raise_for_status = MagicMock()
+
+        fake_client = MagicMock()
+        fake_client.get = AsyncMock(return_value=fake_response)
+        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+        fake_client.__aexit__ = AsyncMock(return_value=False)
+        client_factory = mocker.patch.object(gh.httpx, "AsyncClient", return_value=fake_client)
+
+        digest = await gh.fetch_sibling_sha256("https://example.com/bundle.tar.gz")
+
+        assert digest == "abc123"
+        assert client_factory.call_args.kwargs["follow_redirects"] is True
 
 
 # ---- CLI db_reset (mocked --yes path) --------------------------------------
