@@ -72,3 +72,13 @@ def test_usage_resource_returns_markdown(monkeypatch: pytest.MonkeyPatch) -> Non
     first = result.contents[0]
     raw = first.content if hasattr(first, "content") else str(first)
     assert raw == USAGE_RESOURCE_MARKDOWN
+
+
+def test_server_instructions_manifests_both_resources(monkeypatch: pytest.MonkeyPatch) -> None:
+    """instructions= must reference both resource URIs and fit within the 1000-char budget."""
+    mcp = _build_mcp(monkeypatch)
+    instr = mcp.instructions or ""
+    assert "genereview://license" in instr
+    assert "genereview://usage" in instr
+    # Length check — the whole point of Task 15 is to keep instructions tight.
+    assert len(instr) < 1000, f"instructions length {len(instr)} exceeds 1000-char budget"
