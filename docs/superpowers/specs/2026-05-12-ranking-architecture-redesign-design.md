@@ -159,6 +159,15 @@ Collapsing the phases produces specific failure modes:
 5. `genereview://usage` updated with the `ce` mode entry and latency guidance.
 6. Smoke tests for the new mode.
 
+**Score combination rule for `rerank=ce` (REQUIRED — decide before C-γ ships).** Cross-encoder outputs are not all calibrated to the same range. Some models return raw logits (can be negative), some return sigmoid probabilities in [0, 1], some return cosine-like similarity. Naively applying `role_multiplier × (1 + intent_boost)` to a raw negative logit will *invert* the role penalty (a cross_reference passage with logit -2 becomes -0.8 after × 0.4, which ranks higher than -2). The architecture diagram's "re-apply role × intent after cross-encoder" step must therefore specify a normalization:
+
+- **Step 1 — normalize CE output to [0, 1]:** apply `sigmoid(logit)` if the chosen model returns logits, or use the model's native bounded output if already in [0, 1] (e.g., `cross-encoder` package's `predict()` with `activation_fct=Sigmoid()`). The C-β bench-off must record the activation choice for each candidate model so C-γ can wire it correctly.
+- **Step 2 — combine:** `final_score = sigmoid_ce_score × role_multiplier × (1 + intent_section_boost)`. Same multiplicative pattern as Batch B's `adjusted_score`, but now multiplying a bounded positive value, not a raw logit.
+
+Alternative considered and rejected: keep CE score primary and apply role/intent as small additive prior. Cleaner mathematically (no normalization step) but breaks consistency with the existing Batch B `adjusted_score` semantics, and means cross_reference passages can only be edged out by ties — not actually demoted when CE thinks they're highly relevant. The multiplicative-after-sigmoid pattern preserves the Batch B contract.
+
+The architecture diagram earlier in this spec ("re-apply role_multiplier × intent_boost to cross-encoder score") is shorthand for this normalize-then-multiply rule.
+
 **Gate:** end-to-end smoke against the regression set; cross-encoder mode wins on P@1 vs `rrf` on the benchmark; latency p95 within whatever budget the chosen model implies.
 
 **Effort:** ~1 week.
@@ -169,7 +178,7 @@ VPS constraint: **6 cores / 24 GB RAM, CPU-only inference**. Models above ~300M 
 
 | Candidate | Params | License | Why it's on the shortlist | Est. latency (50 pairs, 6-core CPU) |
 |---|---|---|---|---|
-| **[ncbi/MedCPT-Cross-Encoder](https://huggingface.co/ncbi/MedCPT-Cross-Encoder)** | 110M | Public domain (NIH) | **NCBI-built, biomedical SOTA.** Trained on **255 million query/article pairs from PubMed search logs** ([Jin et al 2023, PMID 37930324](https://pmc.ncbi.nlm.nih.gov/articles/PMC10627406/)). Same NCBI that publishes the GeneReviews corpus — strongest possible domain match. This is the "biomedical pretraining helps" hypothesis. | ~150-250ms |
+| **[ncbi/MedCPT-Cross-Encoder](https://huggingface.co/ncbi/MedCPT-Cross-Encoder)** | 110M | Public domain (NIH) | **NCBI-built, biomedical SOTA.** Trained on **255 million query/article pairs from PubMed search logs** ([Jin et al 2023, PMID 37930324](https://pmc.ncbi.nlm.nih.gov/articles/PMC10627406/)). Strongest biomedical publisher / search-log match — but **not guaranteed** to win, because GeneReviews chapters are structured long-form Bookshelf content, not PubMed abstracts. The training distribution shift (search-log query → abstract retrieval) vs deployment (clinical query → chapter passage retrieval) is real and is exactly what C-β measures. | ~150-250ms |
 | **[cross-encoder/ms-marco-MiniLM-L-12-v2](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-12-v2)** | 33M | Apache 2.0 | The "if this wins, ops is trivial" baseline. Multiple recent benchmarks show it beating 10× larger generic models. Tests whether model strength × speed beats domain pretraining. | ~50-80ms |
 | **[mixedbread-ai/mxbai-rerank-base-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v1)** | 184M | Apache 2.0 | Modern (2024) general-domain reranker, BEIR-competitive, fits the 6-core budget comfortably. | ~250-400ms |
 | **[BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)** | 278M | MIT | Anchors "general-SOTA at borderline-acceptable latency". If MedCPT loses to this, biomedical pretraining didn't help on our corpus and we'd revisit assumptions. | ~400-600ms |
@@ -182,6 +191,10 @@ VPS constraint: **6 cores / 24 GB RAM, CPU-only inference**. Models above ~300M 
 | Qwen3-Reranker-0.6B | Same reason; too large for 6-core CPU |
 | zerank-1-small (1.7B LoRA) | Won't fit in worker memory once multiplied by worker count |
 | MedGemma-4B / -27B | These are **generative** models, not cross-encoders. Used as LLM-as-judge they take seconds per query — orders of magnitude outside our latency budget. Stay with purpose-built rerankers. |
+
+**Optional fifth — only if C-β has spare time.** Add a BioASQ / PubMedBERT-based reranker from [IEETA/BioASQ-14B](https://huggingface.co/IEETA/BioASQ-14B) (Apache 2.0; bundled experimental medical rerankers, includes PubMedBERT and BioBERT variants) as a clearly-labeled **external-validity challenger**. Not in the core 4-model bake-off because it is a bundled experimental collection rather than a clean primary checkpoint, but it would tell us whether *any* biomedical-pretrained model beats MedCPT on our corpus or whether MedCPT is already pulling all the medical-domain value available.
+
+[AronowLab/BOND-reranker](https://huggingface.co/AronowLab/BOND-reranker) was also considered but is entity-normalization focused, not passage retrieval — does not belong in this benchmark.
 
 **Decision criteria.** Highest composite `(P@1 + MRR@5 + Recall@5) / 3` on the benchmark, with two hard gates:
 
