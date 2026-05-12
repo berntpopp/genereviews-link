@@ -47,6 +47,7 @@ dependencies = [
     "tokenizers>=0.20.0",
     "sentence-transformers>=3.0.0",
     "apscheduler>=3.11.0,<4.0.0",
+    "rapidfuzz>=3.6.0",
 ]
 
 [dependency-groups]
