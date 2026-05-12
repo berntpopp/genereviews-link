@@ -199,6 +199,11 @@ class RankedPassage(BaseModel):
     ``mode`` query parameter controls which:
     - ``mode="brief"`` (default) → ``snippet`` populated, ``text`` null.
     - ``mode="full"`` → ``text`` populated, ``snippet`` null.
+
+    Top-level rank fields are populated whenever the selected rerank mode
+    produces them: RRF rerank produces all four when dense scores are available,
+    lexical rerank produces lexical fields, and rerank off still exposes the
+    repository lexical score while position/RRF/dense fields remain null.
     """
 
     passage_id: str
@@ -212,6 +217,10 @@ class RankedPassage(BaseModel):
     text: str | None = None
     snippet: str | None = None
     char_count: int
+    rrf_score: float | None = None
+    lexical_score: float | None = None
+    lexical_rank_position: int | None = None
+    dense_rank_position: int | None = None
     score_breakdown: ScoreBreakdown | None = None
     heading_path_array: list[str] | None = None
     recommended_citation: str  # always populated; no default to prevent silent omission
@@ -240,12 +249,15 @@ class PassageDetail(BaseModel):
 
 
 class SearchDiagnosticsModel(BaseModel):
-    """Diagnostics emitted under ``_meta.diagnostics`` when a search returns zero results."""
+    """Diagnostics emitted under ``_meta.diagnostics`` for every search response."""
 
-    lexical_hits: int
-    lexical_hits_after_filters: int
-    applied_filters: list[str]
-    suggestions: list[str]
+    rerank_used: Literal["rrf", "lexical", "off"]
+    lexical_candidate_count: int
+    dense_candidate_count: int | None = None
+    section_filters: list[str] = Field(default_factory=list)
+    unfiltered_lexical_count: int | None = None
+    applied_filters: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
 
 
 class ResponseMeta(BaseModel):

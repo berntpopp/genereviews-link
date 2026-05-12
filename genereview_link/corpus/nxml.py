@@ -21,11 +21,18 @@ See docs/superpowers/specs/2026-05-12-chunker-data-loss-findings.md.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Generator
 from dataclasses import dataclass, field
 from datetime import date
 
-from defusedxml.lxml import fromstring
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        message="defusedxml.lxml is no longer supported.*",
+        category=DeprecationWarning,
+    )
+    from defusedxml.lxml import fromstring
 from lxml import etree
 
 from genereview_link.corpus.canonicalize import canonical_section

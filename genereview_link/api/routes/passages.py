@@ -25,7 +25,7 @@ from genereview_link.models.genereview_models import (
     ScoreBreakdown,
     SearchDiagnosticsModel,
 )
-from genereview_link.models.sections import SectionName
+from genereview_link.models.sections import SECTION_NAMES, SectionName
 from genereview_link.retrieval.embeddings import EmbeddingProvider
 from genereview_link.retrieval.repository import GeneReviewRepository, PassageRow
 from genereview_link.retrieval.rerank import (
@@ -36,6 +36,7 @@ from genereview_link.retrieval.rerank import (
 router = APIRouter(tags=["Passages"])
 
 BATCH_MAX_IDS = 20
+SECTION_VALUES_DESCRIPTION = ", ".join(f'"{section}"' for section in SECTION_NAMES)
 
 
 def _format_recommended_citation(
@@ -116,13 +117,21 @@ def _get_corpus_version(request: Request) -> str | None:
 )
 async def search_passages(
     q: Annotated[
-        str,
+        str | None,
         Query(
             min_length=1,
-            max_length=500,
-            description="Free-text query. Phrases, gene symbols, and clinical terms all work.",
+            max_length=512,
+            description=("Query string (canonical). Either q or query is required."),
         ),
-    ],
+    ] = None,
+    query: Annotated[
+        str | None,
+        Query(
+            min_length=1,
+            max_length=512,
+            description="Alias for q (cross-MCP convention).",
+        ),
+    ] = None,
     gene: Annotated[
         str | None,
         Query(
@@ -142,20 +151,27 @@ async def search_passages(
         list[SectionName] | None,
         Query(
             description=(
-                "Restrict to one or more canonical sections. Valid values "
-                "are listed in this parameter's JSONSchema enum."
+                f"Restrict to one or more canonical sections. Values: {SECTION_VALUES_DESCRIPTION}."
             ),
+        ),
+    ] = None,
+    heading_path_contains: Annotated[
+        str | None,
+        Query(
+            min_length=1,
+            max_length=200,
+            description=("Case-insensitive substring filter on heading_path. Applied pre-rerank."),
         ),
     ] = None,
     mode: Annotated[
         Literal["brief", "full", "ids_only"],
         Query(
             description=(
-                "brief (default): each row carries a ts_headline snippet (~3 KB at limit=5). "
-                "full: each row carries the entire passage text (~10-50 KB/row). "
-                "ids_only: returns only passage_id + rrf_score + chapter_section per row "
-                "(~70% smaller than brief). Use for bulk-triage workflows; "
-                "include/exclude flags and recommended_citation are not emitted in this mode."
+                'Values: "brief" (default; snippet + IDs, ~3 KB), '
+                '"full" (full text), "ids_only" (lean rows: `passage_id` + '
+                "`rrf_score` + `lexical_rank_position` + `chapter_section`). "
+                "Use ids_only for bulk-triage workflows; include/exclude flags "
+                "and recommended_citation are not emitted in this mode."
             ),
         ),
     ] = "brief",
@@ -171,8 +187,10 @@ async def search_passages(
         list[Literal["score_breakdown", "heading_path"]] | None,
         Query(
             description=(
-                "Optional field projection. Each listed value is dropped "
-                "from every row. Use when you only need text + passage_id."
+                'Optional field projection. Values: "score_breakdown" '
+                '(drops the opt-in score_breakdown field), "heading_path" '
+                "(drops heading_path from every row). Use when you only need "
+                "text + passage_id."
             )
         ),
     ] = None,
@@ -180,10 +198,10 @@ async def search_passages(
         list[Literal["score_breakdown", "heading_path_array"]] | None,
         Query(
             description=(
-                "Opt into default-off response fields. "
-                "'score_breakdown' returns raw lexical/dense ranks and populates "
-                "_meta.dense_model_id + embedding_dim. "
-                "'heading_path_array' returns heading_path split on ' > '."
+                'Opt into default-off response fields. Values: "score_breakdown" '
+                "(returns raw lexical/dense ranks and populates "
+                '_meta.dense_model_id + embedding_dim), "heading_path_array" '
+                "(returns heading_path split on ' > ')."
             )
         ),
     ] = None,
@@ -201,13 +219,36 @@ async def search_passages(
     rerank: Annotated[
         Literal["rrf", "lexical", "off"],
         Query(
-            description="See route description for operational guidance.",
+            description=(
+                'Values: "rrf" (default; reciprocal-rank fusion of weighted lexical '
+                "+ dense embedding rank - best for clinical-concept queries), "
+                '"lexical" (weighted lexical score with section-priority tiebreaker - '
+                'best for exact gene-symbol or variant strings), "off" (raw repository '
+                "order - debugging only; do not rely on ordering)."
+            ),
         ),
     ] = "rrf",
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     embedder: Annotated[EmbeddingProvider, Depends(get_embedding_provider)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
 ) -> PassageSearchResponse | JSONResponse:
+    if q is not None and query is not None and q != query:
+        raise StructuredHTTPException(
+            status_code=422,
+            code="conflicting_query_param",
+            message="both q and query supplied with different values",
+            recovery_hint="pass only one of q or query, or pass the same string in both",
+        )
+    if not q and not query:
+        raise StructuredHTTPException(
+            status_code=422,
+            code="missing_query",
+            message="one of q or query is required",
+            recovery_hint="pass q='your query string'",
+        )
+    q = q or query
+    assert q is not None
+
     if gene:
         idx = getattr(request.app.state, "gene_index", None)
         if idx is not None and not idx.is_indexed(gene):
@@ -252,6 +293,7 @@ async def search_passages(
         gene_symbol=gene,
         nbk_id=nbk_id,
         sections=list(sections) if sections else None,
+        heading_path_contains=heading_path_contains,
         limit=max(limit * 3, 50),
         brief=(mode == "brief"),
         snippet_max_fragments=snippet_max_fragments,
@@ -276,14 +318,57 @@ async def search_passages(
 
     corpus = _get_corpus_version(request)
 
+    applied_filters: list[str] = []
+    if gene:
+        applied_filters.append(f"gene={gene}")
+    if nbk_id:
+        applied_filters.append(f"nbk_id={nbk_id}")
+    if sections:
+        applied_filters.append(f"sections={','.join(sections)}")
+    if heading_path_contains:
+        applied_filters.append(f"heading_path_contains={heading_path_contains}")
+
+    diagnostics_model = SearchDiagnosticsModel(
+        rerank_used=rerank,
+        lexical_candidate_count=len(lex),
+        dense_candidate_count=len(dense_scores) if rerank == "rrf" else None,
+        applied_filters=applied_filters,
+        section_filters=list(sections) if sections else [],
+        suggestions=[],
+    )
+    if not ranked:
+        unfiltered_lexical_count: int | None = None
+        if applied_filters:
+            unfiltered_lex = await repo.search_passages(
+                q,
+                gene_symbol=None,
+                nbk_id=None,
+                sections=None,
+                heading_path_contains=None,
+                limit=max(limit * 3, 50),
+                brief=False,
+                snippet_max_fragments=snippet_max_fragments,
+                snippet_max_words=snippet_max_words,
+            )
+            unfiltered_lexical_count = len(unfiltered_lex)
+            diagnostics_model.unfiltered_lexical_count = unfiltered_lexical_count
+        diag = build_search_diagnostics(
+            query=q,
+            applied_filters=applied_filters,
+            lexical_candidate_count=len(lex),
+            unfiltered_lexical_count=unfiltered_lexical_count,
+        )
+        diagnostics_model.suggestions = diag.suggestions
+
     if mode == "ids_only":
-        meta = ResponseMeta(corpus_version=corpus)
+        meta = ResponseMeta(corpus_version=corpus, diagnostics=diagnostics_model)
         return JSONResponse(
             {
                 "results": [
                     {
                         "passage_id": r.passage.passage_id,
                         "rrf_score": r.rrf_score,
+                        "lexical_rank_position": r.lexical_rank_position,
                         "chapter_section": r.passage.chapter_section,
                     }
                     for r in ranked
@@ -331,6 +416,10 @@ async def search_passages(
                 text=r.passage.text if mode == "full" else None,
                 snippet=r.snippet if mode == "brief" else None,
                 char_count=len(r.passage.text),
+                rrf_score=r.rrf_score,
+                lexical_score=r.lexical_rank,
+                lexical_rank_position=r.lexical_rank_position,
+                dense_rank_position=r.dense_rank,
                 score_breakdown=score_breakdown,
                 heading_path_array=heading_path_array,
                 recommended_citation=_format_recommended_citation(
@@ -342,28 +431,6 @@ async def search_passages(
                 table_id=r.passage.table_id if r.passage.passage_type == "table" else None,
                 source_url=_format_source_url(r.passage.nbk_id),
             )
-        )
-
-    diagnostics_model: SearchDiagnosticsModel | None = None
-    if not out:
-        applied: list[str] = []
-        if gene:
-            applied.append(f"gene={gene}")
-        if sections:
-            applied.append(f"sections={','.join(sections)}")
-        if nbk_id:
-            applied.append(f"nbk_id={nbk_id}")
-        diag = build_search_diagnostics(
-            query=q,
-            applied_filters=applied,
-            lexical_hits=len(lex),
-            lexical_hits_after_filters=len(out),
-        )
-        diagnostics_model = SearchDiagnosticsModel(
-            lexical_hits=diag.lexical_hits,
-            lexical_hits_after_filters=diag.lexical_hits_after_filters,
-            applied_filters=diag.applied_filters,
-            suggestions=diag.suggestions,
         )
 
     if include_score_breakdown:

@@ -10,6 +10,7 @@ an in-process HTTP call into the FastAPI app's router.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -20,6 +21,15 @@ from httpx import ASGITransport, AsyncClient
 from genereview_link.api.routes import chapters as chapters_routes
 from genereview_link.api.routes import passages as passages_routes
 from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
+
+INSTRUCTION_TOOL_NAMES = (
+    "search_passages",
+    "get_chapter_metadata",
+    "get_chapter_section",
+    "get_passage",
+    "get_table",
+    "get_passages_batch",
+)
 
 
 def _build_app_with_state() -> FastAPI:
@@ -216,8 +226,32 @@ def test_server_instructions_are_set(monkeypatch: pytest.MonkeyPatch) -> None:
     instructions = captured["instructions"]
     assert isinstance(instructions, str)
     assert "Canonical pipeline" in instructions
-    assert "search_passages" in instructions
+    for tool_name in INSTRUCTION_TOOL_NAMES:
+        assert tool_name in instructions
+    assert (
+        re.search(
+            r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+`?/",
+            instructions,
+            flags=re.IGNORECASE,
+        )
+        is None
+    )
     assert "Research use only" in instructions
+
+
+@pytest.mark.asyncio
+async def test_instruction_tool_names_are_registered_mcp_tools() -> None:
+    """Every tool named in server instructions must be an actual FastMCP tool."""
+    from genereview_link.config import ServerConfig
+    from genereview_link.server_manager import UnifiedServerManager
+
+    mgr = UnifiedServerManager()
+    app = mgr.create_fastapi_app(ServerConfig())
+    mcp = await mgr.create_mcp_server(app, ServerConfig())
+
+    tool_names = {tool.name for tool in await mcp.list_tools()}
+    for tool_name in INSTRUCTION_TOOL_NAMES:
+        assert tool_name in tool_names
 
 
 def test_find_in_section_prompt_is_registered() -> None:

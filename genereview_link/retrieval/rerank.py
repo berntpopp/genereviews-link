@@ -73,13 +73,21 @@ def rerank_with_embeddings(
         return [], diag
 
     lex_sorted = sorted(rows, key=_rerank_key)
+    lex_rank = {r.passage.passage_id: i + 1 for i, r in enumerate(lex_sorted)}
+    lex_positioned = [
+        dataclasses.replace(
+            r,
+            lexical_rank_position=lex_rank[r.passage.passage_id],
+        )
+        for r in lex_sorted
+    ]
 
     if not dense_scores:
         diag.fallback_reason = "no_dense_scores"
-        return lex_sorted, diag
+        return lex_positioned, diag
 
-    evidence = [r for r in lex_sorted if not _is_guarded(r)]
-    guarded = [r for r in lex_sorted if _is_guarded(r)]
+    evidence = [r for r in lex_positioned if not _is_guarded(r)]
+    guarded = [r for r in lex_positioned if _is_guarded(r)]
     if not evidence:
         diag.fallback_reason = "no_evidence_candidates"
         return guarded, diag
@@ -87,7 +95,6 @@ def rerank_with_embeddings(
     diag.active = True
     diag.strategy = RRF_STRATEGY
 
-    lex_rank = {r.passage.passage_id: i + 1 for i, r in enumerate(lex_sorted)}
     dense_sorted = sorted(
         (r for r in evidence if r.passage.passage_id in dense_scores),
         key=lambda r: (-dense_scores[r.passage.passage_id], _rerank_key(r)),
@@ -103,6 +110,7 @@ def rerank_with_embeddings(
     scored_evidence = [
         dataclasses.replace(
             r,
+            lexical_rank_position=lex_rank[r.passage.passage_id],
             dense_rank=dense_rank.get(r.passage.passage_id),
             rrf_score=rrf(r),
         )

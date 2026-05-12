@@ -1,0 +1,68 @@
+"""Tool-schema parameter descriptions expose closed-value choices inline."""
+
+from __future__ import annotations
+
+from fastapi import FastAPI
+
+from genereview_link.config import ServerConfig
+from genereview_link.models.sections import SECTION_NAMES
+from genereview_link.server_manager import UnifiedServerManager
+
+
+def _app() -> FastAPI:
+    config = ServerConfig(transport="http", log_level="WARNING", enable_docs=False)
+    return UnifiedServerManager().create_fastapi_app(config)
+
+
+def _parameter_description(
+    app: FastAPI,
+    path: str,
+    method: str,
+    name: str,
+) -> str:
+    operation = app.openapi()["paths"][path][method]
+    parameter = next(p for p in operation["parameters"] if p["name"] == name)
+    return str(parameter["description"])
+
+
+def test_search_passages_rerank_description_lists_values_inline() -> None:
+    desc = _parameter_description(_app(), "/passages/search", "get", "rerank")
+
+    assert '"rrf" (default; reciprocal-rank fusion' in desc
+    assert '"lexical" (weighted lexical score' in desc
+    assert '"off" (raw repository order' in desc
+
+
+def test_search_passages_mode_description_lists_values_inline() -> None:
+    desc = _parameter_description(_app(), "/passages/search", "get", "mode")
+
+    assert '"brief" (default; snippet + IDs, ~3 KB)' in desc
+    assert '"full" (full text)' in desc
+    assert (
+        '"ids_only" (lean rows: `passage_id` + `rrf_score` + '
+        "`lexical_rank_position` + `chapter_section`)"
+    ) in desc
+
+
+def test_search_passages_sections_description_lists_values_inline() -> None:
+    desc = _parameter_description(_app(), "/passages/search", "get", "sections")
+
+    for section in SECTION_NAMES:
+        assert f'"{section}"' in desc
+
+
+def test_search_passages_projection_descriptions_list_values_inline() -> None:
+    exclude_desc = _parameter_description(_app(), "/passages/search", "get", "exclude")
+    include_desc = _parameter_description(_app(), "/passages/search", "get", "include")
+
+    assert '"score_breakdown"' in exclude_desc
+    assert '"heading_path"' in exclude_desc
+    assert '"score_breakdown"' in include_desc
+    assert '"heading_path_array"' in include_desc
+
+
+def test_get_chapter_section_description_lists_section_values_inline() -> None:
+    desc = _parameter_description(_app(), "/chapters/{nbk_id}/sections/{section}", "get", "section")
+
+    for section in SECTION_NAMES:
+        assert f'"{section}"' in desc
