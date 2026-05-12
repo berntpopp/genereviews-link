@@ -711,5 +711,5 @@ def _to_chapter_row(row: asyncpg.Record) -> ChapterRow:
         authors=row["authors"],
         initial_pub_date=row["initial_pub_date"],
         last_updated_date=row["last_updated_date"],
-        ingested_at=row["ingested_at"],
+        ingested_at=_record_get(row, "ingested_at"),
     )
