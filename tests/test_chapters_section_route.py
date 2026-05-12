@@ -393,26 +393,8 @@ def _build_app_with_overlap() -> FastAPI:
 
 
 @pytest.mark.asyncio
-async def test_dedupe_true_strips_overlap_region() -> None:
-    """dedupe=true with include=concatenated_text removes the shared suffix/prefix."""
-    app = _build_app_with_overlap()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get(
-            "/chapters/NBK9999/sections/management",
-            params={"include": "concatenated_text", "dedupe": "true"},
-        )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "concatenated_text" in data
-    text = data["concatenated_text"]
-    assert text == _EXPECTED_DEDUPED
-    # Overlap region appears exactly once
-    assert text.count(_OVERLAP) == 1
-
-
-@pytest.mark.asyncio
-async def test_dedupe_false_default_preserves_overlap() -> None:
-    """Default (dedupe=false) keeps the naive join with separator — no stripping."""
+async def test_dedupe_true_default_strips_overlap() -> None:
+    """Default include=concatenated_text strips the shared suffix/prefix."""
     app = _build_app_with_overlap()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get(
@@ -421,10 +403,23 @@ async def test_dedupe_false_default_preserves_overlap() -> None:
         )
     assert resp.status_code == 200
     data = resp.json()
-    text = data["concatenated_text"]
-    assert text == _EXPECTED_PLAIN
-    # Overlap region appears twice (once per chunk)
-    assert text.count(_OVERLAP) == 2
+    assert data["concatenated_char_count"] == len(data["concatenated_text"])
+    assert data["concatenated_char_count"] < sum(len(p["text"]) for p in data["passages"])
+    assert data["concatenated_text"] == _EXPECTED_DEDUPED
+
+
+@pytest.mark.asyncio
+async def test_dedupe_false_preserves_literal_chunk_text() -> None:
+    """dedupe=false keeps the naive join with separator and no stripping."""
+    app = _build_app_with_overlap()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/chapters/NBK9999/sections/management",
+            params={"include": "concatenated_text", "dedupe": "false"},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["concatenated_text"] == "\n\n".join(p["text"] for p in data["passages"])
 
 
 @pytest.mark.asyncio

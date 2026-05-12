@@ -93,11 +93,11 @@ async def get_chapter_section(
             description=(
                 "Strip overlapping text between adjacent chunks "
                 "(longest-common-suffix/prefix heuristic). "
-                "Default False for back-compat with literal stored text. "
-                "Only has effect when include=concatenated_text is also set."
+                "Default True for LLM-ready joined text. Pass false only when "
+                "you need literal stored chunk text."
             ),
         ),
-    ] = False,
+    ] = True,
     heading_path_contains: Annotated[
         str | None,
         Query(
@@ -116,7 +116,7 @@ async def get_chapter_section(
     """Return all passages for a specific section of a GeneReview chapter.
 
     By default returns individual passages only. Pass include=concatenated_text
-    to also receive the joined passage text.
+    to also receive joined passage text with chunk overlap stripped by default.
 
     Latency: ~1ms p50.
     """

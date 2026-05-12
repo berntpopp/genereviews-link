@@ -144,9 +144,22 @@ def test_usage_resource_documents_ids_only_shape(monkeypatch: pytest.MonkeyPatch
     from genereview_link.api.resources.usage import USAGE_RESOURCE_MARKDOWN
 
     normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
-    expected = "{passage_id, rrf_score, lexical_rank_position, chapter_section, passage_role}"
+    expected = "{passage_id, nbk_id, rrf_score, lexical_rank_position, chapter_section}"
     assert expected in normalized
     assert "Role-affected `adjusted_score` is not emitted in this mode" in normalized
+
+
+def test_usage_resource_documents_dedupe_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The usage resource must document default section-text dedupe behaviour."""
+    from genereview_link.api.resources.usage import USAGE_RESOURCE_MARKDOWN
+
+    normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
+    expected = (
+        "`include=[\"concatenated_text\"]` returns joined text with chunk overlap "
+        "stripped by default. Pass `dedupe=false` only for corpus-auditing workflows "
+        "that need literal stored chunk text."
+    )
+    assert expected in normalized
 
 
 def test_usage_resource_documents_search_aliases_and_heading_filter(
