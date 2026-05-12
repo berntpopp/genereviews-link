@@ -1,0 +1,16 @@
+# Local override: point the dockerized app at the host's gr-pg corpus
+# (port 5436), bypassing the empty in-stack postgres. Use with:
+#   docker compose -f docker/docker-compose.yml \
+#     -f docker/docker-compose.override.gr-pg.yml up -d --build genereview-link
+
+services:
+  genereview-link:
+    environment:
+      DATABASE_URL: postgresql://genereview:genereview@host.docker.internal:5436/genereview
+      GENEREVIEW_EAGER_LOAD_BGE: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on: !reset []
+    ports: !override
+      - "8765:8000"
+    command: ["genereview-link", "serve", "--transport", "unified", "--host", "0.0.0.0", "--port", "8000"]
