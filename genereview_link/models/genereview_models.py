@@ -50,6 +50,10 @@ class AbstractData(BaseModel):
     journal: str = Field(description="Journal name.")
     publication_date: str = Field(description="Publication date.")
     corpus_version: str | None = None
+    meta: ResponseMeta = Field(
+        alias="_meta", default_factory=lambda: ResponseMeta.live_passthrough()
+    )
+    model_config = {"populate_by_name": True}
 
 
 class LinkData(BaseModel):
@@ -60,6 +64,10 @@ class LinkData(BaseModel):
         description="All available URLs for the publication.",
     )
     corpus_version: str | None = None
+    meta: ResponseMeta = Field(
+        alias="_meta", default_factory=lambda: ResponseMeta.live_passthrough()
+    )
+    model_config = {"populate_by_name": True}
 
 
 class Reference(BaseModel):
@@ -99,6 +107,10 @@ class FullTextData(BaseModel):
     )
     error: str | None = Field(default=None, description="Error message if scraping failed.")
     corpus_version: str | None = None
+    meta: ResponseMeta = Field(
+        alias="_meta", default_factory=lambda: ResponseMeta.live_passthrough()
+    )
+    model_config = {"populate_by_name": True}
 
 
 class GeneReview(BaseModel):
@@ -278,6 +290,17 @@ class ResponseMeta(BaseModel):
     license_summary: str = "Research use only; cite per genereview://license"
     dense_model_id: str | None = None
     embedding_dim: int | None = None
+
+    @classmethod
+    def live_passthrough(cls) -> ResponseMeta:
+        """Metadata for live NCBI passthrough responses not tied to an indexed corpus."""
+        return cls(corpus_version=None)
+
+
+AbstractData.model_rebuild()
+LinkData.model_rebuild()
+FullTextData.model_rebuild()
+GeneReview.model_rebuild()
 
 
 class IdsOnlyPassage(BaseModel):

@@ -7,9 +7,12 @@ from datetime import date
 from genereview_link.models.genereview_models import (
     ATTRIBUTION_TEXT,
     COPYRIGHT_LINE,
+    AbstractData,
     ChapterSectionResponse,
+    FullTextData,
     IdsOnlyPassage,
     IdsOnlySearchResponse,
+    LinkData,
     LicenseNotice,
     PassageDetail,
     PassageSearchResponse,
@@ -124,3 +127,27 @@ def test_license_notice_and_attribution_share_copyright_year():
     assert "1993" in notice.copyright
     assert notice.copyright == COPYRIGHT_LINE
     assert COPYRIGHT_LINE in ATTRIBUTION_TEXT
+
+
+def test_live_passthrough_meta_uses_underscore_alias() -> None:
+    abstract = AbstractData(
+        pmid="20301425",
+        title="BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+        abstract="GeneReviews abstract",
+        journal="GeneReviews",
+        publication_date="1998",
+    )
+    link_data = LinkData(urls=["https://www.ncbi.nlm.nih.gov/books/NBK1247/"])
+    fulltext = FullTextData(
+        nbk_id="NBK1247",
+        url="https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+        title="BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+    )
+
+    for model in (abstract, link_data, fulltext):
+        dumped = model.model_dump(by_alias=True)
+
+        assert "_meta" in dumped
+        assert "meta" not in dumped
+        assert dumped["_meta"]["corpus_version"] is None
+        assert dumped["_meta"]["attribution"]

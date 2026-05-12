@@ -141,6 +141,7 @@ class TestAbstractRoute:
         assert resp.status_code == 200
         body = resp.json()
         assert body["pmid"] == "1"
+        assert body["_meta"]["attribution"].startswith("GeneReviews")
 
     @pytest.mark.asyncio
     async def test_abstract_404_when_empty(
@@ -169,6 +170,7 @@ class TestLinksRoute:
         assert resp.status_code == 200
         body = resp.json()
         assert body["urls"] == ["https://example.com/a"]
+        assert body["_meta"]["attribution"].startswith("GeneReviews")
 
     @pytest.mark.asyncio
     async def test_links_500_on_error(
@@ -196,6 +198,7 @@ class TestFulltextRoute:
         body = resp.json()
         assert body["nbk_id"] == "1247"
         assert "summary" in body["sections"]
+        assert body["_meta"]["attribution"].startswith("GeneReviews")
 
     @pytest.mark.asyncio
     async def test_fulltext_400_when_invalid_id(
