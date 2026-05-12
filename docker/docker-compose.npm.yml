@@ -7,9 +7,11 @@ services:
     expose:
       - "8000"
     networks:
+      - default
       - npm-network
 
 networks:
+  default:
   npm-network:
     external: true
     name: ${NPM_NETWORK_NAME:-npm_network}

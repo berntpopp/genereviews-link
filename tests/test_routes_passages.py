@@ -510,6 +510,51 @@ async def test_search_propagates_passage_role_and_score_adjustment_fields() -> N
 
 
 @pytest.mark.asyncio
+async def test_search_normalizes_unknown_passage_role_to_none() -> None:
+    """Unexpected DB passage_role strings must not make the route return 500."""
+    from unittest.mock import MagicMock
+
+    repo = MagicMock()
+    repo.search_passages = AsyncMock(
+        return_value=[
+            LexicalPassageRow(
+                passage=PassageRow(
+                    nbk_id="NBK1",
+                    passage_id="NBK1:0001",
+                    chapter_section="management",
+                    heading_path="Management",
+                    section_level=1,
+                    chunk_index=1,
+                    text="role-aware passage",
+                    chapter_title="Chapter",
+                    gene_symbols=("TG",),
+                    passage_role="unexpected_role",
+                ),
+                phrase_rank=1.0,
+                strict_rank=0.5,
+                recall_rank=0.4,
+                recall_overlap_count=1,
+                lexical_rank=1.0,
+            )
+        ]
+    )
+    repo.active_embedding_table = AsyncMock(return_value="t")
+    repo.dense_scores_for_passages = AsyncMock(return_value={})
+    app = _make_brief_app(repo)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "include": "score_breakdown"},
+        )
+
+    assert resp.status_code == 200
+    result = resp.json()["results"][0]
+    assert result["passage_role"] is None
+    assert result["score_breakdown"]["passage_role"] is None
+
+
+@pytest.mark.asyncio
 async def test_search_exclude_score_breakdown_is_noop_after_default_flip() -> None:
     """exclude=score_breakdown is a no-op; field is already absent by default."""
     repo = _make_brief_repo(rows=2)

@@ -7,7 +7,7 @@ boot). Set GENEREVIEW_EAGER_LOAD_BGE=true to use the real SentenceTransformer.
 from __future__ import annotations
 
 from datetime import date
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal, cast, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
@@ -39,6 +39,7 @@ router = APIRouter(tags=["Passages"])
 
 BATCH_MAX_IDS = 20
 SECTION_VALUES_DESCRIPTION = ", ".join(f'"{section}"' for section in SECTION_NAMES)
+PASSAGE_ROLE_VALUES: frozenset[str] = frozenset(str(role) for role in get_args(PassageRole))
 
 
 def _format_recommended_citation(
@@ -65,7 +66,9 @@ def _format_source_url(nbk_id: str) -> str:
 
 
 def _passage_role(role: str | None) -> PassageRole | None:
-    return cast(PassageRole, role) if role is not None else None
+    if role is None or role not in PASSAGE_ROLE_VALUES:
+        return None
+    return cast(PassageRole, role)
 
 
 async def get_repository(request: Request) -> GeneReviewRepository:

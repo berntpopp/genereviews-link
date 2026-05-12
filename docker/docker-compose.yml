@@ -26,6 +26,8 @@ services:
     env_file:
       - path: ../.env
         required: false
+      - path: ../.env.docker
+        required: false
 
     environment:
       GENEREVIEW_LINK_LOG_LEVEL: INFO

@@ -25,6 +25,13 @@ cp .env.example .env
 # Edit .env and add your NCBI_API_KEY (optional but recommended)
 ```
 
+For production Docker or Nginx Proxy Manager deployments, use `.env.docker`:
+
+```bash
+cp .env.docker.example .env.docker
+# Edit .env.docker before deploying.
+```
+
 ### Running the Server
 
 The server can be run in different modes depending on your needs.
@@ -315,11 +322,15 @@ If the schema is empty, `/passages/search` returns 503 until the corpus is loade
 | Postgres shared_buffers (self-hosted) | ~1 GB |
 | **Total recommended** | **3 GB** |
 
-For production Gunicorn deployments, use 2 workers to stay within the memory budget:
+The bundled production Docker/Nginx Proxy Manager stack uses the unified CLI
+server so both REST and `/mcp` are exposed by the same process:
 
 ```bash
-GUNICORN_WORKERS=2 gunicorn -c gunicorn_conf.py server:app
+genereview-link serve --transport unified --host 0.0.0.0 --port 8000
 ```
+
+`docker/gunicorn_conf.py` remains available for custom Gunicorn deployments, but
+the bundled production compose files do not use `GUNICORN_WORKERS`.
 
 Use `GENEREVIEW_EAGER_LOAD_BGE=true` only when semantic passage search is required;
 leave it `false` (default) for API-key-only or lite deployments.
