@@ -212,6 +212,12 @@ class UnifiedServerManager:
             app.state.pool = None
             app.state.repository = None
 
+        # --- Dense model metadata (cached for _meta under include=score_breakdown) ---
+        from genereview_link.corpus.tokenizer import BGE_DIM, BGE_MODEL_NAME
+
+        app.state.dense_model_id = BGE_MODEL_NAME
+        app.state.embedding_dim = BGE_DIM
+
         # --- Active corpus version (cached for _meta.corpus_version) ---
         app.state.corpus_version = None
         if app.state.repository is not None:

@@ -11,6 +11,7 @@ from functools import lru_cache
 from typing import Any
 
 BGE_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+BGE_DIM = 384  # output embedding dimension for bge-small-en-v1.5
 BGE_MAX_TOKENS = 512  # model context
 BGE_RESERVED_SPECIAL_TOKENS = 2  # [CLS], [SEP]
 BGE_NET_CHUNK_TOKENS = BGE_MAX_TOKENS - BGE_RESERVED_SPECIAL_TOKENS  # 510

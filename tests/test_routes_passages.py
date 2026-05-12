@@ -846,6 +846,7 @@ def _fake_lex_row(
     *,
     section: str = "management",
     lexical_rank: float = 0.9,
+    rrf_score: float | None = None,
     text: str = "A" * 5000,
 ) -> LexicalPassageRow:
     """Build a LexicalPassageRow with controllable text for snippet_chars tests."""
@@ -867,6 +868,7 @@ def _fake_lex_row(
         recall_rank=0.4,
         recall_overlap_count=1,
         lexical_rank=lexical_rank,
+        rrf_score=rrf_score,
         # snippet is None here; the fake repo populates it from snippet_max_words
     )
 
@@ -965,3 +967,45 @@ async def test_search_snippet_chars_out_of_range_returns_422() -> None:
                 params={"q": "x", "snippet_chars": value},
             )
             assert resp.status_code == 422, f"snippet_chars={value} should reject"
+
+
+# ---------------------------------------------------------------------------
+# _meta.dense_model_id + _meta.embedding_dim under include=score_breakdown
+# (Task 10 — Spec G2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_score_breakdown_surfaces_dense_model_id_and_embedding_dim() -> None:
+    """When include=score_breakdown, _meta.dense_model_id + _meta.embedding_dim populate."""
+    rows = [_fake_lex_row("NBK1247:0010", section="management", lexical_rank=0.9, rrf_score=0.04)]
+    app = _build_app_with_fake_repo(rows)
+    app.state.dense_model_id = "BAAI/bge-small-en-v1.5"
+    app.state.embedding_dim = 384
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "limit": 1, "include": "score_breakdown", "rerank": "rrf"},
+        )
+    assert resp.status_code == 200
+    meta = resp.json()["_meta"]
+    assert meta["dense_model_id"] == "BAAI/bge-small-en-v1.5"
+    assert meta["embedding_dim"] == 384
+
+
+@pytest.mark.asyncio
+async def test_search_without_score_breakdown_omits_model_meta() -> None:
+    """Without include=score_breakdown, _meta.dense_model_id and _meta.embedding_dim are None."""
+    rows = [_fake_lex_row("NBK1247:0010", section="management", lexical_rank=0.9, rrf_score=0.04)]
+    app = _build_app_with_fake_repo(rows)
+    app.state.dense_model_id = "BAAI/bge-small-en-v1.5"
+    app.state.embedding_dim = 384
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "limit": 1})
+    assert resp.status_code == 200
+    meta = resp.json()["_meta"]
+    # dense_model_id and embedding_dim must be absent or None
+    assert meta.get("dense_model_id") is None
+    assert meta.get("embedding_dim") is None

@@ -326,7 +326,15 @@ async def search_passages(
             suggestions=diag.suggestions,
         )
 
-    meta = ResponseMeta(corpus_version=corpus, diagnostics=diagnostics_model)
+    if include_score_breakdown:
+        meta = ResponseMeta(
+            corpus_version=corpus,
+            diagnostics=diagnostics_model,
+            dense_model_id=getattr(request.app.state, "dense_model_id", None),
+            embedding_dim=getattr(request.app.state, "embedding_dim", None),
+        )
+    else:
+        meta = ResponseMeta(corpus_version=corpus, diagnostics=diagnostics_model)
 
     # score_breakdown is opt-in (absent by default). Always exclude it from
     # model_dump, then re-inject only when the caller requested it.
