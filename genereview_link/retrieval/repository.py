@@ -33,6 +33,7 @@ class ChapterRow:
     authors: str | None
     initial_pub_date: date | None
     last_updated_date: date | None
+    ingested_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +47,7 @@ class PassageRow:
     text: str
     chapter_title: str | None = None
     chapter_last_updated: date | None = None
+    chapter_ingested_at: datetime | None = None
     gene_symbols: tuple[str, ...] = ()
     passage_type: str = "narrative"
     passage_role: str | None = None
@@ -101,6 +103,7 @@ class ChapterMetadataRow:
     gene_symbols: tuple[str, ...]
     sections: tuple[SectionSummaryRow, ...]
     table_count: int
+    chapter_ingested_at: datetime | None = None
     tables: tuple[TableSummaryRow, ...] = ()
 
 
@@ -229,6 +232,7 @@ class GeneReviewRepository:
                         c.gene_symbols,
                         c.title as chapter_title,
                         c.last_updated_date as chapter_last_updated,
+                        c.ingested_at as chapter_ingested_at,
                         p.passage_type, p.passage_role, p.table_id, p.table_data,
                         ts_rank_cd(p.search_vector, q.phrase_query) as phrase_rank,
                         ts_rank_cd(p.search_vector, q.strict_query) as strict_rank,
@@ -258,7 +262,7 @@ class GeneReviewRepository:
                     select
                         nbk_id, passage_id, chapter_section, heading_path,
                         section_level, chunk_index, text,
-                        gene_symbols, chapter_title, chapter_last_updated,
+                        gene_symbols, chapter_title, chapter_last_updated, chapter_ingested_at,
                         passage_type, passage_role, table_id, table_data,
                         phrase_rank, strict_rank, recall_rank, recall_overlap_count,
                         (phrase_rank * 3.0 + strict_rank * 2.0 + recall_rank)
@@ -306,7 +310,7 @@ class GeneReviewRepository:
             row = await conn.fetchrow(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
-                       authors, initial_pub_date, last_updated_date
+                       authors, initial_pub_date, last_updated_date, ingested_at
                   from genereview_chapters
                  where $1 = any(gene_symbols)
                  order by last_updated_date desc nulls last
@@ -322,7 +326,7 @@ class GeneReviewRepository:
             row = await conn.fetchrow(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
-                       authors, initial_pub_date, last_updated_date
+                       authors, initial_pub_date, last_updated_date, ingested_at
                   from genereview_chapters
                  where nbk_id = $1
                 """,
@@ -336,7 +340,7 @@ class GeneReviewRepository:
             row = await conn.fetchrow(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
-                       authors, initial_pub_date, last_updated_date
+                       authors, initial_pub_date, last_updated_date, ingested_at
                   from genereview_chapters
                  where pubmed_id = $1
                 """,
@@ -359,6 +363,7 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
+                       c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
@@ -382,6 +387,7 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
+                       c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
@@ -412,6 +418,7 @@ class GeneReviewRepository:
             text=row["text"],
             chapter_title=row["chapter_title"],
             chapter_last_updated=row["chapter_last_updated"],
+            chapter_ingested_at=_record_get(row, "chapter_ingested_at"),
             gene_symbols=tuple(row["gene_symbols"] or ()),
             passage_type=row["passage_type"],
             passage_role=_record_get(row, "passage_role"),
@@ -431,6 +438,7 @@ class GeneReviewRepository:
                    p.section_level, p.chunk_index, p.text,
                    c.title as chapter_title,
                    c.last_updated_date as chapter_last_updated,
+                   c.ingested_at as chapter_ingested_at,
                    c.gene_symbols,
                    p.passage_type, p.passage_role, p.table_id, p.table_data
               from genereview_passages p
@@ -475,6 +483,7 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
+                       c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
@@ -493,6 +502,7 @@ class GeneReviewRepository:
                        p.section_level, p.chunk_index, p.text,
                        c.title as chapter_title,
                        c.last_updated_date as chapter_last_updated,
+                       c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
@@ -523,7 +533,7 @@ class GeneReviewRepository:
             await conn.execute("set search_path to genereview, public")
             chapter = await conn.fetchrow(
                 """
-                select nbk_id, title, last_updated_date, gene_symbols
+                select nbk_id, title, last_updated_date, ingested_at, gene_symbols
                   from genereview_chapters
                  where nbk_id = $1
                 """,
@@ -594,6 +604,7 @@ class GeneReviewRepository:
             nbk_id=chapter["nbk_id"],
             title=chapter["title"],
             chapter_last_updated=chapter["last_updated_date"],
+            chapter_ingested_at=chapter["ingested_at"],
             gene_symbols=tuple(chapter["gene_symbols"] or ()),
             sections=sections,
             table_count=len(tables_tuple),
@@ -705,4 +716,5 @@ def _to_chapter_row(row: asyncpg.Record) -> ChapterRow:
         authors=row["authors"],
         initial_pub_date=row["initial_pub_date"],
         last_updated_date=row["last_updated_date"],
+        ingested_at=row["ingested_at"],
     )

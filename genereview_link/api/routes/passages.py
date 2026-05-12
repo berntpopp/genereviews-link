@@ -6,7 +6,7 @@ boot). Set GENEREVIEW_EAGER_LOAD_BGE=true to use the real SentenceTransformer.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal, cast, get_args
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -370,6 +370,17 @@ async def search_passages(
             unfiltered_lexical_count=unfiltered_lexical_count,
         )
         diagnostics_model.suggestions = diag.suggestions
+    ingest_dates = [
+        dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+        for dt in (r.passage.chapter_ingested_at for r in ranked[:3])
+        if dt is not None
+    ]
+    if (
+        ingest_dates
+        and datetime.now(UTC) - min(ingest_dates) > timedelta(days=180)
+        and "corpus-may-be-stale" not in diagnostics_model.suggestions
+    ):
+        diagnostics_model.suggestions.append("corpus-may-be-stale")
 
     if mode == "ids_only":
         meta = ResponseMeta(corpus_version=corpus, diagnostics=diagnostics_model)
@@ -426,6 +437,7 @@ async def search_passages(
                 gene_symbols=list(r.passage.gene_symbols),
                 chapter_title=r.passage.chapter_title or "",
                 chapter_last_updated=r.passage.chapter_last_updated,
+                chapter_ingested_at=r.passage.chapter_ingested_at,
                 chapter_section=cast(SectionName, r.passage.chapter_section),
                 heading_path=r.passage.heading_path,
                 passage_type=r.passage.passage_type,

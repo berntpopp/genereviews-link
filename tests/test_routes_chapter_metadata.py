@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -23,6 +23,7 @@ def _make_metadata_row(
     nbk_id: str = "NBK1247",
     title: str = "BRCA1- and BRCA2-Associated HBOC",
     chapter_last_updated: date | None = date(2025, 12, 1),
+    chapter_ingested_at: datetime | None = datetime(2026, 1, 15, tzinfo=UTC),
     gene_symbols: tuple[str, ...] = ("BRCA1", "BRCA2"),
     table_count: int = 0,
     tables: tuple[TableSummaryRow, ...] = (),
@@ -40,6 +41,7 @@ def _make_metadata_row(
         nbk_id=nbk_id,
         title=title,
         chapter_last_updated=chapter_last_updated,
+        chapter_ingested_at=chapter_ingested_at,
         gene_symbols=gene_symbols,
         sections=sections,
         table_count=table_count,
@@ -126,6 +128,16 @@ async def test_get_chapter_metadata_chapter_last_updated_serialised() -> None:
 
     body = resp.json()
     assert body["chapter_last_updated"] == "2025-12-01"
+
+
+@pytest.mark.asyncio
+async def test_chapter_metadata_includes_ingested_at() -> None:
+    app = _build_app(metadata=_make_metadata_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/metadata")
+
+    assert resp.status_code == 200
+    assert resp.json()["chapter_ingested_at"] is not None
 
 
 @pytest.mark.asyncio

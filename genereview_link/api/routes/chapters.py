@@ -213,6 +213,7 @@ async def get_chapter_metadata(
         nbk_id=meta.nbk_id,
         title=meta.title,
         chapter_last_updated=meta.chapter_last_updated,
+        chapter_ingested_at=meta.chapter_ingested_at,
         gene_symbols=list(meta.gene_symbols),
         sections=[
             SectionSummary(
