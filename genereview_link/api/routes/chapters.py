@@ -68,7 +68,9 @@ async def get_chapter_section(
         SectionName,
         Path(
             description=(
-                "Canonical section name; valid values listed in this parameter's JSONSchema enum."
+                'Canonical section name. Values: "summary", "diagnosis", '
+                '"clinical_features", "management", "genetic_counseling", '
+                '"molecular_genetics", "resources", "other", "references".'
             ),
         ),
     ],

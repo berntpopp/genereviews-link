@@ -167,11 +167,11 @@ async def search_passages(
         Literal["brief", "full", "ids_only"],
         Query(
             description=(
-                "brief (default): each row carries a ts_headline snippet (~3 KB at limit=5). "
-                "full: each row carries the entire passage text (~10-50 KB/row). "
-                "ids_only: returns only passage_id + rrf_score + chapter_section per row "
-                "(~70% smaller than brief). Use for bulk-triage workflows; "
-                "include/exclude flags and recommended_citation are not emitted in this mode."
+                'Values: "brief" (default; snippet + IDs, ~3 KB), '
+                '"full" (full text), "ids_only" (lean rows: `passage_id` + '
+                "`rrf_score` + `lexical_rank_position` + `chapter_section`). "
+                "Use ids_only for bulk-triage workflows; include/exclude flags "
+                "and recommended_citation are not emitted in this mode."
             ),
         ),
     ] = "brief",
@@ -217,7 +217,13 @@ async def search_passages(
     rerank: Annotated[
         Literal["rrf", "lexical", "off"],
         Query(
-            description="See route description for operational guidance.",
+            description=(
+                'Values: "rrf" (default; reciprocal-rank fusion of weighted lexical '
+                "+ dense embedding rank - best for clinical-concept queries), "
+                '"lexical" (weighted lexical score with section-priority tiebreaker - '
+                'best for exact gene-symbol or variant strings), "off" (raw repository '
+                "order - debugging only; do not rely on ordering)."
+            ),
         ),
     ] = "rrf",
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
