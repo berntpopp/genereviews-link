@@ -158,6 +158,17 @@ async def search_passages(
             )
         ),
     ] = None,
+    snippet_chars: Annotated[
+        int,
+        Query(
+            ge=80,
+            le=800,
+            description=(
+                "Approximate snippet length in characters (brief mode only; ignored "
+                "for full/ids_only). Default 400. Maps to ts_headline MaxFragments and MaxWords."
+            ),
+        ),
+    ] = 400,
     rerank: Annotated[
         Literal["rrf", "lexical", "off"],
         Query(
@@ -200,6 +211,13 @@ async def search_passages(
                 ),
             )
 
+    # Convert snippet_chars to ts_headline tuning parameters.
+    # snippet_max_fragments and snippet_max_words are integer-bounded by FastAPI's
+    # ge/le validators (snippet_chars in [80, 800]), so it is safe to use them
+    # in an f-string for the ts_headline options string — no raw user input reaches SQL.
+    snippet_max_fragments = max(1, snippet_chars // 200)
+    snippet_max_words = max(15, min(60, snippet_chars // 7))
+
     lex = await repo.search_passages(
         q,
         gene_symbol=gene,
@@ -207,6 +225,8 @@ async def search_passages(
         sections=list(sections) if sections else None,
         limit=max(limit * 3, 50),
         brief=(mode == "brief"),
+        snippet_max_fragments=snippet_max_fragments,
+        snippet_max_words=snippet_max_words,
     )
     dense_scores: dict[str, float] = {}
     if rerank == "rrf":

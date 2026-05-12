@@ -166,8 +166,16 @@ class GeneReviewRepository:
         sections: list[str] | None = None,
         limit: int = 20,
         brief: bool = False,
+        snippet_max_fragments: int = 2,
+        snippet_max_words: int = 30,
     ) -> list[LexicalPassageRow]:
-        """Run the three-tsquery hybrid lexical search."""
+        """Run the three-tsquery hybrid lexical search.
+
+        ``snippet_max_fragments`` and ``snippet_max_words`` are integer-bounded
+        by the FastAPI route's ge/le validators (snippet_chars in [80, 800]),
+        so interpolating them into the ts_headline options string via f-string
+        is safe — no raw user input reaches SQL.
+        """
         from genereview_link.retrieval.lexical import recall_terms, recall_tsquery
 
         recall_query = recall_tsquery(query)
@@ -176,6 +184,15 @@ class GeneReviewRepository:
 
         snippet_select = ""
         if brief:
+            # Build the ts_headline options string.  snippet_max_fragments and
+            # snippet_max_words are ints derived from a clamped FastAPI param —
+            # safe to f-string here; the rest of the string is a constant literal.
+            ts_headline_opts = (
+                f"MaxFragments={snippet_max_fragments}, MaxWords={snippet_max_words}, "
+                "MinWords=10, ShortWord=3, "
+                "FragmentDelimiter= ... , StartSel=**, StopSel=**, "
+                "HighlightAll=false"
+            )
             snippet_select = (
                 ", ts_headline("
                 "    'english', ranked.text, "
@@ -184,9 +201,7 @@ class GeneReviewRepository:
                 "        nullif(q.strict_query::text, '')::tsquery, "
                 "        q.recall_query"
                 "    ),"
-                "    'MaxWords=60, MinWords=30, MaxFragments=2, "
-                "FragmentDelimiter= ... , StartSel=**, StopSel=**, "
-                "HighlightAll=false'"
+                f"    '{ts_headline_opts}'"
                 ") as snippet"
             )
 

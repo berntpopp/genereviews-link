@@ -834,3 +834,134 @@ async def test_search_ids_only_corpus_version_in_meta() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["_meta"]["corpus_version"] == "2026-03-01"
+
+
+# ---------------------------------------------------------------------------
+# snippet_chars tests (Task 6 — Spec D2)
+# ---------------------------------------------------------------------------
+
+
+def _fake_lex_row(
+    passage_id: str,
+    *,
+    section: str = "management",
+    lexical_rank: float = 0.9,
+    text: str = "A" * 5000,
+) -> LexicalPassageRow:
+    """Build a LexicalPassageRow with controllable text for snippet_chars tests."""
+    return LexicalPassageRow(
+        passage=PassageRow(
+            nbk_id=passage_id.split(":")[0],
+            passage_id=passage_id,
+            chapter_section=section,
+            heading_path=f"{section.capitalize()} > X",
+            section_level=2,
+            chunk_index=int(passage_id.split(":")[1]),
+            text=text,
+            chapter_title="Chapter",
+            chapter_last_updated=None,
+            gene_symbols=("BRCA1",),
+        ),
+        phrase_rank=1.0,
+        strict_rank=0.5,
+        recall_rank=0.4,
+        recall_overlap_count=1,
+        lexical_rank=lexical_rank,
+        # snippet is None here; the fake repo populates it from snippet_max_words
+    )
+
+
+def _build_app_with_fake_repo(rows: list[LexicalPassageRow]) -> FastAPI:
+    """Build a minimal FastAPI app backed by a fake repo that honours snippet_max_words."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from genereview_link.api.routes import passages as passages_routes
+
+    def _make_search_passages(source_rows: list[LexicalPassageRow]) -> Any:
+        """Return an async callable that injects a snippet scaled by snippet_max_words."""
+
+        async def _search(
+            query: str,
+            *,
+            gene_symbol: str | None = None,
+            nbk_id: str | None = None,
+            sections: list[str] | None = None,
+            limit: int = 20,
+            brief: bool = False,
+            snippet_max_fragments: int = 2,
+            snippet_max_words: int = 30,
+        ) -> list[LexicalPassageRow]:
+            if not brief:
+                return source_rows
+            # Produce a snippet whose length is proportional to snippet_max_words
+            # so the test can verify that smaller params => shorter snippet.
+            result = []
+            for row in source_rows:
+                snippet_text = row.passage.text[: snippet_max_words * 6]
+                result.append(
+                    LexicalPassageRow(
+                        passage=row.passage,
+                        phrase_rank=row.phrase_rank,
+                        strict_rank=row.strict_rank,
+                        recall_rank=row.recall_rank,
+                        recall_overlap_count=row.recall_overlap_count,
+                        lexical_rank=row.lexical_rank,
+                        snippet=snippet_text,
+                    )
+                )
+            return result
+
+        return _search
+
+    repo = MagicMock()
+    repo.search_passages = _make_search_passages(rows)
+    repo.active_embedding_table = AsyncMock(return_value="t")
+    repo.dense_scores_for_passages = AsyncMock(return_value={})
+
+    app = FastAPI()
+    app.include_router(passages_routes.router)
+    app.state.repository = repo
+    app.state.embedder = FakeEmbeddingProvider(dim=384)
+    return app
+
+
+@pytest.mark.asyncio
+async def test_search_snippet_chars_controls_brief_mode_snippet_size() -> None:
+    """snippet_chars=80 produces shorter snippets than snippet_chars=800 for the
+    same query against the same fake-repo result set."""
+    rows = [
+        _fake_lex_row(
+            "NBK1247:0010",
+            section="management",
+            lexical_rank=0.9,
+            text="A" * 5000,  # long text so ts_headline has room to expand
+        )
+    ]
+    app = _build_app_with_fake_repo(rows)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp_small = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "mode": "brief", "snippet_chars": 80, "limit": 1},
+        )
+        resp_big = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "mode": "brief", "snippet_chars": 800, "limit": 1},
+        )
+    assert resp_small.status_code == resp_big.status_code == 200
+    small_snippet = resp_small.json()["results"][0]["snippet"]
+    big_snippet = resp_big.json()["results"][0]["snippet"]
+    assert len(small_snippet) < len(big_snippet)
+
+
+@pytest.mark.asyncio
+async def test_search_snippet_chars_out_of_range_returns_422() -> None:
+    app = _build_app_with_fake_repo([])
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        for value in (0, 79, 801, 5000):
+            resp = await c.get(
+                "/passages/search",
+                params={"q": "x", "snippet_chars": value},
+            )
+            assert resp.status_code == 422, f"snippet_chars={value} should reject"
