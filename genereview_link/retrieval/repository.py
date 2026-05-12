@@ -797,6 +797,72 @@ class GeneReviewRepository:
             )
         return {r["passage_id"]: float(r["score"]) for r in rows}
 
+    async def _dense_candidates_filtered(
+        self,
+        *,
+        query_vector: list[float],
+        gene: str | None,
+        nbk_id: str | None,
+        sections: tuple[str, ...] | None,
+        heading_path_contains: str | None,
+        top_k: int,
+    ) -> list[dict[str, object]]:
+        """Fetch top-K dense candidates filter-aware, corpus-wide.
+
+        Replaces the prior pattern of scoring dense ON TOP OF lexical's
+        candidate set. Used by the parallel-retrieval rerank=rrf path.
+
+        Wraps the query in a transaction so SET LOCAL hnsw.* statements
+        are session-scoped to the txn and do not leak into the pool.
+        """
+        embedding_table = await self.active_embedding_table()
+        sql, params = build_dense_candidates_sql(
+            embedding_table=embedding_table,
+            gene=gene,
+            nbk_id=nbk_id,
+            sections=sections,
+            heading_path_contains=heading_path_contains,
+            top_k=top_k,
+        )
+        params[0] = query_vector
+        async with self._acquire() as conn:
+            await conn.execute("set search_path to genereview, public")
+            async with conn.transaction():
+                rows = await conn.fetch(sql, *params)
+        return [
+            {"passage_id": r["passage_id"], "dense_score": float(r["dense_score"])}
+            for r in rows
+        ]
+
+    async def fetch_passages_by_ids(
+        self, passage_ids: list[str]
+    ) -> dict[str, PassageRow]:
+        """Batch-fetch full passage rows for a list of passage_ids.
+
+        Returns a mapping of passage_id -> PassageRow.  Passage IDs that do
+        not exist in the corpus are silently omitted from the result.
+        """
+        if not passage_ids:
+            return {}
+        async with self._acquire() as conn:
+            await conn.execute("set search_path to genereview, public")
+            rows = await conn.fetch(
+                """
+                select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
+                       p.section_level, p.chunk_index, p.text,
+                       c.title as chapter_title,
+                       c.last_updated_date as chapter_last_updated,
+                       c.ingested_at as chapter_ingested_at,
+                       c.gene_symbols,
+                       p.passage_type, p.passage_role, p.table_id, p.table_data
+                  from genereview_passages p
+                  join genereview_chapters c on c.nbk_id = p.nbk_id
+                 where p.passage_id = any($1::text[])
+                """,
+                passage_ids,
+            )
+        return {r["passage_id"]: self._row_to_passage(r) for r in rows}
+
 
 def _note_for_empty_section(section: str, nbk_id: str) -> str | None:
     """Return an explanatory note when a zero-passage section is deliberately unscraped.

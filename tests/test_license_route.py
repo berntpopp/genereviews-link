@@ -88,6 +88,8 @@ async def test_response_meta_includes_license_summary() -> None:
     )
     repo.active_embedding_table = AsyncMock(return_value="t")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
+    repo._dense_candidates_filtered = AsyncMock(return_value=[])
+    repo.fetch_passages_by_ids = AsyncMock(return_value={})
 
     search_app = FastAPI()
     search_app.include_router(passages_routes.router)

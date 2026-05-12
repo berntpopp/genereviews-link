@@ -6,6 +6,7 @@ boot). Set GENEREVIEW_EAGER_LOAD_BGE=true to use the real SentenceTransformer.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal, cast, get_args
 
@@ -30,7 +31,7 @@ from genereview_link.models.genereview_models import (
 )
 from genereview_link.models.sections import SECTION_NAMES, SectionName, canonicalize_nbk_id
 from genereview_link.retrieval.embeddings import EmbeddingProvider
-from genereview_link.retrieval.repository import GeneReviewRepository, PassageRow
+from genereview_link.retrieval.repository import GeneReviewRepository, LexicalPassageRow, PassageRow
 from genereview_link.retrieval.rerank import (
     SECTION_PRIORITY,
     detect_query_intents,
@@ -306,25 +307,89 @@ async def search_passages(
     snippet_max_fragments = max(1, snippet_chars // 200)
     snippet_max_words = max(15, min(60, snippet_chars // 7))
 
-    lex = await repo.search_passages(
-        q,
-        gene_symbol=gene,
-        nbk_id=nbk_id,
-        sections=list(sections) if sections else None,
-        heading_path_contains=heading_path_contains,
-        limit=max(limit * 3, 50),
-        brief=(mode == "brief"),
-        snippet_max_fragments=snippet_max_fragments,
-        snippet_max_words=snippet_max_words,
-    )
+    k_parallel = 200  # widened from 50 to fix the recall ceiling
+    sections_tuple = tuple(sections) if sections else None
+
     dense_scores: dict[str, float] = {}
+    lex: list[LexicalPassageRow]
+
     if rerank == "rrf":
         qv = await embedder.embed_query(q)
-        active_table = await repo.active_embedding_table()
-        dense_scores = await repo.dense_scores_for_passages(
-            qv,
-            [(r.passage.nbk_id, r.passage.passage_id) for r in lex],
-            model_table=active_table,
+
+        # Parallel retrieval: lexical-top-200 and dense-top-200, both filter-aware.
+        lexical_task = asyncio.create_task(
+            repo.search_passages(
+                q,
+                gene_symbol=gene,
+                nbk_id=nbk_id,
+                sections=list(sections_tuple) if sections_tuple else None,
+                heading_path_contains=heading_path_contains,
+                limit=k_parallel,
+                brief=(mode == "brief"),
+                snippet_max_fragments=snippet_max_fragments,
+                snippet_max_words=snippet_max_words,
+            )
+        )
+        dense_task = asyncio.create_task(
+            repo._dense_candidates_filtered(
+                query_vector=qv,
+                gene=gene,
+                nbk_id=nbk_id,
+                sections=sections_tuple,
+                heading_path_contains=heading_path_contains,
+                top_k=k_parallel,
+            )
+        )
+        lex_rows, dense_rows = await asyncio.gather(lexical_task, dense_task)
+
+        # Build dense_scores dict from dense candidates.
+        dense_scores = {
+            str(r["passage_id"]): float(r["dense_score"])  # type: ignore[arg-type]
+            for r in dense_rows
+        }
+
+        # Find passage_ids that are in dense results but not in lexical results.
+        lex_ids = {r.passage.passage_id for r in lex_rows}
+        dense_only_ids = [
+            str(r["passage_id"])
+            for r in dense_rows
+            if str(r["passage_id"]) not in lex_ids
+        ]
+
+        # Hydrate dense-only passage_ids with full passage data (option a).
+        dense_only_passages: dict[str, PassageRow] = {}
+        if dense_only_ids:
+            dense_only_passages = await repo.fetch_passages_by_ids(dense_only_ids)
+
+        # Build LexicalPassageRow objects for dense-only candidates.
+        # These have zero lexical scores so they compete only via dense rank in RRF.
+        dense_only_rows: list[LexicalPassageRow] = [
+            LexicalPassageRow(
+                passage=p,
+                phrase_rank=0.0,
+                strict_rank=0.0,
+                recall_rank=0.0,
+                recall_overlap_count=0,
+                lexical_rank=0.0,
+                snippet=None,
+            )
+            for pid in dense_only_ids
+            if (p := dense_only_passages.get(pid)) is not None
+        ]
+
+        lex = list(lex_rows) + dense_only_rows
+
+    else:
+        lex = await repo.search_passages(
+            q,
+            gene_symbol=gene,
+            nbk_id=nbk_id,
+            sections=list(sections_tuple) if sections_tuple else None,
+            heading_path_contains=heading_path_contains,
+            limit=max(limit * 3, 50),
+            brief=(mode == "brief"),
+            snippet_max_fragments=snippet_max_fragments,
+            snippet_max_words=snippet_max_words,
         )
 
     if rerank == "off":
