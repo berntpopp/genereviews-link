@@ -66,6 +66,7 @@ def test_passage_window_response_meta_alias_is_underscore_meta() -> None:
         chunk_index=0,
         text="hello",
         char_count=5,
+        recommended_citation="Test. NBK1. Updated 2024-01-01. Passage p1.",
     )
     r = PassageWindowResponse(passage=detail)
     dumped = r.model_dump(by_alias=True)

@@ -38,6 +38,7 @@ def test_passage_detail_minimal_fields():
         text="hello world",
         char_count=11,
         gene_symbols=["TG"],
+        recommended_citation="Test Chapter. NBK1. Updated 2025-12-01. Passage NBK1:0001.",
     )
     assert pd.passage_id == "NBK1:0001"
     assert pd.chapter_title == "Test Chapter"
@@ -73,6 +74,7 @@ def test_ranked_passage_allows_text_or_snippet():
         snippet="**BRCA1**: example",
         char_count=20,
         score_breakdown=_score_breakdown(),
+        recommended_citation="Test. NBK1. Updated 2025-12-01. Passage NBK1:0001.",
     )
     assert rp.snippet == "**BRCA1**: example"
     assert rp.text is None
