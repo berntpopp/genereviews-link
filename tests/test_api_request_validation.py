@@ -21,11 +21,9 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from genereview_link.config import ServerConfig
 from genereview_link.server_manager import UnifiedServerManager
-
 
 # ---------------------------------------------------------------------------
 # Helpers

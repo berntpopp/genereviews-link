@@ -8,7 +8,6 @@ import pytest
 
 from genereview_link.services.gene_index import GeneIndex, load_gene_index
 
-
 # ---------------------------------------------------------------------------
 # GeneIndex dataclass tests
 # ---------------------------------------------------------------------------

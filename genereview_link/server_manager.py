@@ -366,8 +366,7 @@ class UnifiedServerManager:
                                 "code": "query_must_be_string",
                                 "message": "q must be a top-level string",
                                 "recovery_hint": (
-                                    "pass q as a top-level string parameter, "
-                                    "not a nested object"
+                                    "pass q as a top-level string parameter, not a nested object"
                                 ),
                                 "next_commands": [
                                     {
@@ -513,13 +512,15 @@ class UnifiedServerManager:
         def license_resource() -> str:
             """Static GeneReviews attribution and license summary."""
             notice = LicenseNotice()
-            return json.dumps({
-                "copyright": notice.copyright,
-                "terms_url": notice.terms_url,
-                "data_source": notice.data_source,
-                "data_source_url": notice.data_source_url,
-                "notes": notice.notes,
-            })
+            return json.dumps(
+                {
+                    "copyright": notice.copyright,
+                    "terms_url": notice.terms_url,
+                    "data_source": notice.data_source,
+                    "data_source_url": notice.data_source_url,
+                    "notes": notice.notes,
+                }
+            )
 
         # Register prompts on the constructed MCP server.
         from genereview_link.mcp.prompts import register_prompts
