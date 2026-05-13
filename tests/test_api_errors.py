@@ -11,6 +11,10 @@ from genereview_link.api.errors import (
     MCPErrorPayload,
     StructuredHTTPException,
 )
+from genereview_link.api.orchestration_errors import (
+    gene_not_found_error,
+    pmid_resolver_failed_error,
+)
 
 
 def test_payload_model_dump_round_trip():
@@ -46,3 +50,18 @@ async def test_structured_http_exception_body_is_payload():
     body = resp.json()
     assert body["detail"]["code"] == "not_found"
     assert body["detail"]["recovery_hint"] == "try harder"
+
+
+def test_gene_not_found_error_has_search_passages_fallback() -> None:
+    err = gene_not_found_error("BRCA1")
+    detail = err.detail
+    assert detail["code"] == "gene_not_found"
+    assert detail["recovery_hint"]
+    assert detail["next_commands"][0]["tool"] == "search_passages"
+    assert detail["next_commands"][0]["arguments"]["gene"] == "BRCA1"
+
+
+def test_pmid_resolver_failed_error_echoes_pmid() -> None:
+    err = pmid_resolver_failed_error("20301425", gene_symbol="BRCA1")
+    assert err.detail["code"] == "pmid_resolver_failed"
+    assert "20301425" in err.detail["message"]
