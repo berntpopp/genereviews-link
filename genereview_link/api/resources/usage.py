@@ -19,9 +19,10 @@ total_char_count, and the full list of tables -> `get_passage(passage_id)` OR
 
 ## Orchestration Entry Points
 
-`search_genereviews` and `get_genereview_summary` are convenience tools. They
-resolve gene -> PubMed -> NBK and can fail when a resolver or upstream NCBI link
-is unavailable. On `pmid_resolver_failed` or `gene_not_found`, prefer
+`search_genereviews` and `get_genereview_summary` are convenience tools.
+`search_genereviews` resolves gene -> PubMed IDs. `get_genereview_summary`
+resolves gene -> PubMed -> NBK and can fail when a resolver or upstream NCBI
+link is unavailable. On `pmid_resolver_failed` or `gene_not_found`, prefer
 `search_passages(gene=<symbol>, q=<symbol>)` to retrieve indexed chapter
 evidence directly.
 

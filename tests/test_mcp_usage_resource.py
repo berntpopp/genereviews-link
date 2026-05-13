@@ -74,6 +74,8 @@ def test_usage_resource_documents_orchestration_entry_points_and_errors(
     normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
     expected_fragments = (
         "`search_genereviews` and `get_genereview_summary` are convenience tools",
+        "`search_genereviews` resolves gene -> PubMed IDs",
+        "`get_genereview_summary` resolves gene -> PubMed -> NBK",
         "`search_passages(gene=<symbol>, q=<symbol>)`",
         "`fresh=true` bypasses indexed context and returns `live:<timestamp>`",
         "structured error fields",
@@ -86,6 +88,10 @@ def test_usage_resource_documents_orchestration_entry_points_and_errors(
     )
     for fragment in expected_fragments:
         assert fragment in normalized, f"Missing usage text: {fragment}"
+    assert (
+        "`search_genereviews` and `get_genereview_summary` are convenience tools. They resolve gene -> PubMed -> NBK"
+        not in normalized
+    )
     assert "gene-to-PubMed resolution failed" not in normalized
 
 
