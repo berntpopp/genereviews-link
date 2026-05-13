@@ -81,24 +81,34 @@ class TestInvalidInput:
 
 
 class TestBundleCommands:
-    def test_bundle_validate_command_registered(self) -> None:
-        result = runner.invoke(app, ["bundle", "validate", "--help"])
+    """Verify bundle subcommands are registered with the expected options.
 
-        assert result.exit_code == 0
-        assert "Validate that DATABASE_URL is ready for bundle publishing" in result.output
+    Inspects the Click command tree directly rather than the rendered help
+    text. CI runs Rich with ANSI styling forced on and a narrow terminal
+    width, which both wrap option names and split each leading dash into
+    its own escape sequence (`\\x1b[36m-\\x1b[0m\\x1b[36m-release-id\\x1b[0m`).
+    Substring assertions against `result.output` then never match. Same
+    pattern as `TestServeHelp.test_serve_help_lists_all_flags` above.
+    """
+
+    @staticmethod
+    def _bundle_subcommand_flags(name: str) -> set[str]:
+        bundle_group = get_command(app).commands["bundle"]  # type: ignore[attr-defined]
+        subcommand = bundle_group.commands[name]  # type: ignore[attr-defined]
+        return {opt for param in subcommand.params for opt in param.opts}
+
+    def test_bundle_validate_command_registered(self) -> None:
+        bundle_group = get_command(app).commands["bundle"]  # type: ignore[attr-defined]
+        assert "validate" in bundle_group.commands  # type: ignore[attr-defined]
 
     def test_bundle_build_exposes_release_id_option(self) -> None:
-        result = runner.invoke(app, ["bundle", "build", "--help"])
-
-        assert result.exit_code == 0
-        assert "--release-id" in result.output
-        assert "--skip-validation" in result.output
+        flags = self._bundle_subcommand_flags("build")
+        assert "--release-id" in flags
+        assert "--skip-validation" in flags
 
     def test_bundle_publish_local_command_registered(self) -> None:
-        result = runner.invoke(app, ["bundle", "publish-local", "--help"])
-
-        assert result.exit_code == 0
-        assert "--release-id" in result.output
-        assert "--device" in result.output
-        assert "--repo" in result.output
-        assert "--draft" in result.output
+        flags = self._bundle_subcommand_flags("publish-local")
+        assert "--release-id" in flags
+        assert "--device" in flags
+        assert "--repo" in flags
+        assert "--draft" in flags
