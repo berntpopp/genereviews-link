@@ -50,15 +50,36 @@ def test_orchestration_route_descriptions_document_fallbacks_and_versions() -> N
     assert "search_passages" in summary_description
     assert "fresh=true" in summary_description
     assert "corpus_version" in summary_description
+    assert "always calls live NCBI" in abstract_description
     assert "corpus_version" in abstract_description
     assert "structured errors" in abstract_description
     assert "fresh=true" in abstract_description
+    assert "bypass" not in abstract_description.lower()
+    assert "always calls live NCBI" in links_description
     assert "categorized/normalized links" in links_description
     assert "corpus-version stamping" in links_description
     assert "fresh=true" in links_description
+    assert "bypass" not in links_description.lower()
     assert "live Bookshelf scrape" in fulltext_description
     assert "corpus passage tools" in fulltext_description
     assert "structured errors/version stamping" in fulltext_description
+    assert "fresh=true labels" in fulltext_description
+    assert "bypass" not in fulltext_description.lower()
+
+
+def test_live_upstream_tools_fresh_parameter_only_labels_version() -> None:
+    app = _app()
+
+    for path, method in (
+        ("/abstract/{pubmed_id}", "get"),
+        ("/links/{pubmed_id}", "get"),
+        ("/fulltext/{nbk_id}", "get"),
+    ):
+        desc = _parameter_description(app, path, method, "fresh")
+
+        assert "version" in desc
+        assert "live:<timestamp>" in desc
+        assert "bypass" not in desc.lower()
 
 
 def test_get_chapter_metadata_summary_leads_with_outline_affordance() -> None:

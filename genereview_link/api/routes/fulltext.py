@@ -110,8 +110,8 @@ def _filter_sections(
         "Perform a live Bookshelf scrape when corpus passages are insufficient. "
         "Use sections='management,diagnosis' to narrow the scrape; prefer corpus "
         "passage tools for indexed retrieval and citations. Returns structured "
-        "errors/version stamping, with _meta.corpus_version for corpus context or "
-        "live version stamping when fresh=true."
+        "errors/version stamping, with _meta.corpus_version for corpus context; "
+        "fresh=true labels the response version as live:<timestamp>."
     ),
     operation_id="get_fulltext",
 )
@@ -131,7 +131,13 @@ async def get_fulltext(
             examples=["summary,diagnosis,management"],
         ),
     ] = None,
-    fresh: bool = Query(False, description="Bypass index; fetch live from NCBI"),
+    fresh: bool = Query(
+        False,
+        description=(
+            "Label response version as live:<timestamp>; retrieval already uses "
+            "a live Bookshelf scrape"
+        ),
+    ),
 ) -> FullTextData:
     """Fetch live NCBI Bookshelf full text when corpus passages are insufficient."""
     # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient

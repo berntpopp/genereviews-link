@@ -81,9 +81,12 @@ def test_usage_resource_documents_orchestration_entry_points_and_errors(
         "`recovery_hint`",
         "`next_commands`",
         "`pmid_resolver_failed`",
+        "recoverable orchestration resolver code",
+        "PubMed-to-NBK/Bookshelf resolution failed",
     )
     for fragment in expected_fragments:
         assert fragment in normalized, f"Missing usage text: {fragment}"
+    assert "gene-to-PubMed resolution failed" not in normalized
 
 
 def test_usage_resource_documents_search_score_and_diagnostic_semantics(

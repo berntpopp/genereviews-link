@@ -27,10 +27,10 @@ router = APIRouter(prefix="/links", tags=["Links"])
     response_model=LinkData,
     summary="Get normalized categorized links for a PubMed ID",
     description=(
-        "Value-add wrapper over raw NCBI E-utils link retrieval. Returns "
+        "Live NCBI E-utils link wrapper that always calls live NCBI and returns "
         "categorized/normalized links with structured errors and corpus-version "
-        "stamping via _meta.corpus_version when corpus context is active. Pass "
-        "fresh=true to retrieve live NCBI links."
+        "stamping. Default responses may carry active _meta.corpus_version "
+        "context; fresh=true labels the response version as live:<timestamp>."
     ),
     operation_id="get_links",
 )
@@ -38,7 +38,10 @@ async def get_links(
     request: Request,
     pubmed_id: str,
     client: Annotated[EutilsClient, Depends(get_managed_client)],
-    fresh: bool = Query(False, description="Bypass index; fetch live from NCBI"),
+    fresh: bool = Query(
+        False,
+        description="Label response version as live:<timestamp>; retrieval already uses live NCBI",
+    ),
 ) -> LinkData:
     """
     Get all available links from a PubMed ID using NCBI E-utils elink.
@@ -46,7 +49,7 @@ async def get_links(
     Returns categorized links including NCBI Bookshelf, PMC full text,
     and external links.
 
-    Pass ``?fresh=true`` to bypass the index and fetch live from NCBI.
+    Pass ``?fresh=true`` to label the response version as live.
     """
     # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient
     # until repository is populated.

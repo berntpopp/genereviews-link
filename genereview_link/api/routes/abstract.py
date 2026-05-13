@@ -31,10 +31,10 @@ router = APIRouter(prefix="/abstract", tags=["Abstract"])
     response_model=AbstractData,
     summary="Get normalized abstract and metadata for a PubMed ID",
     description=(
-        "Value-add wrapper over raw NCBI E-utils abstract retrieval. Returns a "
-        "normalized response with structured errors and corpus-version stamping "
-        "via _meta.corpus_version when corpus context is active. Pass fresh=true "
-        "to return the live version from NCBI."
+        "Live NCBI E-utils abstract wrapper that always calls live NCBI and "
+        "returns a normalized response with structured errors. Default responses "
+        "may carry active _meta.corpus_version context; fresh=true labels the "
+        "response version as live:<timestamp>."
     ),
     operation_id="get_abstract",
 )
@@ -42,7 +42,10 @@ async def get_abstract(
     request: Request,
     pubmed_id: str,
     client: Annotated[EutilsClient, Depends(get_managed_client)],
-    fresh: bool = Query(False, description="Bypass index; fetch live from NCBI"),
+    fresh: bool = Query(
+        False,
+        description="Label response version as live:<timestamp>; retrieval already uses live NCBI",
+    ),
 ) -> AbstractData:
     """
     Fetch abstract and metadata from PubMed using NCBI E-utils efetch.
@@ -50,7 +53,7 @@ async def get_abstract(
     Returns detailed information including title, abstract, authors, journal,
     and publication date.
 
-    Pass ``?fresh=true`` to bypass the index and fetch live from NCBI.
+    Pass ``?fresh=true`` to label the response version as live.
     """
     # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient
     # until repository is populated.

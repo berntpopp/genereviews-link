@@ -29,9 +29,9 @@ Default corpus-backed responses carry `_meta.corpus_version`. `fresh=true`
 bypasses indexed context and returns `live:<timestamp>`.
 
 Structured errors include structured error fields such as `code`,
-`recovery_hint`, and `next_commands`. For example, `pmid_resolver_failed`
-indicates gene-to-PubMed resolution failed before an NBK chapter could be
-resolved.
+`recovery_hint`, and `next_commands`. `pmid_resolver_failed` is a recoverable
+orchestration resolver code for cases where PubMed-to-NBK/Bookshelf resolution
+failed before a chapter could be resolved.
 
 ## Filters
 
