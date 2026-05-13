@@ -3,7 +3,7 @@
 **Date:** 2026-05-13
 **Bench fixture:** `tests/fixtures/ranking_bench.jsonl` (299 entries: 38 silver-A, 168 silver-B, 88 silver-C, 2 must-not-regress, 3 must-change)
 **Corpus version:** 2026-05-10-r6
-**Code under test:** local dev server at port 8000 running commit 52abf87 (feat/ranking-c-alpha, parallel hybrid retrieval with filter-aware RRF)
+**Code under test:** local dev server at port 8000 running commit e078d99 (feat/ranking-c-alpha, parallel hybrid retrieval with filter-aware RRF)
 
 ## Comparison table (NEW path = upgraded rerank=rrf)
 
@@ -37,7 +37,7 @@ The script flags 1 `exact-symbol-anchor` regression on the diagnostic `lexical` 
 | off | HFE C282Y allele frequency | NBK1440:0051 | NBK1384:0061 (different chapter) |
 | **rrf** | HFE C282Y allele frequency | NBK1440:0051 | **NBK1440:0051** (correct) |
 
-The script's gate scoping (commit 52abf87) requires the `must_change` improvement count and `exact-symbol-anchor` cleanness only on `rrf`. Diagnostic modes are expected to underperform; their stats are reported for instrumentation, not gating.
+The script's gate scoping (commits 52abf87 + e078d99) requires the `must_change` improvement count and `exact-symbol-anchor` cleanness only on `rrf`. Diagnostic modes are expected to underperform; their stats are reported for instrumentation, not gating.
 
 ### must_change spot-checks
 
@@ -85,7 +85,7 @@ Post-T11 effective distribution against rrf top-1:
 
 ## C-alpha gate status
 
-**All C-alpha exit criteria are met on the `rrf` production path.** The script exits 0 with the gate scoping introduced in commit 52abf87 (must_change improvement gate scoped to `rrf` only; diagnostic mode regression flags surfaced but not failing the run).
+**All C-alpha exit criteria are met on the `rrf` production path.** The script exits 0 with the gate scoping introduced in commits 52abf87 (must_change gate rrf-only) and e078d99 (anchor regression gate rrf-only); diagnostic mode regression flags are surfaced as INFO lines but do not fail the run.
 
 The `must_change` gate is partially met by BRCA1 (1/3 improved), satisfying the minimum gate. CFTR and GRIN2B remain as improvement targets for C-beta.
 
