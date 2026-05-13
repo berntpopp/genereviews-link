@@ -4,13 +4,17 @@ Provides REST API endpoint for retrieving all available links for PubMed article
 """
 
 import logging
-from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.eutils_client import EutilsClient
+from genereview_link.api.orchestration import (
+    active_corpus_version,
+    live_corpus_version,
+    stamp_response_version,
+)
 from genereview_link.models.genereview_models import LinkData
 
 router = APIRouter(prefix="/links", tags=["Links"])
@@ -23,6 +27,7 @@ router = APIRouter(prefix="/links", tags=["Links"])
     operation_id="get_links",
 )
 async def get_links(
+    request: Request,
     pubmed_id: str,
     client: Annotated[EutilsClient, Depends(get_managed_client)],
     fresh: bool = Query(False, description="Bypass index; fetch live from NCBI"),
@@ -40,8 +45,10 @@ async def get_links(
     try:
         payload = await client.get_all_links(pubmed_id)
         out = LinkData(**payload)
-        if fresh:
-            out.corpus_version = f"live:{datetime.now(UTC).isoformat()}"
+        stamp_response_version(
+            out,
+            corpus_version=live_corpus_version() if fresh else active_corpus_version(request),
+        )
         return out
     except Exception as e:
         logging.error(f"Error fetching links for PMID {pubmed_id}: {e}", exc_info=True)

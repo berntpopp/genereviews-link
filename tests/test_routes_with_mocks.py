@@ -168,6 +168,7 @@ class TestAbstractRoute:
     async def test_returns_abstract(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
+        app.state.corpus_version = "2026-05-10-r6"
         fake_client._abstract = {
             "pmid": "1",
             "title": "T",
@@ -181,6 +182,8 @@ class TestAbstractRoute:
         body = resp.json()
         assert body["pmid"] == "1"
         assert body["_meta"]["attribution"].startswith("GeneReviews")
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
 
     @pytest.mark.asyncio
     async def test_abstract_404_when_empty(
@@ -204,6 +207,7 @@ class TestLinksRoute:
     async def test_returns_links(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
+        app.state.corpus_version = "2026-05-10-r6"
         fake_client._links = {
             "urls": ["https://example.com/a"],
             "link_entries": [
@@ -222,6 +226,8 @@ class TestLinksRoute:
         assert body["_meta"]["attribution"].startswith("GeneReviews")
         assert body["link_entries"][0]["link_type"] == "llinks"
         assert body["by_type"]["llinks"] == ["https://example.com/a"]
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
 
     @pytest.mark.asyncio
     async def test_links_500_on_error(
@@ -237,6 +243,7 @@ class TestFulltextRoute:
     async def test_returns_fulltext(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
+        app.state.corpus_version = "2026-05-10-r6"
         fake_client._fulltext = {
             "nbk_id": "1247",
             "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
@@ -250,6 +257,8 @@ class TestFulltextRoute:
         assert body["nbk_id"] == "1247"
         assert "summary" in body["sections"]
         assert body["_meta"]["attribution"].startswith("GeneReviews")
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
 
     @pytest.mark.asyncio
     async def test_fulltext_400_when_invalid_id(
@@ -631,6 +640,7 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
         # License is NOT inlined on per-record responses; callers fetch /license once.
         assert "license" not in body
 
@@ -651,6 +661,7 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
         assert "license" not in body
 
     @pytest.mark.asyncio
@@ -663,6 +674,7 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
         assert "license" not in body
 
     @pytest.mark.asyncio
@@ -681,6 +693,7 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
         assert "license" not in body
 
     @pytest.mark.asyncio

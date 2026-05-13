@@ -5,14 +5,18 @@ Provides REST API endpoint for retrieving comprehensive content from NCBI Booksh
 
 import logging
 import re
-from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from rapidfuzz import fuzz, process
 
 from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.eutils_client import EutilsClient
+from genereview_link.api.orchestration import (
+    active_corpus_version,
+    live_corpus_version,
+    stamp_response_version,
+)
 from genereview_link.models.genereview_models import (
     FullTextData,
     FullTextMetadata,
@@ -104,6 +108,7 @@ def _filter_sections(
     operation_id="get_fulltext",
 )
 async def get_fulltext(
+    request: Request,
     nbk_id: str,
     client: Annotated[EutilsClient, Depends(get_managed_client)],
     sections: Annotated[
@@ -167,8 +172,10 @@ async def get_fulltext(
             sections=filtered_sections,
             metadata=metadata,
         )
-        if fresh:
-            out.corpus_version = f"live:{datetime.now(UTC).isoformat()}"
+        stamp_response_version(
+            out,
+            corpus_version=live_corpus_version() if fresh else active_corpus_version(request),
+        )
         return out
     except HTTPException:
         raise
