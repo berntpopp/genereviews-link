@@ -155,6 +155,10 @@ class GeneReview(BaseModel):
         default=None, description="Comprehensive scraped content."
     )
     corpus_version: str | None = None
+    meta: ResponseMeta = Field(
+        alias="_meta", default_factory=lambda: ResponseMeta.live_passthrough()
+    )
+    model_config = {"populate_by_name": True}
 
 
 # ---------------------------------------------------------------------------

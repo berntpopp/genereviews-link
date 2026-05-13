@@ -18,7 +18,7 @@ from genereview_link.api.orchestration import live_corpus_version, stamp_respons
 from genereview_link.config import ServerConfig
 from genereview_link.models.genereview_models import AbstractData
 from genereview_link.server_manager import UnifiedServerManager
-from genereview_link.services.genereview_service import DataNotFoundError
+from genereview_link.services.genereview_service import DataNotFoundError, GeneReviewService
 from genereview_link.services.service_manager import get_managed_service
 
 
@@ -32,11 +32,14 @@ class FakeClient:
         abstract: dict[str, Any] | Exception | None = None,
         links: dict[str, Any] | Exception | None = None,
         fulltext: dict[str, Any] | Exception | None = None,
+        book_url: str | Exception | None = None,
     ) -> None:
         self._search_result = search_result
         self._abstract = abstract
         self._links = links
         self._fulltext = fulltext
+        self._book_url = book_url
+        self.book_url_calls: list[str] = []
 
     async def search_genereviews(self, gene_symbol: str, retmax: int = 20) -> dict[str, Any]:
         if isinstance(self._search_result, Exception):
@@ -59,6 +62,12 @@ class FakeClient:
         if isinstance(self._links, Exception):
             raise self._links
         return self._links or {"urls": []}
+
+    async def get_book_url_from_pmid(self, pubmed_id: str) -> str | None:
+        self.book_url_calls.append(pubmed_id)
+        if isinstance(self._book_url, Exception):
+            raise self._book_url
+        return self._book_url
 
     async def scrape_genereview_comprehensive(self, book_url: str) -> dict[str, Any]:
         if isinstance(self._fulltext, Exception):
@@ -434,13 +443,52 @@ class TestFulltextRoute:
 
 class TestGenereviewRoute:
     @pytest.mark.asyncio
+    async def test_uses_repository_chapter_book_url_without_live_resolver(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        class FakeChapter:
+            nbk_id = "NBK1247"
+            short_name = "brca1"
+            title = "BRCA1- and BRCA2-Associated HBOC"
+            pubmed_id = "20301425"
+            gene_symbols = ("BRCA1", "BRCA2")
+
+        class FakeRepo:
+            async def get_chapter_by_gene(self, gene_symbol: str) -> FakeChapter:
+                assert gene_symbol == "BRCA1"
+                return FakeChapter()
+
+        fake_client._search_result = {"ids": ["20301425"]}
+        fake_client._book_url = RuntimeError("live resolver should not be called")
+        app.state.repository = FakeRepo()
+        app.state.corpus_version = "2026-05-10-r6"
+
+        real_service = GeneReviewService(client=fake_client)
+
+        async def _get_service() -> Any:
+            yield real_service
+
+        app.dependency_overrides[get_managed_service] = _get_service
+
+        resp = await http_client.get("/genereview/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["gene_symbol"] == "BRCA1"
+        assert body["pubmed_id"] == "20301425"
+        assert body["book_url"] == "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
+        assert fake_client.book_url_calls == []
+
+    @pytest.mark.asyncio
     async def test_returns_404_when_service_raises(self, fake_client: FakeClient) -> None:
         config = ServerConfig(transport="http", log_level="WARNING", enable_docs=False)
         manager = UnifiedServerManager()
         fastapi_app = manager.create_fastapi_app(config)
 
         class FakeService:
-            async def get_genereview_comprehensive(self, *args: Any, **kwargs: Any) -> Any:
+            async def get_genereview_comprehensive_uncached(self, *args: Any, **kwargs: Any) -> Any:
                 raise DataNotFoundError("nope")
 
         async def _get_service() -> Any:
@@ -460,7 +508,7 @@ class TestGenereviewRoute:
         fastapi_app = manager.create_fastapi_app(config)
 
         class FakeService:
-            async def get_genereview_comprehensive(self, *args: Any, **kwargs: Any) -> Any:
+            async def get_genereview_comprehensive_uncached(self, *args: Any, **kwargs: Any) -> Any:
                 raise RuntimeError("boom")
 
         async def _get_service() -> Any:
@@ -482,7 +530,9 @@ class TestGenereviewRoute:
         fastapi_app = manager.create_fastapi_app(config)
 
         class FakeService:
-            async def get_genereview_comprehensive(self, *args: Any, **kwargs: Any) -> GeneReview:
+            async def get_genereview_comprehensive_uncached(
+                self, *args: Any, **kwargs: Any
+            ) -> GeneReview:
                 return GeneReview(
                     gene_symbol="BRCA1",
                     pubmed_id="1",
