@@ -17,6 +17,23 @@ total_char_count, and the full list of tables -> `get_passage(passage_id)` OR
 `get_chapter_section(nbk_id, section)` OR `get_table(nbk_id, table_id)` OR
 `get_passages_batch(ids=[...])` for up to 20 passage_ids at once.
 
+## Orchestration Entry Points
+
+`search_genereviews` and `get_genereview_summary` are convenience tools.
+`search_genereviews` resolves gene -> PubMed IDs. `get_genereview_summary`
+resolves gene -> PubMed -> NBK and can fail when a resolver or upstream NCBI
+link is unavailable. On `pmid_resolver_failed` or `gene_not_found`, prefer
+`search_passages(gene=<symbol>, q=<symbol>)` to retrieve indexed chapter
+evidence directly.
+
+Default corpus-backed responses carry `_meta.corpus_version`. `fresh=true`
+bypasses indexed context and returns `live:<timestamp>`.
+
+Structured errors include structured error fields such as `code`,
+`recovery_hint`, and `next_commands`. `pmid_resolver_failed` is a recoverable
+orchestration resolver code for cases where PubMed-to-NBK/Bookshelf resolution
+failed before a chapter could be resolved.
+
 ## Filters
 
 - `gene` (HGNC symbol; validated against the indexed-symbol cache — unknown

@@ -4,12 +4,21 @@ Provides REST API endpoint for complete GeneReview workflow from gene symbol
 to full data.
 """
 
-import logging
-from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query, Request
 
+from genereview_link.api.errors import StructuredHTTPException
+from genereview_link.api.orchestration import (
+    active_corpus_version,
+    get_optional_repository,
+    live_corpus_version,
+    stamp_response_version,
+)
+from genereview_link.api.orchestration_errors import (
+    gene_not_found_error,
+    internal_orchestration_error,
+)
 from genereview_link.models.genereview_models import GeneReview
 from genereview_link.services.genereview_service import (
     DataNotFoundError,
@@ -23,10 +32,20 @@ router = APIRouter(prefix="/genereview", tags=["GeneReviews"])
 @router.get(
     "/{gene_symbol}",
     response_model=GeneReview,
-    summary="Get comprehensive GeneReview data",
+    summary="Resolve a gene into a convenience GeneReview summary",
+    description=(
+        "Convenience orchestration tool that resolves gene -> PubMed -> NBK, "
+        "uses local corpus NBK resolution when available, and falls back through "
+        "live NCBI services. If resolution fails, use search_passages(gene=<symbol>) "
+        "to retrieve indexed chapter evidence directly. Pass fresh=true to bypass "
+        "indexed context and fetch live data. Corpus-backed responses carry "
+        "_meta.corpus_version; live or unresolved responses may use live version "
+        "stamping or omit corpus_version when no corpus chapter resolved."
+    ),
     operation_id="get_genereview_summary",
 )
 async def get_genereview(
+    request: Request,
     gene_symbol: str,
     service: Annotated[GeneReviewService, Depends(get_managed_service)],
     include_abstract: bool = Query(True, description="Include PubMed abstract and metadata"),
@@ -45,20 +64,47 @@ async def get_genereview(
 
     Pass ``?fresh=true`` to bypass the index and fetch live from NCBI.
     """
-    # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient
-    # until repository is populated.
     try:
-        result = await service.get_genereview_comprehensive(
-            gene_symbol,
-            include_abstract=include_abstract,
-            include_links=include_links,
-            include_fulltext=include_fulltext,
+        indexed_chapter = None
+        if not fresh:
+            repository = get_optional_repository(request)
+            if repository is not None:
+                chapter = await repository.get_chapter_by_gene(gene_symbol.upper())
+                if chapter is not None and chapter.pubmed_id:
+                    indexed_chapter = chapter
+
+        if indexed_chapter is not None:
+            result = await service.get_genereview_comprehensive_indexed(
+                gene_symbol,
+                include_abstract=include_abstract,
+                include_links=include_links,
+                include_fulltext=include_fulltext,
+                chapter=indexed_chapter,
+            )
+        else:
+            result = await service.get_genereview_comprehensive_uncached(
+                gene_symbol,
+                include_abstract=include_abstract,
+                include_links=include_links,
+                include_fulltext=include_fulltext,
+            )
+        stamp_response_version(
+            result,
+            corpus_version=(
+                live_corpus_version()
+                if fresh
+                else active_corpus_version(request)
+                if indexed_chapter is not None
+                else None
+            ),
         )
-        if fresh:
-            result.corpus_version = f"live:{datetime.now(UTC).isoformat()}"
         return result
+    except StructuredHTTPException:
+        raise
     except DataNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+        raise gene_not_found_error(gene_symbol) from e
     except Exception as e:
-        logging.error(f"Error fetching GeneReview for {gene_symbol}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="An internal server error occurred.") from e
+        raise internal_orchestration_error(
+            "fetch GeneReview summary",
+            gene_symbol=gene_symbol,
+        ) from e

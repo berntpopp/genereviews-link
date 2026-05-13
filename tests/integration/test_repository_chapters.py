@@ -16,7 +16,9 @@ async def _seed(pool: asyncpg.Pool) -> None:
             """
             insert into genereview_chapters
                 (nbk_id, short_name, title, gene_symbols, omim_ids, corpus_version, nxml_relpath, pubmed_id)
-            values ('NBK1', 'brca', 'BRCA Chapter', '{BRCA1,BRCA2}', '{113705}', '2026-05-10', 'x', '12345')
+            values
+                ('NBK1', 'brca', 'BRCA Chapter', '{BRCA1,BRCA2}', '{113705}', '2026-05-10', 'x', '12345'),
+                ('NBK2', 'brca-alt', 'BRCA Alternate Chapter', '{BRCA1}', '{}', '2026-05-10', 'y', '67890')
             """
         )
         await conn.execute(
@@ -42,6 +44,16 @@ async def test_get_chapter_by_gene(pool: asyncpg.Pool) -> None:
     assert chapter is not None
     assert chapter.nbk_id == "NBK1"
     assert "BRCA2" in chapter.gene_symbols
+
+
+@pytest.mark.asyncio
+async def test_get_chapters_by_gene_returns_all_matches(pool: asyncpg.Pool) -> None:
+    await apply_control_migrations(pool)
+    await apply_data_migrations(pool, schema="genereview")
+    await _seed(pool)
+    repo = GeneReviewRepository(pool)
+    chapters = await repo.get_chapters_by_gene("BRCA1")
+    assert [chapter.pubmed_id for chapter in chapters] == ["12345", "67890"]
 
 
 @pytest.mark.asyncio

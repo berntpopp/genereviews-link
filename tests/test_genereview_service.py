@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from genereview_link.retrieval.repository import ChapterRow
 from genereview_link.services.genereview_service import (
     DataNotFoundError,
     GeneReviewService,
@@ -272,6 +273,68 @@ class TestGetGenereviewComprehensive:
         assert result.title == "GeneReview for BRCA1"
 
     @pytest.mark.asyncio
+    async def test_repository_chapter_title_survives_empty_scrape_title(self) -> None:
+        service, _ = _make_service(
+            comprehensive={
+                "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+                "title": "",
+                "sections": {},
+                "metadata": {},
+            },
+            abstract={
+                "pmid": "20301425",
+                "title": "Abstract Title",
+                "abstract": "x",
+                "authors": [],
+                "journal": "",
+                "publication_date": "",
+            },
+        )
+        chapter = ChapterRow(
+            nbk_id="NBK1247",
+            short_name="brca1",
+            title="Repository Chapter Title",
+            pubmed_id="20301425",
+            gene_symbols=("BRCA1",),
+            omim_ids=(),
+            authors=None,
+            initial_pub_date=None,
+            last_updated_date=None,
+        )
+
+        result = await service.get_genereview_comprehensive_uncached("BRCA1", chapter=chapter)
+
+        assert result.title == "Repository Chapter Title"
+
+    @pytest.mark.asyncio
+    async def test_indexed_comprehensive_method_caches_by_chapter(self) -> None:
+        service, fake = _make_service(
+            comprehensive={
+                "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+                "title": "Indexed Title",
+                "sections": {},
+                "metadata": {},
+            },
+        )
+        chapter = ChapterRow(
+            nbk_id="NBK1247",
+            short_name="brca1",
+            title="Repository Chapter Title",
+            pubmed_id="20301425",
+            gene_symbols=("BRCA1",),
+            omim_ids=(),
+            authors=None,
+            initial_pub_date=None,
+            last_updated_date=None,
+        )
+
+        first = await service.get_genereview_comprehensive_indexed("BRCA1", chapter=chapter)
+        second = await service.get_genereview_comprehensive_indexed("BRCA1", chapter=chapter)
+
+        assert first.title == second.title == "Indexed Title"
+        assert [call[0] for call in fake.calls].count("scrape_genereview_comprehensive") == 1
+
+    @pytest.mark.asyncio
     async def test_optional_data_can_be_disabled(self) -> None:
         service, fake = _make_service(
             book_url="https://www.ncbi.nlm.nih.gov/books/NBK1247/",
@@ -290,3 +353,10 @@ class TestGetGenereviewComprehensive:
         assert "fetch_abstract" not in called
         assert "get_all_links" not in called
         assert "scrape_genereview_comprehensive" not in called
+
+    @pytest.mark.asyncio
+    async def test_cached_comprehensive_method_rejects_repository_kwarg(self) -> None:
+        service, _ = _make_service()
+
+        with pytest.raises(TypeError, match="repository"):
+            await service.get_genereview_comprehensive("BRCA1", repository=object())

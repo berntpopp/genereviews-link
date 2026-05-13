@@ -424,20 +424,30 @@ class GeneReviewRepository:
         ]
 
     async def get_chapter_by_gene(self, gene_symbol: str) -> ChapterRow | None:
+        chapters = await self.get_chapters_by_gene(gene_symbol, limit=1)
+        return chapters[0] if chapters else None
+
+    async def get_chapters_by_gene(
+        self,
+        gene_symbol: str,
+        *,
+        limit: int | None = None,
+    ) -> list[ChapterRow]:
         async with self._acquire() as conn:
             await conn.execute("set search_path to genereview, public")
-            row = await conn.fetchrow(
+            rows = await conn.fetch(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
                        authors, initial_pub_date, last_updated_date, ingested_at
                   from genereview_chapters
                  where $1 = any(gene_symbols)
-                 order by last_updated_date desc nulls last
-                 limit 1
+                 order by last_updated_date desc nulls last, nbk_id
+                 limit coalesce($2::int, 2147483647)
                 """,
                 gene_symbol,
+                limit,
             )
-        return _to_chapter_row(row) if row else None
+        return [_to_chapter_row(row) for row in rows]
 
     async def get_chapter_by_nbk(self, nbk_id: str) -> ChapterRow | None:
         async with self._acquire() as conn:

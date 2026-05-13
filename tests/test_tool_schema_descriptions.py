@@ -35,6 +35,53 @@ def test_search_passages_description_leads_with_section_affordances() -> None:
     assert 'sections=["management"]' in desc
 
 
+def test_orchestration_route_descriptions_document_fallbacks_and_versions() -> None:
+    app = _app()
+
+    search_description = str(_operation(app, "/search/{gene_symbol}", "get")["description"])
+    summary_description = str(_operation(app, "/genereview/{gene_symbol}", "get")["description"])
+    abstract_description = str(_operation(app, "/abstract/{pubmed_id}", "get")["description"])
+    links_description = str(_operation(app, "/links/{pubmed_id}", "get")["description"])
+    fulltext_description = str(_operation(app, "/fulltext/{nbk_id}", "get")["description"])
+
+    assert "indexed corpus first" in search_description
+    assert "search_passages(gene=<symbol>)" in search_description
+    assert "fresh=true" in search_description
+    assert "search_passages" in summary_description
+    assert "fresh=true" in summary_description
+    assert "corpus_version" in summary_description
+    assert "always calls live NCBI" in abstract_description
+    assert "corpus_version" in abstract_description
+    assert "structured errors" in abstract_description
+    assert "fresh=true" in abstract_description
+    assert "bypass" not in abstract_description.lower()
+    assert "always calls live NCBI" in links_description
+    assert "categorized/normalized links" in links_description
+    assert "corpus-version stamping" in links_description
+    assert "fresh=true" in links_description
+    assert "bypass" not in links_description.lower()
+    assert "live Bookshelf scrape" in fulltext_description
+    assert "corpus passage tools" in fulltext_description
+    assert "structured errors/version stamping" in fulltext_description
+    assert "fresh=true labels" in fulltext_description
+    assert "bypass" not in fulltext_description.lower()
+
+
+def test_live_upstream_tools_fresh_parameter_only_labels_version() -> None:
+    app = _app()
+
+    for path, method in (
+        ("/abstract/{pubmed_id}", "get"),
+        ("/links/{pubmed_id}", "get"),
+        ("/fulltext/{nbk_id}", "get"),
+    ):
+        desc = _parameter_description(app, path, method, "fresh")
+
+        assert "version" in desc
+        assert "live:<timestamp>" in desc
+        assert "bypass" not in desc.lower()
+
+
 def test_get_chapter_metadata_summary_leads_with_outline_affordance() -> None:
     summary = str(_operation(_app(), "/chapters/{nbk_id}/metadata", "get")["summary"])
 

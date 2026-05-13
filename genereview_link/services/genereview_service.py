@@ -19,6 +19,7 @@ from genereview_link.models.genereview_models import (
     GeneReviewSection,
     LinkData,
 )
+from genereview_link.retrieval.repository import ChapterRow
 
 logger = get_logger(__name__)
 
@@ -44,7 +45,10 @@ class GeneReviewService:
         # Apply the cache decorator to both implementation methods
         self.get_genereview = alru_cache(maxsize=settings.CACHE_SIZE)(self._get_genereview_impl)
         self.get_genereview_comprehensive = alru_cache(maxsize=settings.CACHE_SIZE)(
-            self._get_genereview_comprehensive_impl
+            self._get_genereview_comprehensive_cached_impl
+        )
+        self.get_genereview_comprehensive_indexed = alru_cache(maxsize=settings.CACHE_SIZE)(
+            self._get_genereview_comprehensive_indexed_impl
         )
 
     async def _get_genereview_impl(self, gene_symbol: str) -> GeneReview:
@@ -81,20 +85,43 @@ class GeneReviewService:
             other_sections={k: GeneReviewSection(**v) for k, v in scraped_data.items()},
         )
 
-    async def _get_genereview_comprehensive_impl(
+    async def _get_genereview_comprehensive_cached_impl(
         self,
         gene_symbol: str,
         include_abstract: bool = True,
         include_links: bool = True,
         include_fulltext: bool = True,
     ) -> GeneReview:
-        """Fetch all available data for a GeneReview."""
-        # 1. Search for GeneReviews
-        search_results = await self.client.search_genereviews(gene_symbol, retmax=1)
-        if not search_results["ids"]:
-            raise DataNotFoundError(f"GeneReview not found for gene: {gene_symbol}")
+        return await self._get_genereview_comprehensive_impl(
+            gene_symbol,
+            include_abstract=include_abstract,
+            include_links=include_links,
+            include_fulltext=include_fulltext,
+        )
 
-        pubmed_id = search_results["ids"][0]
+    async def _get_genereview_comprehensive_impl(
+        self,
+        gene_symbol: str,
+        include_abstract: bool = True,
+        include_links: bool = True,
+        include_fulltext: bool = True,
+        *,
+        chapter: ChapterRow | None = None,
+    ) -> GeneReview:
+        """Fetch all available data for a GeneReview."""
+        if chapter is not None and chapter.pubmed_id:
+            pubmed_id = chapter.pubmed_id
+            book_url = f"https://www.ncbi.nlm.nih.gov/books/{chapter.nbk_id}/"
+            title = chapter.title
+        else:
+            # 1. Search for GeneReviews
+            search_results = await self.client.search_genereviews(gene_symbol, retmax=1)
+            if not search_results["ids"]:
+                raise DataNotFoundError(f"GeneReview not found for gene: {gene_symbol}")
+
+            pubmed_id = search_results["ids"][0]
+            book_url = None
+            title = ""
 
         # 2. Get abstract data if requested
         abstract_data = None
@@ -115,15 +142,18 @@ class GeneReviewService:
 
         # 3. Get all links if requested
         all_links = None
-        book_urls = []
+        book_urls = [book_url] if book_url else []
         if include_links:
             try:
                 links_result = await self.client.get_all_links(pubmed_id)
                 all_links = LinkData(urls=links_result.get("urls", []))
-                # Extract book URLs from all URLs
-                book_urls = [
-                    url for url in links_result.get("urls", []) if "ncbi.nlm.nih.gov/books/" in url
-                ]
+                if not book_urls:
+                    # Extract book URLs from all URLs
+                    book_urls = [
+                        url
+                        for url in links_result.get("urls", [])
+                        if "ncbi.nlm.nih.gov/books/" in url
+                    ]
             except Exception as e:
                 logger.warning(f"Could not fetch links for PMID {pubmed_id}: {e}")
 
@@ -141,7 +171,6 @@ class GeneReviewService:
 
         # 4. Get comprehensive full text data if requested
         full_text_data = None
-        title = ""
         sections = {}
 
         if include_fulltext:
@@ -171,17 +200,21 @@ class GeneReviewService:
                         metadata=metadata,
                     )
 
-                    title = fulltext_result.get("title", "")
+                    scraped_title = fulltext_result.get("title", "")
+                    if scraped_title:
+                        title = scraped_title
                     sections = sections_data
             except Exception as e:
                 logger.warning(f"Could not scrape full text from {book_url}: {e}")
 
         # Fallback: use basic scraping if comprehensive failed
-        if not title and not sections:
+        if include_fulltext and not sections:
             try:
                 scraped_data = await self.client.scrape_genereview_book(book_url)
                 if scraped_data and "title" in scraped_data:
-                    title = scraped_data.pop("title")["content"]
+                    scraped_title = scraped_data.pop("title")["content"]
+                    if scraped_title:
+                        title = scraped_title
                     # Convert remaining sections
                     for key, section_data in scraped_data.items():
                         sections[key] = GeneReviewSection(**section_data)
@@ -212,6 +245,47 @@ class GeneReviewService:
             abstract_data=abstract_data,
             all_links=all_links,
             full_text_data=full_text_data,
+        )
+
+    async def _get_genereview_comprehensive_indexed_impl(
+        self,
+        gene_symbol: str,
+        include_abstract: bool = True,
+        include_links: bool = True,
+        include_fulltext: bool = True,
+        *,
+        chapter: ChapterRow,
+    ) -> GeneReview:
+        """Fetch a repository-resolved chapter through a chapter-keyed cache."""
+        return await self._get_genereview_comprehensive_impl(
+            gene_symbol,
+            include_abstract=include_abstract,
+            include_links=include_links,
+            include_fulltext=include_fulltext,
+            chapter=chapter,
+        )
+
+    async def get_genereview_comprehensive_uncached(
+        self,
+        gene_symbol: str,
+        include_abstract: bool = True,
+        include_links: bool = True,
+        include_fulltext: bool = True,
+        *,
+        chapter: ChapterRow | None = None,
+    ) -> GeneReview:
+        """Fetch a comprehensive GeneReview without using the service cache.
+
+        Route-level orchestration uses this when it has already resolved an
+        indexed chapter for the request. The cached public method remains for
+        legacy live lookups that do not pass request-scoped repository rows.
+        """
+        return await self._get_genereview_comprehensive_impl(
+            gene_symbol,
+            include_abstract=include_abstract,
+            include_links=include_links,
+            include_fulltext=include_fulltext,
+            chapter=chapter,
         )
 
     async def close(self) -> None:

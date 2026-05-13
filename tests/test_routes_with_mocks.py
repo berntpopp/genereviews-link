@@ -14,10 +14,21 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.errors import StructuredHTTPException
+from genereview_link.api.orchestration import live_corpus_version, stamp_response_version
 from genereview_link.config import ServerConfig
+from genereview_link.models.genereview_models import AbstractData
 from genereview_link.server_manager import UnifiedServerManager
-from genereview_link.services.genereview_service import DataNotFoundError
+from genereview_link.services.genereview_service import DataNotFoundError, GeneReviewService
 from genereview_link.services.service_manager import get_managed_service
+
+
+def assert_structured_error_detail(body: dict[str, Any]) -> dict[str, Any]:
+    detail = body["detail"]
+    assert detail["code"]
+    assert detail["recovery_hint"]
+    assert "next_commands" in detail
+    return detail
 
 
 class FakeClient:
@@ -30,11 +41,14 @@ class FakeClient:
         abstract: dict[str, Any] | Exception | None = None,
         links: dict[str, Any] | Exception | None = None,
         fulltext: dict[str, Any] | Exception | None = None,
+        book_url: str | Exception | None = None,
     ) -> None:
         self._search_result = search_result
         self._abstract = abstract
         self._links = links
         self._fulltext = fulltext
+        self._book_url = book_url
+        self.book_url_calls: list[str] = []
 
     async def search_genereviews(self, gene_symbol: str, retmax: int = 20) -> dict[str, Any]:
         if isinstance(self._search_result, Exception):
@@ -57,6 +71,12 @@ class FakeClient:
         if isinstance(self._links, Exception):
             raise self._links
         return self._links or {"urls": []}
+
+    async def get_book_url_from_pmid(self, pubmed_id: str) -> str | None:
+        self.book_url_calls.append(pubmed_id)
+        if isinstance(self._book_url, Exception):
+            raise self._book_url
+        return self._book_url
 
     async def scrape_genereview_comprehensive(self, book_url: str) -> dict[str, Any]:
         if isinstance(self._fulltext, Exception):
@@ -98,6 +118,86 @@ async def http_client(app: FastAPI):
 
 class TestSearchRoute:
     @pytest.mark.asyncio
+    async def test_uses_repository_first(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        class FakeChapter:
+            nbk_id = "NBK1247"
+            short_name = "brca1"
+            title = "BRCA1- and BRCA2-Associated HBOC"
+            pubmed_id = "20301425"
+            gene_symbols = ("BRCA1", "BRCA2")
+
+        class FakeRepo:
+            async def get_chapters_by_gene(self, gene_symbol: str) -> list[FakeChapter]:
+                assert gene_symbol == "BRCA1"
+                return [FakeChapter()]
+
+        fake_client._search_result = RuntimeError("live client should not be called")
+        app.state.repository = FakeRepo()
+        app.state.corpus_version = "2026-05-10-r6"
+
+        resp = await http_client.get("/search/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ids"] == ["20301425"]
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
+
+    @pytest.mark.asyncio
+    async def test_uses_all_repository_chapter_matches(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        class FakeChapterOne:
+            pubmed_id = "20301425"
+
+        class FakeChapterTwo:
+            pubmed_id = "99999999"
+
+        class FakeRepo:
+            async def get_chapters_by_gene(
+                self, gene_symbol: str
+            ) -> list[FakeChapterOne | FakeChapterTwo]:
+                assert gene_symbol == "BRCA1"
+                return [FakeChapterOne(), FakeChapterTwo()]
+
+        fake_client._search_result = RuntimeError("live client should not be called")
+        app.state.repository = FakeRepo()
+        app.state.corpus_version = "2026-05-10-r6"
+
+        resp = await http_client.get("/search/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 2
+        assert body["ids"] == ["20301425", "99999999"]
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
+
+    @pytest.mark.asyncio
+    async def test_live_fallback_keeps_version_unstamped(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._search_result = {
+            "count": 1,
+            "retmax": 20,
+            "retstart": 0,
+            "ids": ["1"],
+            "webenv": "e",
+            "querykey": "k",
+        }
+        app.state.corpus_version = "2026-05-10-r6"
+
+        resp = await http_client.get("/search/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ids"] == ["1"]
+        assert body["corpus_version"] is None
+        assert body["_meta"]["corpus_version"] is None
+
+    @pytest.mark.asyncio
     async def test_returns_search_result(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
@@ -122,6 +222,8 @@ class TestSearchRoute:
         fake_client._search_result = RuntimeError("boom")
         resp = await http_client.get("/search/BRCA1")
         assert resp.status_code == 500
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["next_commands"][0]["tool"] == "search_passages"
 
 
 class TestAbstractRoute:
@@ -129,6 +231,7 @@ class TestAbstractRoute:
     async def test_returns_abstract(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
+        app.state.corpus_version = "2026-05-10-r6"
         fake_client._abstract = {
             "pmid": "1",
             "title": "T",
@@ -142,6 +245,8 @@ class TestAbstractRoute:
         body = resp.json()
         assert body["pmid"] == "1"
         assert body["_meta"]["attribution"].startswith("GeneReviews")
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
 
     @pytest.mark.asyncio
     async def test_abstract_404_when_empty(
@@ -150,6 +255,7 @@ class TestAbstractRoute:
         fake_client._abstract = {}
         resp = await http_client.get("/abstract/99")
         assert resp.status_code == 404
+        assert_structured_error_detail(resp.json())
 
     @pytest.mark.asyncio
     async def test_abstract_500_on_error(
@@ -157,7 +263,26 @@ class TestAbstractRoute:
     ) -> None:
         fake_client._abstract = RuntimeError("boom")
         resp = await http_client.get("/abstract/1")
-        assert resp.status_code == 500
+        assert resp.status_code == 502
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "upstream_ncbi_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_abstract_reraises_structured_http_exception(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._abstract = StructuredHTTPException(
+            status_code=409,
+            code="custom_abstract_error",
+            message="custom",
+            recovery_hint="use the custom recovery path",
+            next_commands=[{"tool": "custom_tool", "arguments": {"pmid": "1"}}],
+        )
+        resp = await http_client.get("/abstract/1")
+        assert resp.status_code == 409
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "custom_abstract_error"
+        assert detail["next_commands"][0]["tool"] == "custom_tool"
 
 
 class TestLinksRoute:
@@ -165,6 +290,7 @@ class TestLinksRoute:
     async def test_returns_links(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
+        app.state.corpus_version = "2026-05-10-r6"
         fake_client._links = {
             "urls": ["https://example.com/a"],
             "link_entries": [
@@ -183,6 +309,8 @@ class TestLinksRoute:
         assert body["_meta"]["attribution"].startswith("GeneReviews")
         assert body["link_entries"][0]["link_type"] == "llinks"
         assert body["by_type"]["llinks"] == ["https://example.com/a"]
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
 
     @pytest.mark.asyncio
     async def test_links_500_on_error(
@@ -190,7 +318,26 @@ class TestLinksRoute:
     ) -> None:
         fake_client._links = RuntimeError("boom")
         resp = await http_client.get("/links/1")
-        assert resp.status_code == 500
+        assert resp.status_code == 502
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "upstream_ncbi_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_links_reraises_structured_http_exception(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._links = StructuredHTTPException(
+            status_code=409,
+            code="custom_links_error",
+            message="custom",
+            recovery_hint="use the custom recovery path",
+            next_commands=[{"tool": "custom_tool", "arguments": {"pmid": "1"}}],
+        )
+        resp = await http_client.get("/links/1")
+        assert resp.status_code == 409
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "custom_links_error"
+        assert detail["next_commands"][0]["tool"] == "custom_tool"
 
 
 class TestFulltextRoute:
@@ -198,6 +345,7 @@ class TestFulltextRoute:
     async def test_returns_fulltext(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
+        app.state.corpus_version = "2026-05-10-r6"
         fake_client._fulltext = {
             "nbk_id": "1247",
             "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
@@ -211,6 +359,8 @@ class TestFulltextRoute:
         assert body["nbk_id"] == "1247"
         assert "summary" in body["sections"]
         assert body["_meta"]["attribution"].startswith("GeneReviews")
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
 
     @pytest.mark.asyncio
     async def test_fulltext_400_when_invalid_id(
@@ -218,6 +368,7 @@ class TestFulltextRoute:
     ) -> None:
         resp = await http_client.get("/fulltext/not-a-number")
         assert resp.status_code == 400
+        assert_structured_error_detail(resp.json())
 
     @pytest.mark.asyncio
     async def test_fulltext_404_when_scrape_returns_error(
@@ -226,6 +377,34 @@ class TestFulltextRoute:
         fake_client._fulltext = {"error": "page not found"}
         resp = await http_client.get("/fulltext/NBK99999")
         assert resp.status_code == 404
+        assert_structured_error_detail(resp.json())
+
+    @pytest.mark.asyncio
+    async def test_fulltext_502_on_client_error(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = RuntimeError("boom")
+        resp = await http_client.get("/fulltext/NBK1247")
+        assert resp.status_code == 502
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "upstream_ncbi_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_fulltext_reraises_structured_http_exception(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = StructuredHTTPException(
+            status_code=409,
+            code="custom_fulltext_error",
+            message="custom",
+            recovery_hint="use the custom recovery path",
+            next_commands=[{"tool": "custom_tool", "arguments": {"nbk_id": "NBK1247"}}],
+        )
+        resp = await http_client.get("/fulltext/NBK1247")
+        assert resp.status_code == 409
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "custom_fulltext_error"
+        assert detail["next_commands"][0]["tool"] == "custom_tool"
 
     @pytest.mark.asyncio
     async def test_fulltext_returns_all_sections_when_no_filter(
@@ -404,13 +583,105 @@ class TestFulltextRoute:
 
 class TestGenereviewRoute:
     @pytest.mark.asyncio
+    async def test_uses_repository_chapter_book_url_without_live_resolver(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        class FakeChapter:
+            nbk_id = "NBK1247"
+            short_name = "brca1"
+            title = "BRCA1- and BRCA2-Associated HBOC"
+            pubmed_id = "20301425"
+            gene_symbols = ("BRCA1", "BRCA2")
+
+        class FakeRepo:
+            async def get_chapter_by_gene(self, gene_symbol: str) -> FakeChapter:
+                assert gene_symbol == "BRCA1"
+                return FakeChapter()
+
+        fake_client._search_result = {"ids": ["20301425"]}
+        fake_client._book_url = RuntimeError("live resolver should not be called")
+        app.state.repository = FakeRepo()
+        app.state.corpus_version = "2026-05-10-r6"
+
+        real_service = GeneReviewService(client=fake_client)
+
+        async def _get_service() -> Any:
+            yield real_service
+
+        app.dependency_overrides[get_managed_service] = _get_service
+
+        resp = await http_client.get("/genereview/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["gene_symbol"] == "BRCA1"
+        assert body["pubmed_id"] == "20301425"
+        assert body["book_url"] == "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
+        assert fake_client.book_url_calls == []
+
+    @pytest.mark.asyncio
+    async def test_repo_miss_keeps_live_fallback_version_unstamped(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        class FakeRepo:
+            async def get_chapter_by_gene(self, gene_symbol: str) -> None:
+                assert gene_symbol == "BRCA1"
+                return None
+
+        fake_client._search_result = {"ids": ["20301425"]}
+        fake_client._book_url = "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
+        app.state.repository = FakeRepo()
+        app.state.corpus_version = "2026-05-10-r6"
+
+        real_service = GeneReviewService(client=fake_client)
+
+        async def _get_service() -> Any:
+            yield real_service
+
+        app.dependency_overrides[get_managed_service] = _get_service
+
+        resp = await http_client.get("/genereview/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["gene_symbol"] == "BRCA1"
+        assert body["pubmed_id"] == "20301425"
+        assert body["book_url"] == "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
+        assert body["corpus_version"] is None
+        assert body["_meta"]["corpus_version"] is None
+
+    @pytest.mark.asyncio
+    async def test_absent_repository_keeps_live_fallback_version_unstamped(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._search_result = {"ids": ["20301425"]}
+        fake_client._book_url = "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
+        app.state.corpus_version = "2026-05-10-r6"
+
+        real_service = GeneReviewService(client=fake_client)
+
+        async def _get_service() -> Any:
+            yield real_service
+
+        app.dependency_overrides[get_managed_service] = _get_service
+
+        resp = await http_client.get("/genereview/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["corpus_version"] is None
+        assert body["_meta"]["corpus_version"] is None
+
+    @pytest.mark.asyncio
     async def test_returns_404_when_service_raises(self, fake_client: FakeClient) -> None:
         config = ServerConfig(transport="http", log_level="WARNING", enable_docs=False)
         manager = UnifiedServerManager()
         fastapi_app = manager.create_fastapi_app(config)
 
         class FakeService:
-            async def get_genereview_comprehensive(self, *args: Any, **kwargs: Any) -> Any:
+            async def get_genereview_comprehensive_uncached(self, *args: Any, **kwargs: Any) -> Any:
                 raise DataNotFoundError("nope")
 
         async def _get_service() -> Any:
@@ -422,6 +693,8 @@ class TestGenereviewRoute:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/genereview/UNKNOWN")
             assert resp.status_code == 404
+            detail = assert_structured_error_detail(resp.json())
+            assert detail["next_commands"][0]["tool"] == "search_passages"
 
     @pytest.mark.asyncio
     async def test_returns_500_on_unexpected_error(self) -> None:
@@ -430,7 +703,7 @@ class TestGenereviewRoute:
         fastapi_app = manager.create_fastapi_app(config)
 
         class FakeService:
-            async def get_genereview_comprehensive(self, *args: Any, **kwargs: Any) -> Any:
+            async def get_genereview_comprehensive_uncached(self, *args: Any, **kwargs: Any) -> Any:
                 raise RuntimeError("boom")
 
         async def _get_service() -> Any:
@@ -442,6 +715,8 @@ class TestGenereviewRoute:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/genereview/BRCA1")
             assert resp.status_code == 500
+            detail = assert_structured_error_detail(resp.json())
+            assert detail["next_commands"][0]["tool"] == "search_passages"
 
     @pytest.mark.asyncio
     async def test_returns_200_on_success(self) -> None:
@@ -452,7 +727,9 @@ class TestGenereviewRoute:
         fastapi_app = manager.create_fastapi_app(config)
 
         class FakeService:
-            async def get_genereview_comprehensive(self, *args: Any, **kwargs: Any) -> GeneReview:
+            async def get_genereview_comprehensive_uncached(
+                self, *args: Any, **kwargs: Any
+            ) -> GeneReview:
                 return GeneReview(
                     gene_symbol="BRCA1",
                     pubmed_id="1",
@@ -498,6 +775,7 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
         # License is NOT inlined on per-record responses; callers fetch /license once.
         assert "license" not in body
 
@@ -518,6 +796,7 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
         assert "license" not in body
 
     @pytest.mark.asyncio
@@ -530,6 +809,7 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
         assert "license" not in body
 
     @pytest.mark.asyncio
@@ -548,6 +828,7 @@ class TestFreshParam:
         body = resp.json()
         assert body["corpus_version"] is not None
         assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
         assert "license" not in body
 
     @pytest.mark.asyncio
@@ -569,3 +850,23 @@ class TestFreshParam:
         assert body["corpus_version"] is None
         # License never appears on per-record responses (dedicated /license endpoint).
         assert "license" not in body
+
+
+class TestOrchestrationHelpers:
+    def test_stamp_response_version_updates_top_level_and_meta(self) -> None:
+        response = AbstractData(
+            pmid="1",
+            title="T",
+            abstract="A",
+            authors=[],
+            journal="J",
+            publication_date="2024",
+        )
+
+        stamp_response_version(response, corpus_version="2026-05-13")
+
+        assert response.corpus_version == "2026-05-13"
+        assert response.meta.corpus_version == "2026-05-13"
+
+    def test_live_corpus_version_uses_live_prefix(self) -> None:
+        assert live_corpus_version().startswith("live:")
