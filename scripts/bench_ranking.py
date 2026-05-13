@@ -154,17 +154,21 @@ async def main() -> None:
             "improvements": improvements[mode],
         }
 
-    # Hard gate enforcement: exact-symbol-anchor regressions fail the run.
+    # Hard gate enforcement: exact-symbol-anchor regressions fail the run on rrf only.
+    # lexical and off are diagnostic baselines; anchor misses there are informational.
     failed = False
     for mode in MODES:
         if regressions[mode]:
+            is_gate_mode = mode == "rrf"
+            label = "FAIL" if is_gate_mode else "INFO"
             print(  # noqa: T201
-                f"\nFAIL: {mode} regressed {len(regressions[mode])}"
+                f"\n{label}: {mode} regressed {len(regressions[mode])}"
                 " exact-symbol-anchor entries:"
             )
             for q, gold, got in regressions[mode]:
                 print(f"  {q}: expected {gold}, got {got}")  # noqa: T201
-            failed = True
+            if is_gate_mode:
+                failed = True
 
     # Spec-level gate: must_change improvements required ONLY on rrf (the production mode).
     # lexical and off are diagnostic baselines; they're expected to underperform.
