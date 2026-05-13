@@ -7,15 +7,21 @@ import logging
 import re
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from rapidfuzz import fuzz, process
 
 from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.api.orchestration import (
     active_corpus_version,
     live_corpus_version,
     stamp_response_version,
+)
+from genereview_link.api.orchestration_errors import (
+    fulltext_scrape_failed_error,
+    invalid_nbk_id_error,
+    upstream_ncbi_unavailable_error,
 )
 from genereview_link.models.genereview_models import (
     FullTextData,
@@ -133,7 +139,7 @@ async def get_fulltext(
         # Clean up NBK ID - remove NBK prefix if present and ensure it's valid
         clean_id = re.sub(r"^NBK", "", nbk_id)
         if not clean_id.isdigit():
-            raise HTTPException(status_code=400, detail=f"Invalid NBK ID format: {nbk_id}")
+            raise invalid_nbk_id_error(nbk_id)
 
         # Construct the URL
         book_url = f"https://www.ncbi.nlm.nih.gov/books/NBK{clean_id}/"
@@ -141,10 +147,7 @@ async def get_fulltext(
         result = await client.scrape_genereview_comprehensive(book_url)
 
         if result.get("error"):
-            raise HTTPException(
-                status_code=404,
-                detail=f"Could not scrape content: {result['error']}",
-            )
+            raise fulltext_scrape_failed_error(nbk_id, str(result["error"]))
 
         # Convert sections to GeneReviewSection objects (propagating level/subsections)
         all_sections: dict[str, GeneReviewSection] = {
@@ -177,11 +180,8 @@ async def get_fulltext(
             corpus_version=live_corpus_version() if fresh else active_corpus_version(request),
         )
         return out
-    except HTTPException:
+    except StructuredHTTPException:
         raise
     except Exception as e:
         logging.error(f"Error scraping NBK{nbk_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="An error occurred while scraping the full text.",
-        ) from e
+        raise upstream_ncbi_unavailable_error("fetch full text") from e

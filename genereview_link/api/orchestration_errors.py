@@ -55,7 +55,47 @@ def upstream_ncbi_unavailable_error(action: str) -> StructuredHTTPException:
     )
 
 
-def internal_orchestration_error(action: str) -> StructuredHTTPException:
+def abstract_not_found_error(pubmed_id: str) -> StructuredHTTPException:
+    return StructuredHTTPException(
+        status_code=404,
+        code="abstract_not_found",
+        message=f"Abstract not found for PubMed ID {pubmed_id}.",
+        recovery_hint=(
+            "Verify the PubMed ID, or use search_passages for indexed GeneReviews "
+            "content when a full abstract is not required."
+        ),
+    )
+
+
+def invalid_nbk_id_error(nbk_id: str) -> StructuredHTTPException:
+    return StructuredHTTPException(
+        status_code=400,
+        code="invalid_nbk_id",
+        message=f"Invalid NBK ID format: {nbk_id}.",
+        recovery_hint="Use an NCBI Bookshelf identifier such as NBK1247 or 1247.",
+    )
+
+
+def fulltext_scrape_failed_error(nbk_id: str, reason: str) -> StructuredHTTPException:
+    return StructuredHTTPException(
+        status_code=404,
+        code="fulltext_scrape_failed",
+        message=f"Could not scrape content for {nbk_id}: {reason}.",
+        recovery_hint=(
+            "Verify the NBK ID in NCBI Bookshelf, or use search_passages for indexed "
+            "GeneReviews passage retrieval."
+        ),
+    )
+
+
+def internal_orchestration_error(
+    action: str,
+    *,
+    gene_symbol: str | None = None,
+) -> StructuredHTTPException:
+    commands: list[dict[str, Any]] = []
+    if gene_symbol:
+        commands.append(_search_passages_command(gene_symbol))
     return StructuredHTTPException(
         status_code=500,
         code="internal_error",
@@ -64,4 +104,5 @@ def internal_orchestration_error(action: str) -> StructuredHTTPException:
             "Retry once. If the error persists, use search_passages or "
             "get_chapter_metadata for indexed corpus retrieval."
         ),
+        next_commands=commands,
     )

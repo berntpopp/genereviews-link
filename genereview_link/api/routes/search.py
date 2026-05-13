@@ -109,4 +109,7 @@ async def search_genereviews(
                 error_message=str(e),
                 exc_info=True,
             )
-            raise internal_orchestration_error("search GeneReviews") from e
+            raise internal_orchestration_error(
+                "search GeneReviews",
+                gene_symbol=gene_symbol,
+            ) from e

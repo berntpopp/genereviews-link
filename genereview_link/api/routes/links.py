@@ -6,15 +6,17 @@ Provides REST API endpoint for retrieving all available links for PubMed article
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.api.orchestration import (
     active_corpus_version,
     live_corpus_version,
     stamp_response_version,
 )
+from genereview_link.api.orchestration_errors import upstream_ncbi_unavailable_error
 from genereview_link.models.genereview_models import LinkData
 
 router = APIRouter(prefix="/links", tags=["Links"])
@@ -50,8 +52,8 @@ async def get_links(
             corpus_version=live_corpus_version() if fresh else active_corpus_version(request),
         )
         return out
+    except StructuredHTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error fetching links for PMID {pubmed_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="An error occurred while fetching links."
-        ) from e
+        raise upstream_ncbi_unavailable_error("fetch links") from e

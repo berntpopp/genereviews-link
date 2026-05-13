@@ -87,4 +87,7 @@ async def get_genereview(
     except DataNotFoundError as e:
         raise gene_not_found_error(gene_symbol) from e
     except Exception as e:
-        raise internal_orchestration_error("fetch GeneReview summary") from e
+        raise internal_orchestration_error(
+            "fetch GeneReview summary",
+            gene_symbol=gene_symbol,
+        ) from e

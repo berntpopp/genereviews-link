@@ -14,12 +14,21 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.orchestration import live_corpus_version, stamp_response_version
 from genereview_link.config import ServerConfig
 from genereview_link.models.genereview_models import AbstractData
 from genereview_link.server_manager import UnifiedServerManager
 from genereview_link.services.genereview_service import DataNotFoundError, GeneReviewService
 from genereview_link.services.service_manager import get_managed_service
+
+
+def assert_structured_error_detail(body: dict[str, Any]) -> dict[str, Any]:
+    detail = body["detail"]
+    assert detail["code"]
+    assert detail["recovery_hint"]
+    assert "next_commands" in detail
+    return detail
 
 
 class FakeClient:
@@ -161,6 +170,8 @@ class TestSearchRoute:
         fake_client._search_result = RuntimeError("boom")
         resp = await http_client.get("/search/BRCA1")
         assert resp.status_code == 500
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["next_commands"][0]["tool"] == "search_passages"
 
 
 class TestAbstractRoute:
@@ -192,6 +203,7 @@ class TestAbstractRoute:
         fake_client._abstract = {}
         resp = await http_client.get("/abstract/99")
         assert resp.status_code == 404
+        assert_structured_error_detail(resp.json())
 
     @pytest.mark.asyncio
     async def test_abstract_500_on_error(
@@ -199,7 +211,26 @@ class TestAbstractRoute:
     ) -> None:
         fake_client._abstract = RuntimeError("boom")
         resp = await http_client.get("/abstract/1")
-        assert resp.status_code == 500
+        assert resp.status_code == 502
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "upstream_ncbi_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_abstract_reraises_structured_http_exception(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._abstract = StructuredHTTPException(
+            status_code=409,
+            code="custom_abstract_error",
+            message="custom",
+            recovery_hint="use the custom recovery path",
+            next_commands=[{"tool": "custom_tool", "arguments": {"pmid": "1"}}],
+        )
+        resp = await http_client.get("/abstract/1")
+        assert resp.status_code == 409
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "custom_abstract_error"
+        assert detail["next_commands"][0]["tool"] == "custom_tool"
 
 
 class TestLinksRoute:
@@ -235,7 +266,26 @@ class TestLinksRoute:
     ) -> None:
         fake_client._links = RuntimeError("boom")
         resp = await http_client.get("/links/1")
-        assert resp.status_code == 500
+        assert resp.status_code == 502
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "upstream_ncbi_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_links_reraises_structured_http_exception(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._links = StructuredHTTPException(
+            status_code=409,
+            code="custom_links_error",
+            message="custom",
+            recovery_hint="use the custom recovery path",
+            next_commands=[{"tool": "custom_tool", "arguments": {"pmid": "1"}}],
+        )
+        resp = await http_client.get("/links/1")
+        assert resp.status_code == 409
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "custom_links_error"
+        assert detail["next_commands"][0]["tool"] == "custom_tool"
 
 
 class TestFulltextRoute:
@@ -266,6 +316,7 @@ class TestFulltextRoute:
     ) -> None:
         resp = await http_client.get("/fulltext/not-a-number")
         assert resp.status_code == 400
+        assert_structured_error_detail(resp.json())
 
     @pytest.mark.asyncio
     async def test_fulltext_404_when_scrape_returns_error(
@@ -274,6 +325,34 @@ class TestFulltextRoute:
         fake_client._fulltext = {"error": "page not found"}
         resp = await http_client.get("/fulltext/NBK99999")
         assert resp.status_code == 404
+        assert_structured_error_detail(resp.json())
+
+    @pytest.mark.asyncio
+    async def test_fulltext_502_on_client_error(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = RuntimeError("boom")
+        resp = await http_client.get("/fulltext/NBK1247")
+        assert resp.status_code == 502
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "upstream_ncbi_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_fulltext_reraises_structured_http_exception(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._fulltext = StructuredHTTPException(
+            status_code=409,
+            code="custom_fulltext_error",
+            message="custom",
+            recovery_hint="use the custom recovery path",
+            next_commands=[{"tool": "custom_tool", "arguments": {"nbk_id": "NBK1247"}}],
+        )
+        resp = await http_client.get("/fulltext/NBK1247")
+        assert resp.status_code == 409
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "custom_fulltext_error"
+        assert detail["next_commands"][0]["tool"] == "custom_tool"
 
     @pytest.mark.asyncio
     async def test_fulltext_returns_all_sections_when_no_filter(
@@ -562,6 +641,8 @@ class TestGenereviewRoute:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/genereview/UNKNOWN")
             assert resp.status_code == 404
+            detail = assert_structured_error_detail(resp.json())
+            assert detail["next_commands"][0]["tool"] == "search_passages"
 
     @pytest.mark.asyncio
     async def test_returns_500_on_unexpected_error(self) -> None:
@@ -582,6 +663,8 @@ class TestGenereviewRoute:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/genereview/BRCA1")
             assert resp.status_code == 500
+            detail = assert_structured_error_detail(resp.json())
+            assert detail["next_commands"][0]["tool"] == "search_passages"
 
     @pytest.mark.asyncio
     async def test_returns_200_on_success(self) -> None:

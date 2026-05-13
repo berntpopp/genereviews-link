@@ -7,14 +7,19 @@ for PubMed articles by ID.
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.api.orchestration import (
     active_corpus_version,
     live_corpus_version,
     stamp_response_version,
+)
+from genereview_link.api.orchestration_errors import (
+    abstract_not_found_error,
+    upstream_ncbi_unavailable_error,
 )
 from genereview_link.models.genereview_models import AbstractData
 
@@ -46,10 +51,7 @@ async def get_abstract(
     try:
         result = await client.fetch_abstract(pubmed_id)
         if not result:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Abstract not found for PubMed ID: {pubmed_id}",
-            )
+            raise abstract_not_found_error(pubmed_id)
 
         # Ensure all required fields have default values
         out = AbstractData(
@@ -65,11 +67,8 @@ async def get_abstract(
             corpus_version=live_corpus_version() if fresh else active_corpus_version(request),
         )
         return out
-    except HTTPException:
+    except StructuredHTTPException:
         raise
     except Exception as e:
         logging.error(f"Error fetching abstract for PMID {pubmed_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="An error occurred while fetching the abstract.",
-        ) from e
+        raise upstream_ncbi_unavailable_error("fetch abstract") from e
