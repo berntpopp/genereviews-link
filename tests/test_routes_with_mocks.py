@@ -14,7 +14,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.orchestration import live_corpus_version, stamp_response_version
 from genereview_link.config import ServerConfig
+from genereview_link.models.genereview_models import AbstractData
 from genereview_link.server_manager import UnifiedServerManager
 from genereview_link.services.genereview_service import DataNotFoundError
 from genereview_link.services.service_manager import get_managed_service
@@ -569,3 +571,23 @@ class TestFreshParam:
         assert body["corpus_version"] is None
         # License never appears on per-record responses (dedicated /license endpoint).
         assert "license" not in body
+
+
+class TestOrchestrationHelpers:
+    def test_stamp_response_version_updates_top_level_and_meta(self) -> None:
+        response = AbstractData(
+            pmid="1",
+            title="T",
+            abstract="A",
+            authors=[],
+            journal="J",
+            publication_date="2024",
+        )
+
+        stamp_response_version(response, corpus_version="2026-05-13")
+
+        assert response.corpus_version == "2026-05-13"
+        assert response.meta.corpus_version == "2026-05-13"
+
+    def test_live_corpus_version_uses_live_prefix(self) -> None:
+        assert live_corpus_version().startswith("live:")
