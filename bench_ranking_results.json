@@ -1,44 +1,38 @@
 {
   "lexical": {
     "p_at_1": 0.08361204013377926,
-    "mrr_at_5": 0.12770345596432553,
-    "recall_at_5": 0.21070234113712374,
-    "composite": 0.14067261241174286,
+    "mrr_at_5": 0.12837235228539576,
+    "recall_at_5": 0.2140468227424749,
+    "composite": 0.14201040505388332,
     "regressions": [
       [
-        "HFE C282Y allele frequency most common variant",
+        "HFE C282Y allele frequency",
         "NBK1440:0051",
-        "NBK1426:0064"
+        "NBK1440:0005"
       ]
     ],
     "improvements": []
   },
   "rrf": {
-    "p_at_1": 0.40468227424749165,
-    "mrr_at_5": 0.5585284280936454,
+    "p_at_1": 0.4080267558528428,
+    "mrr_at_5": 0.560200668896321,
     "recall_at_5": 0.8260869565217391,
-    "composite": 0.5964325529542921,
-    "regressions": [
-      [
-        "HFE C282Y allele frequency most common variant",
-        "NBK1440:0051",
-        "NBK1440:0005"
-      ]
-    ],
+    "composite": 0.5981047937569676,
+    "regressions": [],
     "improvements": [
       "BRCA1 risk-reducing mastectomy salpingo-oophorectomy"
     ]
   },
   "off": {
     "p_at_1": 0.08361204013377926,
-    "mrr_at_5": 0.1282608695652174,
-    "recall_at_5": 0.21070234113712374,
-    "composite": 0.14085841694537346,
+    "mrr_at_5": 0.12892976588628763,
+    "recall_at_5": 0.2140468227424749,
+    "composite": 0.14219620958751392,
     "regressions": [
       [
-        "HFE C282Y allele frequency most common variant",
+        "HFE C282Y allele frequency",
         "NBK1440:0051",
-        "NBK1426:0064"
+        "NBK1384:0061"
       ]
     ],
     "improvements": []
