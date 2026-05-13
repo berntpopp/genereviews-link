@@ -129,9 +129,9 @@ class TestSearchRoute:
             gene_symbols = ("BRCA1", "BRCA2")
 
         class FakeRepo:
-            async def get_chapter_by_gene(self, gene_symbol: str) -> FakeChapter:
+            async def get_chapters_by_gene(self, gene_symbol: str) -> list[FakeChapter]:
                 assert gene_symbol == "BRCA1"
-                return FakeChapter()
+                return [FakeChapter()]
 
         fake_client._search_result = RuntimeError("live client should not be called")
         app.state.repository = FakeRepo()
@@ -144,6 +144,58 @@ class TestSearchRoute:
         assert body["ids"] == ["20301425"]
         assert body["corpus_version"] == "2026-05-10-r6"
         assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
+
+    @pytest.mark.asyncio
+    async def test_uses_all_repository_chapter_matches(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        class FakeChapterOne:
+            pubmed_id = "20301425"
+
+        class FakeChapterTwo:
+            pubmed_id = "99999999"
+
+        class FakeRepo:
+            async def get_chapters_by_gene(
+                self, gene_symbol: str
+            ) -> list[FakeChapterOne | FakeChapterTwo]:
+                assert gene_symbol == "BRCA1"
+                return [FakeChapterOne(), FakeChapterTwo()]
+
+        fake_client._search_result = RuntimeError("live client should not be called")
+        app.state.repository = FakeRepo()
+        app.state.corpus_version = "2026-05-10-r6"
+
+        resp = await http_client.get("/search/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 2
+        assert body["ids"] == ["20301425", "99999999"]
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
+
+    @pytest.mark.asyncio
+    async def test_live_fallback_keeps_version_unstamped(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._search_result = {
+            "count": 1,
+            "retmax": 20,
+            "retstart": 0,
+            "ids": ["1"],
+            "webenv": "e",
+            "querykey": "k",
+        }
+        app.state.corpus_version = "2026-05-10-r6"
+
+        resp = await http_client.get("/search/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ids"] == ["1"]
+        assert body["corpus_version"] is None
+        assert body["_meta"]["corpus_version"] is None
 
     @pytest.mark.asyncio
     async def test_returns_search_result(

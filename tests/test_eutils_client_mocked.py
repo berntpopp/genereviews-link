@@ -116,6 +116,29 @@ class TestGetBookUrlFromPmid:
         )
 
     @pytest.mark.asyncio
+    async def test_get_book_url_from_pmid_prefers_article_book_over_references(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = EutilsClient()
+
+        async def fake_request(endpoint: str, params: dict[str, object]) -> dict[str, object]:
+            return {
+                "linksets": [
+                    {
+                        "linksetdbs": [
+                            {"dbto": "pubmed_books_refs", "links": ["999"]},
+                            {"dbto": "pubmed_books", "links": ["1247"]},
+                        ]
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(client, "_make_request", fake_request)
+        assert await client.get_book_url_from_pmid("20301425") == (
+            "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
+        )
+
+    @pytest.mark.asyncio
     @respx.mock
     async def test_returns_book_url_when_present(self, client: EutilsClient) -> None:
         respx.get(_eutils_url("elink.fcgi")).mock(

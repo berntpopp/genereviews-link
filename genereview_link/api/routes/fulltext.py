@@ -140,8 +140,6 @@ async def get_fulltext(
     ),
 ) -> FullTextData:
     """Fetch live NCBI Bookshelf full text when corpus passages are insufficient."""
-    # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient
-    # until repository is populated.
     try:
         nbk_id = canonicalize_nbk_id(nbk_id)
         # Clean up NBK ID - remove NBK prefix if present and ensure it's valid

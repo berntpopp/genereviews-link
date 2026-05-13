@@ -65,13 +65,14 @@ async def search_genereviews(
             if not fresh:
                 repo = get_optional_repository(request)
                 if repo is not None:
-                    chapter = await repo.get_chapter_by_gene(gene_symbol.upper())
-                    if chapter is not None and chapter.pubmed_id:
+                    chapters = await repo.get_chapters_by_gene(gene_symbol.upper())
+                    ids = [chapter.pubmed_id for chapter in chapters if chapter.pubmed_id]
+                    if ids:
                         out = SearchResult(
-                            count=1,
+                            count=len(ids),
                             retmax=retmax,
                             retstart=0,
-                            ids=[chapter.pubmed_id],
+                            ids=ids[:retmax],
                             webenv="",
                             querykey="",
                         )
@@ -79,11 +80,11 @@ async def search_genereviews(
                             out,
                             corpus_version=active_corpus_version(request),
                         )
-                        perf.add_context(result_count=1, ids_found=1)
+                        perf.add_context(result_count=len(ids), ids_found=len(out.ids))
                         request_logger.info(
                             "Search completed from repository",
-                            result_count=1,
-                            ids_found=1,
+                            result_count=len(ids),
+                            ids_found=len(out.ids),
                         )
                         return out
 
@@ -103,7 +104,7 @@ async def search_genereviews(
             out = SearchResult(**result)
             stamp_response_version(
                 out,
-                corpus_version=live_corpus_version() if fresh else active_corpus_version(request),
+                corpus_version=live_corpus_version() if fresh else None,
             )
             return out
 

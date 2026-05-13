@@ -73,13 +73,21 @@ async def get_genereview(
                 if chapter is not None and chapter.pubmed_id:
                     indexed_chapter = chapter
 
-        result = await service.get_genereview_comprehensive_uncached(
-            gene_symbol,
-            include_abstract=include_abstract,
-            include_links=include_links,
-            include_fulltext=include_fulltext,
-            chapter=indexed_chapter,
-        )
+        if indexed_chapter is not None:
+            result = await service.get_genereview_comprehensive_indexed(
+                gene_symbol,
+                include_abstract=include_abstract,
+                include_links=include_links,
+                include_fulltext=include_fulltext,
+                chapter=indexed_chapter,
+            )
+        else:
+            result = await service.get_genereview_comprehensive_uncached(
+                gene_symbol,
+                include_abstract=include_abstract,
+                include_links=include_links,
+                include_fulltext=include_fulltext,
+            )
         stamp_response_version(
             result,
             corpus_version=(

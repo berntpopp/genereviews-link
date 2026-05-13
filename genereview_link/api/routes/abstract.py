@@ -55,8 +55,6 @@ async def get_abstract(
 
     Pass ``?fresh=true`` to label the response version as live.
     """
-    # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient
-    # until repository is populated.
     try:
         result = await client.fetch_abstract(pubmed_id)
         if not result:

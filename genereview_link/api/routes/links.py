@@ -51,8 +51,6 @@ async def get_links(
 
     Pass ``?fresh=true`` to label the response version as live.
     """
-    # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient
-    # until repository is populated.
     try:
         payload = await client.get_all_links(pubmed_id)
         out = LinkData(**payload)

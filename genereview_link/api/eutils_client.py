@@ -252,7 +252,15 @@ class EutilsClient:
             return None
 
         linksetdbs = linksets[0].get("linksetdbs", [])
-        for db in linksetdbs:
+        preferred_linksets = [
+            db for db in linksetdbs if str(db.get("dbto", "")).lower() in {"pubmed_books", "books"}
+        ]
+        fallback_linksets = [
+            db
+            for db in linksetdbs
+            if db not in preferred_linksets and "book" in str(db.get("dbto", "")).lower()
+        ]
+        for db in [*preferred_linksets, *fallback_linksets]:
             dbto = str(db.get("dbto", "")).lower()
             if "book" not in dbto:
                 continue

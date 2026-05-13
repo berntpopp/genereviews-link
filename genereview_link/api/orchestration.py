@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from fastapi import Request
 
@@ -11,6 +11,7 @@ from genereview_link.models.genereview_models import ResponseMeta
 from genereview_link.retrieval.repository import GeneReviewRepository
 
 
+@runtime_checkable
 class VersionedResponse(Protocol):
     corpus_version: str | None
     meta: ResponseMeta

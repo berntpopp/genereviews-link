@@ -704,7 +704,7 @@ class TestRepository:
 
         conn = MagicMock()
         conn.execute = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value=None)
+        conn.fetch = AsyncMock(return_value=[])
         repo = GeneReviewRepository(_fake_pool(conn))
         assert await repo.get_chapter_by_gene("BRCA1") is None
 
