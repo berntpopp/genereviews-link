@@ -482,6 +482,59 @@ class TestGenereviewRoute:
         assert fake_client.book_url_calls == []
 
     @pytest.mark.asyncio
+    async def test_repo_miss_keeps_live_fallback_version_unstamped(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        class FakeRepo:
+            async def get_chapter_by_gene(self, gene_symbol: str) -> None:
+                assert gene_symbol == "BRCA1"
+                return None
+
+        fake_client._search_result = {"ids": ["20301425"]}
+        fake_client._book_url = "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
+        app.state.repository = FakeRepo()
+        app.state.corpus_version = "2026-05-10-r6"
+
+        real_service = GeneReviewService(client=fake_client)
+
+        async def _get_service() -> Any:
+            yield real_service
+
+        app.dependency_overrides[get_managed_service] = _get_service
+
+        resp = await http_client.get("/genereview/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["gene_symbol"] == "BRCA1"
+        assert body["pubmed_id"] == "20301425"
+        assert body["book_url"] == "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
+        assert body["corpus_version"] is None
+        assert body["_meta"]["corpus_version"] is None
+
+    @pytest.mark.asyncio
+    async def test_absent_repository_keeps_live_fallback_version_unstamped(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._search_result = {"ids": ["20301425"]}
+        fake_client._book_url = "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
+        app.state.corpus_version = "2026-05-10-r6"
+
+        real_service = GeneReviewService(client=fake_client)
+
+        async def _get_service() -> Any:
+            yield real_service
+
+        app.dependency_overrides[get_managed_service] = _get_service
+
+        resp = await http_client.get("/genereview/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["corpus_version"] is None
+        assert body["_meta"]["corpus_version"] is None
+
+    @pytest.mark.asyncio
     async def test_returns_404_when_service_raises(self, fake_client: FakeClient) -> None:
         config = ServerConfig(transport="http", log_level="WARNING", enable_docs=False)
         manager = UnifiedServerManager()

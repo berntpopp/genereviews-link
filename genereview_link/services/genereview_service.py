@@ -19,7 +19,7 @@ from genereview_link.models.genereview_models import (
     GeneReviewSection,
     LinkData,
 )
-from genereview_link.retrieval.repository import GeneReviewRepository
+from genereview_link.retrieval.repository import ChapterRow
 
 logger = get_logger(__name__)
 
@@ -45,7 +45,7 @@ class GeneReviewService:
         # Apply the cache decorator to both implementation methods
         self.get_genereview = alru_cache(maxsize=settings.CACHE_SIZE)(self._get_genereview_impl)
         self.get_genereview_comprehensive = alru_cache(maxsize=settings.CACHE_SIZE)(
-            self._get_genereview_comprehensive_impl
+            self._get_genereview_comprehensive_cached_impl
         )
 
     async def _get_genereview_impl(self, gene_symbol: str) -> GeneReview:
@@ -82,6 +82,20 @@ class GeneReviewService:
             other_sections={k: GeneReviewSection(**v) for k, v in scraped_data.items()},
         )
 
+    async def _get_genereview_comprehensive_cached_impl(
+        self,
+        gene_symbol: str,
+        include_abstract: bool = True,
+        include_links: bool = True,
+        include_fulltext: bool = True,
+    ) -> GeneReview:
+        return await self._get_genereview_comprehensive_impl(
+            gene_symbol,
+            include_abstract=include_abstract,
+            include_links=include_links,
+            include_fulltext=include_fulltext,
+        )
+
     async def _get_genereview_comprehensive_impl(
         self,
         gene_symbol: str,
@@ -89,14 +103,9 @@ class GeneReviewService:
         include_links: bool = True,
         include_fulltext: bool = True,
         *,
-        repository: GeneReviewRepository | None = None,
-        fresh: bool = False,
+        chapter: ChapterRow | None = None,
     ) -> GeneReview:
         """Fetch all available data for a GeneReview."""
-        chapter = None
-        if repository is not None and not fresh:
-            chapter = await repository.get_chapter_by_gene(gene_symbol.upper())
-
         if chapter is not None and chapter.pubmed_id:
             pubmed_id = chapter.pubmed_id
             book_url = f"https://www.ncbi.nlm.nih.gov/books/{chapter.nbk_id}/"
@@ -238,16 +247,14 @@ class GeneReviewService:
         include_links: bool = True,
         include_fulltext: bool = True,
         *,
-        repository: GeneReviewRepository | None = None,
-        fresh: bool = False,
+        chapter: ChapterRow | None = None,
     ) -> GeneReview:
         return await self._get_genereview_comprehensive_impl(
             gene_symbol,
             include_abstract=include_abstract,
             include_links=include_links,
             include_fulltext=include_fulltext,
-            repository=repository,
-            fresh=fresh,
+            chapter=chapter,
         )
 
     async def close(self) -> None:

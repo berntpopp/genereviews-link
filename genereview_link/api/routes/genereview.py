@@ -56,17 +56,30 @@ async def get_genereview(
     Pass ``?fresh=true`` to bypass the index and fetch live from NCBI.
     """
     try:
+        indexed_chapter = None
+        if not fresh:
+            repository = get_optional_repository(request)
+            if repository is not None:
+                chapter = await repository.get_chapter_by_gene(gene_symbol.upper())
+                if chapter is not None and chapter.pubmed_id:
+                    indexed_chapter = chapter
+
         result = await service.get_genereview_comprehensive_uncached(
             gene_symbol,
             include_abstract=include_abstract,
             include_links=include_links,
             include_fulltext=include_fulltext,
-            repository=get_optional_repository(request),
-            fresh=fresh,
+            chapter=indexed_chapter,
         )
         stamp_response_version(
             result,
-            corpus_version=live_corpus_version() if fresh else active_corpus_version(request),
+            corpus_version=(
+                live_corpus_version()
+                if fresh
+                else active_corpus_version(request)
+                if indexed_chapter is not None
+                else None
+            ),
         )
         return result
     except StructuredHTTPException:

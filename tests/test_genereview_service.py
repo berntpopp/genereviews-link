@@ -290,3 +290,10 @@ class TestGetGenereviewComprehensive:
         assert "fetch_abstract" not in called
         assert "get_all_links" not in called
         assert "scrape_genereview_comprehensive" not in called
+
+    @pytest.mark.asyncio
+    async def test_cached_comprehensive_method_rejects_repository_kwarg(self) -> None:
+        service, _ = _make_service()
+
+        with pytest.raises(TypeError, match="repository"):
+            await service.get_genereview_comprehensive("BRCA1", repository=object())
