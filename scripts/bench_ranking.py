@@ -166,15 +166,18 @@ async def main() -> None:
                 print(f"  {q}: expected {gold}, got {got}")  # noqa: T201
             failed = True
 
-    # Spec-level gate: must_change improvements must be > 0 (else the model is disqualified).
+    # Spec-level gate: must_change improvements required ONLY on rrf (the production mode).
+    # lexical and off are diagnostic baselines; they're expected to underperform.
     n_must_change = sum(1 for e in entries if e.get("status") == "must_change")
     for mode in MODES:
-        if n_must_change > 0 and not improvements[mode]:
-            print(  # noqa: T201
-                f"\nFAIL: {mode} fixed 0 of {n_must_change} must_change entries"
-                " (need at least 1)."
-            )
-            failed = True
+        imp_count = len(improvements[mode])
+        print(f"  {mode}: {imp_count} must_change improvements")  # noqa: T201
+    if n_must_change > 0 and not improvements.get("rrf"):
+        print(  # noqa: T201
+            f"\nFAIL: rrf fixed 0 of {n_must_change} must_change entries"
+            " (need at least 1)."
+        )
+        failed = True
 
     if args.json_out:
         args.json_out.write_text(json.dumps(summary, indent=2))
