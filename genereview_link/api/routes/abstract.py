@@ -29,7 +29,13 @@ router = APIRouter(prefix="/abstract", tags=["Abstract"])
 @router.get(
     "/{pubmed_id}",
     response_model=AbstractData,
-    summary="Get abstract and metadata for a PubMed ID",
+    summary="Get normalized abstract and metadata for a PubMed ID",
+    description=(
+        "Value-add wrapper over raw NCBI E-utils abstract retrieval. Returns a "
+        "normalized response with structured errors and corpus-version stamping "
+        "via _meta.corpus_version when corpus context is active. Pass fresh=true "
+        "to return the live version from NCBI."
+    ),
     operation_id="get_abstract",
 )
 async def get_abstract(

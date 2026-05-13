@@ -48,6 +48,7 @@ def test_usage_resource_content_has_expected_sections(monkeypatch: pytest.Monkey
     for heading in (
         "# GeneReview-Link Usage Guide",
         "## Pipeline",
+        "## Orchestration Entry Points",
         "## Filters",
         "## Rerank modes",
         "### Passage roles",
@@ -62,6 +63,27 @@ def test_usage_resource_content_has_expected_sections(monkeypatch: pytest.Monkey
         "## Latency profile",
     ):
         assert heading in USAGE_RESOURCE_MARKDOWN, f"Missing heading: {heading}"
+
+
+def test_usage_resource_documents_orchestration_entry_points_and_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The usage resource must document orchestration fallbacks and error fields."""
+    from genereview_link.api.resources.usage import USAGE_RESOURCE_MARKDOWN
+
+    normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
+    expected_fragments = (
+        "`search_genereviews` and `get_genereview_summary` are convenience tools",
+        "`search_passages(gene=<symbol>, q=<symbol>)`",
+        "`fresh=true` bypasses indexed context and returns `live:<timestamp>`",
+        "structured error fields",
+        "`code`",
+        "`recovery_hint`",
+        "`next_commands`",
+        "`pmid_resolver_failed`",
+    )
+    for fragment in expected_fragments:
+        assert fragment in normalized, f"Missing usage text: {fragment}"
 
 
 def test_usage_resource_documents_search_score_and_diagnostic_semantics(

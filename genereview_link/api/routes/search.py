@@ -27,7 +27,14 @@ logger = get_logger(__name__)
 @router.get(
     "/{gene_symbol}",
     response_model=SearchResult,
-    summary="Search for GeneReviews by gene symbol",
+    summary="Search GeneReviews by gene symbol with corpus-first fallback behavior",
+    description=(
+        "Search GeneReviews by gene symbol using the indexed corpus first when "
+        "available, then fallback to live NCBI E-utils. If resolver links are "
+        "unavailable or no PubMed ID is found, use search_passages(gene=<symbol>) "
+        "for indexed chapter evidence. Pass fresh=true to bypass the corpus and "
+        "query live NCBI."
+    ),
     operation_id="search_genereviews",
 )
 async def search_genereviews(

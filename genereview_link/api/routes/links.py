@@ -25,7 +25,13 @@ router = APIRouter(prefix="/links", tags=["Links"])
 @router.get(
     "/{pubmed_id}",
     response_model=LinkData,
-    summary="Get all available links for a PubMed ID",
+    summary="Get normalized categorized links for a PubMed ID",
+    description=(
+        "Value-add wrapper over raw NCBI E-utils link retrieval. Returns "
+        "categorized/normalized links with structured errors and corpus-version "
+        "stamping via _meta.corpus_version when corpus context is active. Pass "
+        "fresh=true to retrieve live NCBI links."
+    ),
     operation_id="get_links",
 )
 async def get_links(

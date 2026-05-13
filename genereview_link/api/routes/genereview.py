@@ -32,7 +32,16 @@ router = APIRouter(prefix="/genereview", tags=["GeneReviews"])
 @router.get(
     "/{gene_symbol}",
     response_model=GeneReview,
-    summary="Get comprehensive GeneReview data",
+    summary="Resolve a gene into a convenience GeneReview summary",
+    description=(
+        "Convenience orchestration tool that resolves gene -> PubMed -> NBK, "
+        "uses local corpus NBK resolution when available, and falls back through "
+        "live NCBI services. If resolution fails, use search_passages(gene=<symbol>) "
+        "to retrieve indexed chapter evidence directly. Pass fresh=true to bypass "
+        "indexed context and fetch live data. Corpus-backed responses carry "
+        "_meta.corpus_version; live or unresolved responses may use live version "
+        "stamping or omit corpus_version when no corpus chapter resolved."
+    ),
     operation_id="get_genereview_summary",
 )
 async def get_genereview(

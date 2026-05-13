@@ -107,9 +107,11 @@ def _filter_sections(
     response_model=FullTextData,
     summary="Fetch live NCBI Bookshelf full text when corpus passages are insufficient",
     description=(
-        "Fetch live NCBI Bookshelf full text when corpus passages are insufficient. "
+        "Perform a live Bookshelf scrape when corpus passages are insufficient. "
         "Use sections='management,diagnosis' to narrow the scrape; prefer corpus "
-        "tools for indexed passage retrieval and citations."
+        "passage tools for indexed retrieval and citations. Returns structured "
+        "errors/version stamping, with _meta.corpus_version for corpus context or "
+        "live version stamping when fresh=true."
     ),
     operation_id="get_fulltext",
 )
