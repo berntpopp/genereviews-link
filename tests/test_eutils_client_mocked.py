@@ -89,6 +89,33 @@ class TestSearchGenereviews:
 
 class TestGetBookUrlFromPmid:
     @pytest.mark.asyncio
+    async def test_get_book_url_from_pmid_accepts_pubmed_books_linkset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = EutilsClient()
+
+        async def fake_request(endpoint: str, params: dict[str, object]) -> dict[str, object]:
+            assert endpoint == "elink.fcgi"
+            assert params["dbfrom"] == "pubmed"
+            assert params["id"] == "20301425"
+            assert params["retmode"] == "json"
+            assert "cmd" not in params
+            return {
+                "linksets": [
+                    {
+                        "linksetdbs": [
+                            {"dbto": "pubmed_books", "links": ["1247"]},
+                        ]
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(client, "_make_request", fake_request)
+        assert await client.get_book_url_from_pmid("20301425") == (
+            "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
+        )
+
+    @pytest.mark.asyncio
     @respx.mock
     async def test_returns_book_url_when_present(self, client: EutilsClient) -> None:
         respx.get(_eutils_url("elink.fcgi")).mock(

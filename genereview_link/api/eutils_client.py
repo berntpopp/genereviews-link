@@ -244,7 +244,6 @@ class EutilsClient:
         params = {
             "dbfrom": "pubmed",
             "id": pubmed_id,
-            "cmd": "prlinks",
             "retmode": "json",
         }
         data = await self._make_request("elink.fcgi", params)
@@ -254,9 +253,16 @@ class EutilsClient:
 
         linksetdbs = linksets[0].get("linksetdbs", [])
         for db in linksetdbs:
-            if db.get("dbto") == "books":
-                links = db.get("links", [])
-                return f"https://www.ncbi.nlm.nih.gov/books/NBK{links[0]}/" if links else None
+            dbto = str(db.get("dbto", "")).lower()
+            if "book" not in dbto:
+                continue
+            links = db.get("links", [])
+            if not links:
+                continue
+            book_id = str(links[0])
+            if book_id.upper().startswith("NBK"):
+                return f"https://www.ncbi.nlm.nih.gov/books/{book_id.upper()}/"
+            return f"https://www.ncbi.nlm.nih.gov/books/NBK{book_id}/"
         return None
 
     async def scrape_genereview_book(self, book_url: str) -> dict[str, Any]:
