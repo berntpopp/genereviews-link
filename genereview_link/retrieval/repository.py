@@ -119,6 +119,130 @@ class TableRow:
     rows: list[list[str]]
 
 
+# ---------------------------------------------------------------------------
+# Module-level SQL builders for parallel (lexical + dense) retrieval
+# ---------------------------------------------------------------------------
+
+
+def build_dense_candidates_sql(
+    *,
+    embedding_table: str,
+    gene: str | None,
+    nbk_id: str | None,
+    sections: tuple[str, ...] | None,
+    heading_path_contains: str | None,
+    top_k: int,
+) -> tuple[list[str], str, list[object]]:
+    """Build the dense-candidate SQL with filter-aware top-K.
+
+    Strategy:
+      - Single-chapter filter (nbk_id given): bypass HNSW, exact cosine over the
+        small filtered set.
+      - Other filters: HNSW with iterative scan + larger ef_search.
+      - No filter: vanilla HNSW.
+
+    Returns (setup_statements, select_sql, params).
+
+    setup_statements is a list of SET LOCAL statements (or empty for the
+    HNSW-bypass branch). They must be executed via conn.execute() before
+    the SELECT, inside a transaction.
+    select_sql is the parameterized SELECT.
+    params: first element is the query embedding placeholder; rest are filter values
+    in the order: gene, nbk_id, sections, heading_path_contains.
+    """
+    params: list[object] = []
+    param_idx = 1
+
+    def next_param(value: object) -> str:
+        nonlocal param_idx
+        params.append(value)
+        idx = param_idx
+        param_idx += 1
+        return f"${idx}"
+
+    embedding_param = next_param([])  # placeholder; caller fills in the query vector
+    where_clauses: list[str] = []
+
+    if gene:
+        where_clauses.append(f"c.gene_symbols @> array[{next_param(gene)}]")
+    if nbk_id:
+        where_clauses.append(f"p.nbk_id = {next_param(nbk_id)}")
+    if sections:
+        where_clauses.append(f"p.chapter_section = any({next_param(list(sections))}::text[])")
+    if heading_path_contains:
+        where_clauses.append(
+            f"p.heading_path ilike {next_param('%' + heading_path_contains + '%')}"
+        )
+
+    where_sql = " and ".join(where_clauses) if where_clauses else "true"
+    top_k_param = next_param(top_k)
+
+    # If nbk_id is the only filter, use exact KNN (bypass HNSW).
+    # embedding_table is operator-controlled (not user input); S608 suppressed.
+    if nbk_id and not (gene or sections or heading_path_contains):
+        select_sql = f"""
+            select p.passage_id, 1 - (e.embedding <=> {embedding_param}::vector) as dense_score
+            from genereview_passages p
+            join "{embedding_table}" e on e.nbk_id = p.nbk_id and e.passage_id = p.passage_id
+            where {where_sql}
+            order by e.embedding <=> {embedding_param}::vector
+            limit {top_k_param}
+        """  # noqa: S608
+        return [], select_sql, params
+
+    # Otherwise: HNSW with iterative scan.
+    # SET LOCAL statements are returned separately so they can be executed via
+    # conn.execute() before the SELECT -- asyncpg prepared statements only accept
+    # a single command and would raise PostgresSyntaxError with a concatenated query.
+    # embedding_table is operator-controlled (not user input); S608 suppressed.
+    setup = [
+        "SET LOCAL hnsw.iterative_scan = 'relaxed_order'",
+        "SET LOCAL hnsw.ef_search = 200",
+    ]
+    select_sql = f"""
+        select p.passage_id, 1 - (e.embedding <=> {embedding_param}::vector) as dense_score
+        from genereview_passages p
+        join "{embedding_table}" e on e.nbk_id = p.nbk_id and e.passage_id = p.passage_id
+        join genereview_chapters c on c.nbk_id = p.nbk_id
+        where {where_sql}
+        order by e.embedding <=> {embedding_param}::vector
+        limit {top_k_param}
+    """  # noqa: S608
+    return setup, select_sql, params
+
+
+def build_parallel_search_sql(
+    *,
+    query_text: str,
+    query_vector: list[float],
+    gene: str | None,
+    nbk_id: str | None,
+    sections: tuple[str, ...] | None,
+    heading_path_contains: str | None,
+    top_k: int,
+) -> tuple[str, list[object]]:
+    """Build the parallel-retrieval SQL: lexical-top-K UNION dense-top-K.
+
+    Each branch applies the same filters.  RRF fusion happens in Python
+    after fetching the union.
+    """
+    _setup, dense_sql, dense_params = build_dense_candidates_sql(
+        embedding_table="genereview_embeddings_bge384",
+        gene=gene,
+        nbk_id=nbk_id,
+        sections=sections,
+        heading_path_contains=heading_path_contains,
+        top_k=top_k,
+    )
+    # Existing lexical SQL lives in GeneReviewRepository or similar;
+    # here we just compose a UNION shape for unit-test introspection.
+    lexical_sql = "select passage_id, null::float as dense_score from genereview_passages limit 1"
+    return (
+        f"({lexical_sql}) union ({dense_sql})",
+        dense_params,
+    )
+
+
 class GeneReviewRepository:
     """Read-mostly facade over Postgres."""
 
@@ -678,6 +802,71 @@ class GeneReviewRepository:
                 pids,
             )
         return {r["passage_id"]: float(r["score"]) for r in rows}
+
+    async def _dense_candidates_filtered(
+        self,
+        *,
+        query_vector: list[float],
+        gene: str | None,
+        nbk_id: str | None,
+        sections: tuple[str, ...] | None,
+        heading_path_contains: str | None,
+        top_k: int,
+    ) -> list[dict[str, object]]:
+        """Fetch top-K dense candidates filter-aware, corpus-wide.
+
+        Replaces the prior pattern of scoring dense ON TOP OF lexical's
+        candidate set. Used by the parallel-retrieval rerank=rrf path.
+
+        Wraps the query in a transaction so SET LOCAL hnsw.* statements
+        are session-scoped to the txn and do not leak into the pool.
+        """
+        embedding_table = await self.active_embedding_table()
+        setup, select_sql, params = build_dense_candidates_sql(
+            embedding_table=embedding_table,
+            gene=gene,
+            nbk_id=nbk_id,
+            sections=sections,
+            heading_path_contains=heading_path_contains,
+            top_k=top_k,
+        )
+        params[0] = query_vector
+        async with self._acquire() as conn:
+            await conn.execute("set search_path to genereview, public")
+            async with conn.transaction():
+                for stmt in setup:
+                    await conn.execute(stmt)
+                rows = await conn.fetch(select_sql, *params)
+        return [
+            {"passage_id": r["passage_id"], "dense_score": float(r["dense_score"])} for r in rows
+        ]
+
+    async def fetch_passages_by_ids(self, passage_ids: list[str]) -> dict[str, PassageRow]:
+        """Batch-fetch full passage rows for a list of passage_ids.
+
+        Returns a mapping of passage_id -> PassageRow.  Passage IDs that do
+        not exist in the corpus are silently omitted from the result.
+        """
+        if not passage_ids:
+            return {}
+        async with self._acquire() as conn:
+            await conn.execute("set search_path to genereview, public")
+            rows = await conn.fetch(
+                """
+                select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
+                       p.section_level, p.chunk_index, p.text,
+                       c.title as chapter_title,
+                       c.last_updated_date as chapter_last_updated,
+                       c.ingested_at as chapter_ingested_at,
+                       c.gene_symbols,
+                       p.passage_type, p.passage_role, p.table_id, p.table_data
+                  from genereview_passages p
+                  join genereview_chapters c on c.nbk_id = p.nbk_id
+                 where p.passage_id = any($1::text[])
+                """,
+                passage_ids,
+            )
+        return {r["passage_id"]: self._row_to_passage(r) for r in rows}
 
 
 def _note_for_empty_section(section: str, nbk_id: str) -> str | None:

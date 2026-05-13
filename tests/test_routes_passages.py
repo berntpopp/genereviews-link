@@ -66,6 +66,9 @@ def fake_repo() -> GeneReviewRepository:
     repo.search_passages.return_value = [_make_lexical_row()]
     repo.active_embedding_table.return_value = "genereview_embeddings_bge384"
     repo.dense_scores_for_passages.return_value = {"p1": 0.85}
+    # Parallel-retrieval path: dense branch returns the same candidate so RRF fires.
+    repo._dense_candidates_filtered.return_value = [{"passage_id": "p1", "dense_score": 0.85}]
+    repo.fetch_passages_by_ids.return_value = {}
     return repo
 
 
@@ -274,6 +277,8 @@ def _make_brief_repo(rows: int = 7) -> Any:
     )
     repo.active_embedding_table = AsyncMock(return_value="t")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
+    repo._dense_candidates_filtered = AsyncMock(return_value=[])
+    repo.fetch_passages_by_ids = AsyncMock(return_value={})
     return repo
 
 
@@ -508,6 +513,8 @@ async def test_search_propagates_passage_role_and_score_adjustment_fields() -> N
     )
     repo.active_embedding_table = AsyncMock(return_value="t")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
+    repo._dense_candidates_filtered = AsyncMock(return_value=[])
+    repo.fetch_passages_by_ids = AsyncMock(return_value={})
     app = _make_brief_app(repo)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
@@ -557,6 +564,8 @@ async def test_search_normalizes_unknown_passage_role_to_none() -> None:
     )
     repo.active_embedding_table = AsyncMock(return_value="t")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
+    repo._dense_candidates_filtered = AsyncMock(return_value=[])
+    repo.fetch_passages_by_ids = AsyncMock(return_value={})
     app = _make_brief_app(repo)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
@@ -601,6 +610,8 @@ def _make_empty_repo() -> Any:
     repo.search_passages = AsyncMock(return_value=[])
     repo.active_embedding_table = AsyncMock(return_value="t")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
+    repo._dense_candidates_filtered = AsyncMock(return_value=[])
+    repo.fetch_passages_by_ids = AsyncMock(return_value={})
     return repo
 
 
@@ -735,6 +746,8 @@ async def test_search_empty_filtered_results_probe_unfiltered_once() -> None:
     repo.search_passages = AsyncMock(side_effect=[[], [_brief_row("NBK1:0001", "**hit**")]])
     repo.active_embedding_table = AsyncMock(return_value="t")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
+    repo._dense_candidates_filtered = AsyncMock(return_value=[])
+    repo.fetch_passages_by_ids = AsyncMock(return_value={})
     app = _make_brief_app(repo)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
@@ -865,6 +878,8 @@ async def test_search_exposes_passage_type_table() -> None:
     repo.search_passages = AsyncMock(return_value=[_make_table_row()])
     repo.active_embedding_table = AsyncMock(return_value="t")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
+    repo._dense_candidates_filtered = AsyncMock(return_value=[])
+    repo.fetch_passages_by_ids = AsyncMock(return_value={})
 
     app = _make_brief_app(repo)
 
@@ -1029,6 +1044,8 @@ def _make_ids_only_repo(passage_ids: list[str], sections: list[str] | None = Non
     repo.search_passages = AsyncMock(return_value=rows)
     repo.active_embedding_table = AsyncMock(return_value="t")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
+    repo._dense_candidates_filtered = AsyncMock(return_value=[])
+    repo.fetch_passages_by_ids = AsyncMock(return_value={})
     return repo
 
 
@@ -1232,6 +1249,8 @@ def _build_app_with_fake_repo(rows: list[LexicalPassageRow]) -> FastAPI:
     repo.search_passages = _make_search_passages(rows)
     repo.active_embedding_table = AsyncMock(return_value="t")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
+    repo._dense_candidates_filtered = AsyncMock(return_value=[])
+    repo.fetch_passages_by_ids = AsyncMock(return_value={})
 
     app = FastAPI()
     app.include_router(passages_routes.router)

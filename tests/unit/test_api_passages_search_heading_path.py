@@ -64,6 +64,8 @@ def _app() -> FastAPI:
     repo.search_passages = AsyncMock(side_effect=search_passages)
     repo.active_embedding_table = AsyncMock(return_value="genereview_embeddings_bge384")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
+    repo._dense_candidates_filtered = AsyncMock(return_value=[])
+    repo.fetch_passages_by_ids = AsyncMock(return_value={})
 
     app = FastAPI()
     app.include_router(passages_routes.router)

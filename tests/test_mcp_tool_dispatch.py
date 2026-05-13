@@ -43,6 +43,8 @@ def _build_app_with_state() -> FastAPI:
     fake_repo.search_passages = AsyncMock(return_value=[])
     fake_repo.active_embedding_table = AsyncMock(return_value="genereview_embeddings_bge384")
     fake_repo.dense_scores_for_passages = AsyncMock(return_value={})
+    fake_repo._dense_candidates_filtered = AsyncMock(return_value=[])
+    fake_repo.fetch_passages_by_ids = AsyncMock(return_value={})
     from genereview_link.retrieval.repository import PassageRow
 
     fake_repo.get_section = AsyncMock(

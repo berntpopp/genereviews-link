@@ -44,6 +44,10 @@ async def _build_mcp() -> tuple[Any, MagicMock]:
     repo.search_passages = AsyncMock(return_value=[_row()])
     repo.active_embedding_table = AsyncMock(return_value="genereview_embeddings_bge384")
     repo.dense_scores_for_passages = AsyncMock(return_value={"NBK1:0001": 0.9})
+    repo._dense_candidates_filtered = AsyncMock(
+        return_value=[{"passage_id": "NBK1:0001", "dense_score": 0.9}]
+    )
+    repo.fetch_passages_by_ids = AsyncMock(return_value={})
 
     app = FastAPI()
     app.include_router(passages_routes.router)
