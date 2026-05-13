@@ -100,6 +100,34 @@ async def http_client(app: FastAPI):
 
 class TestSearchRoute:
     @pytest.mark.asyncio
+    async def test_uses_repository_first(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        class FakeChapter:
+            nbk_id = "NBK1247"
+            short_name = "brca1"
+            title = "BRCA1- and BRCA2-Associated HBOC"
+            pubmed_id = "20301425"
+            gene_symbols = ("BRCA1", "BRCA2")
+
+        class FakeRepo:
+            async def get_chapter_by_gene(self, gene_symbol: str) -> FakeChapter:
+                assert gene_symbol == "BRCA1"
+                return FakeChapter()
+
+        fake_client._search_result = RuntimeError("live client should not be called")
+        app.state.repository = FakeRepo()
+        app.state.corpus_version = "2026-05-10-r6"
+
+        resp = await http_client.get("/search/BRCA1")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ids"] == ["20301425"]
+        assert body["corpus_version"] == "2026-05-10-r6"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
+
+    @pytest.mark.asyncio
     async def test_returns_search_result(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:

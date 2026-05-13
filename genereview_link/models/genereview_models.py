@@ -38,6 +38,10 @@ class SearchResult(BaseModel):
     webenv: str = Field(description="Web environment string for history server.")
     querykey: str = Field(description="Query key for history server.")
     corpus_version: str | None = None
+    meta: ResponseMeta = Field(
+        alias="_meta", default_factory=lambda: ResponseMeta.live_passthrough()
+    )
+    model_config = {"populate_by_name": True}
 
 
 class AbstractData(BaseModel):

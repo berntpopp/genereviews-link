@@ -3,13 +3,20 @@
 Provides REST API endpoint for searching NCBI database.
 """
 
-from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from genereview_link.api.client_manager import get_managed_client
+from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.eutils_client import EutilsClient
+from genereview_link.api.orchestration import (
+    active_corpus_version,
+    get_optional_repository,
+    live_corpus_version,
+    stamp_response_version,
+)
+from genereview_link.api.orchestration_errors import internal_orchestration_error
 from genereview_link.logging_config import PerformanceLogger, get_logger
 from genereview_link.models.genereview_models import SearchResult
 
@@ -37,8 +44,6 @@ async def search_genereviews(
 
     Pass ``?fresh=true`` to bypass the index and fetch live from NCBI.
     """
-    # TODO: repository-first path (Phase 5.3+); for now passes through to EutilsClient
-    # until repository is populated.
     # Create request-scoped logger. correlation_id is injected automatically by
     # the structlog processor wired in logging_config.py (Task B3).
     request_logger = logger.bind(
@@ -50,6 +55,31 @@ async def search_genereviews(
 
     with PerformanceLogger(request_logger, "genereview_search") as perf:
         try:
+            if not fresh:
+                repo = get_optional_repository(request)
+                if repo is not None:
+                    chapter = await repo.get_chapter_by_gene(gene_symbol.upper())
+                    if chapter is not None and chapter.pubmed_id:
+                        out = SearchResult(
+                            count=1,
+                            retmax=retmax,
+                            retstart=0,
+                            ids=[chapter.pubmed_id],
+                            webenv="",
+                            querykey="",
+                        )
+                        stamp_response_version(
+                            out,
+                            corpus_version=active_corpus_version(request),
+                        )
+                        perf.add_context(result_count=1, ids_found=1)
+                        request_logger.info(
+                            "Search completed from repository",
+                            result_count=1,
+                            ids_found=1,
+                        )
+                        return out
+
             result = await client.search_genereviews(gene_symbol, retmax=retmax)
 
             # Log search results
@@ -64,10 +94,14 @@ async def search_genereviews(
             )
 
             out = SearchResult(**result)
-            if fresh:
-                out.corpus_version = f"live:{datetime.now(UTC).isoformat()}"
+            stamp_response_version(
+                out,
+                corpus_version=live_corpus_version() if fresh else active_corpus_version(request),
+            )
             return out
 
+        except StructuredHTTPException:
+            raise
         except Exception as e:
             request_logger.error(
                 "Search failed",
@@ -75,7 +109,4 @@ async def search_genereviews(
                 error_message=str(e),
                 exc_info=True,
             )
-            raise HTTPException(
-                status_code=500,
-                detail="An error occurred while searching for GeneReviews.",
-            ) from e
+            raise internal_orchestration_error("search GeneReviews") from e
