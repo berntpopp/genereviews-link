@@ -31,7 +31,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:ci@localhost:5432/genereview
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@v7
       - run: uv sync --frozen
       - name: Download bundle and checksum
         run: |
