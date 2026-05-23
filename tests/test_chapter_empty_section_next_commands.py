@@ -61,5 +61,44 @@ async def test_empty_summary_section_omits_next_commands_when_pubmed_id_missing(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["passage_count"] == 0
-    # next_commands must be absent or None (not an empty list, not a command with None argument)
-    assert body.get("next_commands") in (None, [])
+    # Field MUST be absent from the JSON, not present as null.
+    assert "next_commands" not in body, (
+        f"next_commands must not leak as null when no pubmed_id is available; got {body!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_empty_section_response_omits_next_commands_field() -> None:
+    """Regression: success-path section responses must not leak `next_commands: null`.
+
+    `next_commands` is a hint field intended for the empty-unscraped-section
+    branch only. A passive `null` value in every non-empty response is a
+    silent API broadening that clients which check key presence (rather than
+    truthiness) would falsely treat as an actionable hint.
+    """
+    from genereview_link.retrieval.repository import PassageRow
+
+    pr = PassageRow(
+        nbk_id="NBK1247",
+        passage_id="NBK1247:0001",
+        chapter_section="diagnosis",
+        heading_path="Diagnosis",
+        section_level=1,
+        chunk_index=0,
+        text="Diagnostic text.",
+        chapter_title="Test Chapter",
+        chapter_last_updated=date(2025, 12, 1),
+    )
+    app = FastAPI()
+    app.include_router(chapters_routes.router)
+    repo = MagicMock()
+    repo.get_section = AsyncMock(return_value=[pr])
+    repo.get_chapter_by_nbk = AsyncMock(return_value=_make_chapter(pubmed_id="20301425"))
+    app.state.repository = repo
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/sections/diagnosis")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Field MUST be absent from successful non-empty responses, not present as null.
+    assert "next_commands" not in body, f"next_commands leaked into success-path response: {body!r}"

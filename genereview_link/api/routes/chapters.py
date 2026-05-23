@@ -27,6 +27,25 @@ from genereview_link.retrieval.repository import GeneReviewRepository, _note_for
 router = APIRouter(tags=["Chapters"])
 
 
+def _serialize_section_response(
+    response: ChapterSectionResponse, *, drop_concatenated: bool
+) -> JSONResponse:
+    """Serialize a ChapterSectionResponse with default-None fields excluded.
+
+    Drops `concatenated_text` + `concatenated_char_count` when the caller did
+    not opt in via include=concatenated_text. Drops `next_commands` when it is
+    None so the field is emitted ONLY on the empty-unscraped-section path
+    where the route actually provides a get_abstract hint, rather than leaking
+    `"next_commands": null` into every successful section response.
+    """
+    exclude: set[str] = set()
+    if drop_concatenated:
+        exclude.update({"concatenated_text", "concatenated_char_count"})
+    if response.next_commands is None:
+        exclude.add("next_commands")
+    return JSONResponse(response.model_dump(exclude=exclude, mode="json", by_alias=True))
+
+
 def _strip_overlap(parts: list[str], min_overlap: int = 30) -> str:
     """Join text chunks while removing the longest common suffix/prefix overlap.
 
@@ -118,7 +137,7 @@ async def get_chapter_section(
     ] = None,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
-) -> ChapterSectionResponse | JSONResponse:
+) -> JSONResponse:
     """Return all passages for a specific section of a GeneReview chapter.
 
     By default returns individual passages only. Pass include=concatenated_text
@@ -141,7 +160,7 @@ async def get_chapter_section(
                 ],
             )
         if section in SYSTEMATICALLY_UNSCRAPED_SECTIONS:
-            return ChapterSectionResponse(  # type: ignore[call-arg]
+            empty_response = ChapterSectionResponse(  # type: ignore[call-arg]
                 nbk_id=nbk_id,
                 chapter_title=chapter.title,
                 chapter_section=section,
@@ -156,6 +175,7 @@ async def get_chapter_section(
                 ),
                 meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
             )
+            return _serialize_section_response(empty_response, drop_concatenated=True)
         raise StructuredHTTPException(
             status_code=404,
             code="section_empty_for_chapter",
@@ -201,15 +221,9 @@ async def get_chapter_section(
         concatenated_char_count=(len(concatenated) if concatenated is not None else None),
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )
-    if "concatenated_text" not in include_set:
-        return JSONResponse(
-            response.model_dump(
-                exclude={"concatenated_text", "concatenated_char_count"},
-                mode="json",
-                by_alias=True,
-            )
-        )
-    return response
+    return _serialize_section_response(
+        response, drop_concatenated="concatenated_text" not in include_set
+    )
 
 
 @router.get(
