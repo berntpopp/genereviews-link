@@ -7,6 +7,7 @@ section extraction.
 
 import asyncio
 import re
+import unicodedata
 import warnings
 import xml.etree.ElementTree as _StdET  # type-only import; parsing uses defusedxml
 from typing import Any
@@ -1288,6 +1289,13 @@ class EutilsClient:
         content = re.sub(r"<[^>]+>", "", content)
         # Remove HTML entities
         content = re.sub(r"&[a-zA-Z0-9#]+;", "", content)
+        # NFKC normalization converts compatibility characters (e.g. U+00A0, U+2009,
+        # U+202F) to their ASCII equivalents where possible.
+        content = unicodedata.normalize("NFKC", content)
+        # Explicit belt-and-suspenders replacement for common Unicode spaces that
+        # NFKC may not fully collapse: NBSP (U+00A0), thin space (U+2009), narrow
+        # no-break space (U+202F) -> ASCII space.
+        content = content.replace("\u00a0", " ").replace("\u2009", " ").replace("\u202f", " ")
         # Normalize whitespace
         content = re.sub(r"\s+", " ", content)
         # Remove extra line breaks
