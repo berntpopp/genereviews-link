@@ -309,6 +309,8 @@ class ResponseMeta(BaseModel):
     license_summary: str = "Research use only; cite per genereview://license"
     dense_model_id: str | None = None
     embedding_dim: int | None = None
+    truncated: bool = False
+    next_commands: list[dict[str, Any]] | None = None
 
     @classmethod
     def live_passthrough(cls) -> ResponseMeta:

@@ -153,7 +153,9 @@ class TestAPIEndpoints:
         """Test the comprehensive GeneReview endpoint."""
         gene_symbol = "BRCA1"
 
-        response = await client.get(f"/genereview/{gene_symbol}")
+        # Opt into fulltext explicitly: as of #37, include_fulltext defaults to False.
+        # Disable the max_chars cap so the integration assertion sees the full payload.
+        response = await client.get(f"/genereview/{gene_symbol}?include_fulltext=true&max_chars=0")
         assert response.status_code == 200
 
         data = response.json()
