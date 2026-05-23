@@ -135,3 +135,25 @@ def test_get_chapter_section_description_lists_section_values_inline() -> None:
 
     for section in SECTION_NAMES:
         assert f'"{section}"' in desc
+
+
+def test_get_chapter_metadata_summary_mentions_search_passages() -> None:
+    summary = str(_operation(_app(), "/chapters/{nbk_id}/metadata", "get")["summary"])
+    assert "search_passages(q, nbk_id=" in summary
+
+
+def test_get_chapter_section_description_mentions_in_section_search() -> None:
+    desc = str(_operation(_app(), "/chapters/{nbk_id}/sections/{section}", "get")["description"])
+    assert "search_passages(q, nbk_id=" in desc
+
+
+def test_get_abstract_description_names_value_add() -> None:
+    desc = str(_operation(_app(), "/abstract/{pubmed_id}", "get")["description"])
+    assert "normalized response shape" in desc
+    assert "structured error envelopes" in desc
+
+
+def test_get_links_description_names_value_add() -> None:
+    desc = str(_operation(_app(), "/links/{pubmed_id}", "get")["description"])
+    assert "normalized" in desc.lower()
+    assert "structured error envelopes" in desc

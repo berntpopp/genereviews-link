@@ -244,6 +244,16 @@ def test_usage_resource_returns_markdown(monkeypatch: pytest.MonkeyPatch) -> Non
     assert raw == USAGE_RESOURCE_MARKDOWN
 
 
+def test_usage_resource_pipeline_includes_in_chapter_search_escalation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Pipeline section must surface in-chapter content search."""
+    from genereview_link.api.resources.usage import USAGE_RESOURCE_MARKDOWN
+
+    normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
+    assert "search_passages(q, nbk_id=" in normalized
+
+
 def test_server_instructions_manifests_both_resources(monkeypatch: pytest.MonkeyPatch) -> None:
     """instructions= must reference both resource URIs and fit within the 1000-char budget."""
     mcp = _build_mcp(monkeypatch)

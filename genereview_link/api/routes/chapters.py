@@ -60,9 +60,10 @@ def _strip_overlap(parts: list[str], min_overlap: int = 30) -> str:
     operation_id="get_chapter_section",
     summary="Fetch all passages for a section of a GeneReview chapter",
     description=(
-        "Fetch all passages for a section. Use include=concatenated_text for joined "
-        "text with overlap stripped by default; pass dedupe=false only for literal "
-        "chunk text."
+        "Fetch all passages for a section. For keyword search within this section, "
+        "use search_passages(q, nbk_id=..., sections=[...]); for joined section "
+        "text use include=concatenated_text with overlap stripped by default. "
+        "Pass dedupe=false only for literal chunk text."
     ),
 )
 async def get_chapter_section(
@@ -216,7 +217,11 @@ async def get_chapter_section(
     response_model=ChapterMetadataResponse,
     response_model_by_alias=True,
     operation_id="get_chapter_metadata",
-    summary="The chapter outline tool: title, dates, gene symbols, section counts, and tables",
+    summary=(
+        "The chapter outline tool: title, dates, gene symbols, section counts, "
+        "and tables. Use search_passages(q, nbk_id=...) for keyword search "
+        "within this chapter."
+    ),
 )
 async def get_chapter_metadata(
     nbk_id: Annotated[
