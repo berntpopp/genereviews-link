@@ -7,6 +7,7 @@ section extraction.
 
 import asyncio
 import re
+import unicodedata
 import warnings
 import xml.etree.ElementTree as _StdET  # type-only import; parsing uses defusedxml
 from typing import Any
@@ -763,7 +764,7 @@ class EutilsClient:
 
     def _extract_metadata(self, soup: BeautifulSoup, content_div: Tag) -> dict[str, Any]:
         """Extract comprehensive metadata from the document."""
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         # Extract authors
         authors = self._extract_authors(content_div)
@@ -788,7 +789,7 @@ class EutilsClient:
         # Extract and parse references
         references = self._extract_references(content_div)
         if references:
-            metadata["references"] = "\n".join(references)
+            metadata["references"] = references
 
         return metadata
 
@@ -1288,6 +1289,19 @@ class EutilsClient:
         content = re.sub(r"<[^>]+>", "", content)
         # Remove HTML entities
         content = re.sub(r"&[a-zA-Z0-9#]+;", "", content)
+        # NFC normalizes combining-mark sequences (canonical composition) without
+        # folding compatibility characters \u2014 so superscripts, subscripts, the micro
+        # sign, ligatures, and fullwidth forms (e.g. m^2, ug/dL, fi, full-width
+        # punctuation) are preserved verbatim. NFKC would fold those to ASCII,
+        # corrupting clinical/scientific notation in scraped chapters and
+        # reintroducing tag-like '<'/'>'/'&' from full-width forms after the
+        # HTML-strip pass above.
+        content = unicodedata.normalize("NFC", content)
+        # Explicit replacement for Unicode space variants that are not collapsed
+        # by NFC: NBSP (U+00A0), thin space (U+2009), narrow no-break space
+        # (U+202F) -> ASCII space. This is the actual #39 fix; the \s+ collapse
+        # below also catches them, but the explicit pass makes intent clear.
+        content = content.replace("\u00a0", " ").replace("\u2009", " ").replace("\u202f", " ")
         # Normalize whitespace
         content = re.sub(r"\s+", " ", content)
         # Remove extra line breaks

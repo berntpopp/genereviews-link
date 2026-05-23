@@ -244,6 +244,29 @@ def test_usage_resource_returns_markdown(monkeypatch: pytest.MonkeyPatch) -> Non
     assert raw == USAGE_RESOURCE_MARKDOWN
 
 
+def test_usage_resource_pipeline_includes_in_chapter_search_escalation() -> None:
+    """The Pipeline section must surface in-chapter content search."""
+    from genereview_link.api.resources.usage import USAGE_RESOURCE_MARKDOWN
+
+    normalized = " ".join(USAGE_RESOURCE_MARKDOWN.split())
+    assert "search_passages(q, nbk_id=" in normalized
+
+
+def test_server_instructions_pipeline_includes_in_chapter_search_escalation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """instructions= canonical pipeline must mirror genereview://usage.
+
+    The MCP server reads `instructions=` at session start; clients that never
+    fetch the usage resource still see it. If the canonical pipeline omits the
+    in-chapter `search_passages(q, nbk_id=...)` step that the usage resource
+    advertises, the two contracts drift.
+    """
+    mcp = _build_mcp(monkeypatch)
+    instr = mcp.instructions or ""
+    assert "search_passages(q, nbk_id=" in instr
+
+
 def test_server_instructions_manifests_both_resources(monkeypatch: pytest.MonkeyPatch) -> None:
     """instructions= must reference both resource URIs and fit within the 1000-char budget."""
     mcp = _build_mcp(monkeypatch)

@@ -42,6 +42,16 @@ and the external NPM network. The private network is required for the app to
 resolve the `postgres` service hostname; the external network lets NPM proxy to
 port 8000.
 
+### Embedding backfill
+
+Run as a one-off, healthcheck-disabled compose service. The service shares the
+same image artifact as `genereview-link` (reuses the same build cache) and
+skips the API health probe because the embed CLI does not bind port 8000:
+
+```bash
+docker compose --profile embed up genereview-link-embed
+```
+
 ## Environment variables
 
 See `.env.example` for local development and `.env.docker.example` for

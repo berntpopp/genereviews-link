@@ -71,8 +71,8 @@ The REST API provides:
 
 ### Core Endpoints
 
-- **`GET /genereview/{gene_symbol}`** - Complete workflow with all data (comprehensive)
-  - Query params: `include_abstract`, `include_links`, `include_fulltext`
+- **`GET /genereview/{gene_symbol}`** - Convenience orchestration (lean by default; opt in to fulltext)
+  - Query params: `include_abstract`, `include_links`, `include_fulltext` (default `false`), `max_chars` (default `16000`, `0` disables the cap), `fresh`
 - **`GET /search/{gene_symbol}`** - Search for GeneReviews by gene symbol
   - Query params: `retmax` (max results, default 20)
 - **`GET /abstract/{pubmed_id}`** - Get abstract and metadata for PubMed articles
@@ -84,11 +84,14 @@ The REST API provides:
 ### Example Usage
 
 ```bash
-# Get comprehensive data for BRCA1 gene (all sections)
+# Lean BRCA1 envelope: abstract + links only (no scraped fulltext by default)
 curl "http://localhost:8000/genereview/BRCA1"
 
-# Get BRCA1 data with specific components
-curl "http://localhost:8000/genereview/BRCA1?include_abstract=true&include_links=false&include_fulltext=true"
+# Opt into fulltext; the default 16000-char cap truncates large chapters and
+# stamps _meta.truncated + next_commands -> get_chapter_section. Pass
+# max_chars=0 to disable the cap.
+curl "http://localhost:8000/genereview/BRCA1?include_fulltext=true"
+curl "http://localhost:8000/genereview/BRCA1?include_fulltext=true&max_chars=0"
 
 # Search for TP53-related GeneReviews
 curl "http://localhost:8000/search/TP53?retmax=5"

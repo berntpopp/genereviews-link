@@ -887,7 +887,8 @@ def _note_for_empty_section(section: str, nbk_id: str) -> str | None:
     if section in SYSTEMATICALLY_UNSCRAPED_SECTIONS:
         return (
             f"section {section!r} is not scraped from NCBI Bookshelf NXML; "
-            f"see the chapter abstract at https://www.ncbi.nlm.nih.gov/books/{nbk_id}/"
+            f"call get_abstract(pubmed_id=<chapter.pubmed_id>) for the chapter "
+            f"abstract (or open https://www.ncbi.nlm.nih.gov/books/{nbk_id}/)."
         )
     return None
 

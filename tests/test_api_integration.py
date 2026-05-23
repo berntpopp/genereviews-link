@@ -153,7 +153,9 @@ class TestAPIEndpoints:
         """Test the comprehensive GeneReview endpoint."""
         gene_symbol = "BRCA1"
 
-        response = await client.get(f"/genereview/{gene_symbol}")
+        # Opt into fulltext explicitly: as of #37, include_fulltext defaults to False.
+        # Disable the max_chars cap so the integration assertion sees the full payload.
+        response = await client.get(f"/genereview/{gene_symbol}?include_fulltext=true&max_chars=0")
         assert response.status_code == 200
 
         data = response.json()
@@ -280,8 +282,12 @@ class TestAPIDataConsistency:
         """Test that data is consistent across related endpoints."""
         gene_symbol = "BRCA1"
 
-        # Get data from comprehensive endpoint
-        comprehensive_response = await client.get(f"/genereview/{gene_symbol}")
+        # Get data from comprehensive endpoint. Opt into fulltext and disable
+        # the max_chars cap so the cross-endpoint title comparison below sees
+        # the scraped Bookshelf title (the default lean envelope omits it).
+        comprehensive_response = await client.get(
+            f"/genereview/{gene_symbol}?include_fulltext=true&max_chars=0"
+        )
         assert comprehensive_response.status_code == 200
         comprehensive_data = comprehensive_response.json()
 

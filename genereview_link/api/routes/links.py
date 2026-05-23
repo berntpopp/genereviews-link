@@ -28,9 +28,10 @@ router = APIRouter(prefix="/links", tags=["Links"])
     summary="Get normalized categorized links for a PubMed ID",
     description=(
         "Live NCBI E-utils link wrapper that always calls live NCBI and returns "
-        "categorized/normalized links with structured errors and corpus-version "
-        "stamping. Default responses may carry active _meta.corpus_version "
-        "context; fresh=true labels the response version as live:<timestamp>."
+        "categorized/normalized links. Adds structured error envelopes and "
+        "corpus-version stamping over a raw elink call. Default responses may "
+        "carry active _meta.corpus_version context; fresh=true labels the "
+        "response version as live:<timestamp>."
     ),
     operation_id="get_links",
 )

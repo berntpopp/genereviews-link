@@ -27,6 +27,22 @@ from genereview_link.retrieval.repository import GeneReviewRepository, _note_for
 router = APIRouter(tags=["Chapters"])
 
 
+def _serialize_section_response(
+    response: ChapterSectionResponse, *, drop_concatenated: bool
+) -> JSONResponse:
+    """Serialize a ChapterSectionResponse with opt-in fields excluded.
+
+    Drops ``concatenated_text`` + ``concatenated_char_count`` when the caller
+    did not opt in via include=concatenated_text. Null ``_meta.next_commands``
+    is stripped by the ResponseMeta model serializer (not here), so the field
+    surfaces only when an actual affordance is set.
+    """
+    exclude: set[str] = (
+        {"concatenated_text", "concatenated_char_count"} if drop_concatenated else set()
+    )
+    return JSONResponse(response.model_dump(exclude=exclude, mode="json", by_alias=True))
+
+
 def _strip_overlap(parts: list[str], min_overlap: int = 30) -> str:
     """Join text chunks while removing the longest common suffix/prefix overlap.
 
@@ -60,9 +76,10 @@ def _strip_overlap(parts: list[str], min_overlap: int = 30) -> str:
     operation_id="get_chapter_section",
     summary="Fetch all passages for a section of a GeneReview chapter",
     description=(
-        "Fetch all passages for a section. Use include=concatenated_text for joined "
-        "text with overlap stripped by default; pass dedupe=false only for literal "
-        "chunk text."
+        "Fetch all passages for a section. For keyword search within this section, "
+        "use search_passages(q, nbk_id=..., sections=[...]); for joined section "
+        "text use include=concatenated_text with overlap stripped by default. "
+        "Pass dedupe=false only for literal chunk text."
     ),
 )
 async def get_chapter_section(
@@ -117,7 +134,7 @@ async def get_chapter_section(
     ] = None,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
-) -> ChapterSectionResponse | JSONResponse:
+) -> JSONResponse:
     """Return all passages for a specific section of a GeneReview chapter.
 
     By default returns individual passages only. Pass include=concatenated_text
@@ -140,7 +157,7 @@ async def get_chapter_section(
                 ],
             )
         if section in SYSTEMATICALLY_UNSCRAPED_SECTIONS:
-            return ChapterSectionResponse(  # type: ignore[call-arg]
+            empty_response = ChapterSectionResponse(  # type: ignore[call-arg]
                 nbk_id=nbk_id,
                 chapter_title=chapter.title,
                 chapter_section=section,
@@ -148,8 +165,16 @@ async def get_chapter_section(
                 passages=[],
                 passage_count=0,
                 note=_note_for_empty_section(section, nbk_id),
-                meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
+                meta=ResponseMeta(
+                    corpus_version=_get_corpus_version(request),
+                    next_commands=(
+                        [{"tool": "get_abstract", "arguments": {"pubmed_id": chapter.pubmed_id}}]
+                        if chapter.pubmed_id
+                        else None
+                    ),
+                ),
             )
+            return _serialize_section_response(empty_response, drop_concatenated=True)
         raise StructuredHTTPException(
             status_code=404,
             code="section_empty_for_chapter",
@@ -195,15 +220,9 @@ async def get_chapter_section(
         concatenated_char_count=(len(concatenated) if concatenated is not None else None),
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )
-    if "concatenated_text" not in include_set:
-        return JSONResponse(
-            response.model_dump(
-                exclude={"concatenated_text", "concatenated_char_count"},
-                mode="json",
-                by_alias=True,
-            )
-        )
-    return response
+    return _serialize_section_response(
+        response, drop_concatenated="concatenated_text" not in include_set
+    )
 
 
 @router.get(
@@ -211,7 +230,11 @@ async def get_chapter_section(
     response_model=ChapterMetadataResponse,
     response_model_by_alias=True,
     operation_id="get_chapter_metadata",
-    summary="The chapter outline tool: title, dates, gene symbols, section counts, and tables",
+    summary=(
+        "The chapter outline tool: title, dates, gene symbols, section counts, "
+        "and tables. Use search_passages(q, nbk_id=...) for keyword search "
+        "within this chapter."
+    ),
 )
 async def get_chapter_metadata(
     nbk_id: Annotated[

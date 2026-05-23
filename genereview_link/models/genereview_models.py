@@ -6,9 +6,15 @@ Defines structured data models for validation and serialization.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    StringConstraints,
+    model_serializer,
+)
 
 from genereview_link.models.sections import SectionName
 
@@ -301,7 +307,14 @@ class SearchDiagnosticsModel(BaseModel):
 
 
 class ResponseMeta(BaseModel):
-    """Per-response metadata (attribution, corpus version) emitted under ``_meta``."""
+    """Per-response metadata (attribution, corpus version, affordance hints) emitted under ``_meta``.
+
+    ``next_commands`` is the canonical location for agentic-affordance hints across
+    all SUCCESS responses (errors carry their own ``next_commands`` in the
+    StructuredHTTPException envelope). It defaults to None and is stripped from
+    the JSON output when null, so callers see the field ONLY when a hint is
+    actually present.
+    """
 
     attribution: str = Field(default=ATTRIBUTION_TEXT)
     corpus_version: str | None = None
@@ -309,6 +322,24 @@ class ResponseMeta(BaseModel):
     license_summary: str = "Research use only; cite per genereview://license"
     dense_model_id: str | None = None
     embedding_dim: int | None = None
+    truncated: bool = False
+    next_commands: list[dict[str, Any]] | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_null_next_commands(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Strip ``next_commands`` when it is None so the key is absent.
+
+        Other None-valued fields (notably ``corpus_version``) are preserved as
+        ``null`` because callers and existing tests rely on their presence as a
+        signal. ``next_commands`` is different: it is a hint, and a ``null``
+        sentinel is indistinguishable from "no hint" only when callers check
+        truthiness; clients that key-check would misinterpret a null as an
+        actionable affordance.
+        """
+        data: dict[str, Any] = handler(self)
+        if data.get("next_commands") is None:
+            data.pop("next_commands", None)
+        return data
 
     @classmethod
     def live_passthrough(cls) -> ResponseMeta:
@@ -372,7 +403,13 @@ class PassageInSection(BaseModel):
 
 
 class ChapterSectionResponse(BaseModel):
-    """Envelope returned by GET /chapters/{nbk_id}/sections/{section}."""
+    """Envelope returned by GET /chapters/{nbk_id}/sections/{section}.
+
+    Agentic-affordance hints (next_commands) live on ``meta.next_commands``
+    rather than at the top level — consistent with how truncation surfaces a
+    follow-up tool call in /genereview and with the other interaction metadata
+    on ``_meta`` (corpus_version, diagnostics, truncated).
+    """
 
     nbk_id: str
     chapter_title: str

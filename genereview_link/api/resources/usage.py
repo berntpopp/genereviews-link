@@ -13,7 +13,8 @@ USAGE_RESOURCE_MARKDOWN = """\
 
 `search_passages` (brief mode) -> `get_chapter_metadata(nbk_id)` to read
 title, last_updated_date, gene_symbols, per-section passage_count and
-total_char_count, and the full list of tables -> `get_passage(passage_id)` OR
+total_char_count, and the full list of tables -> `search_passages(q, nbk_id=...)`
+for in-chapter content search -> `get_passage(passage_id)` OR
 `get_chapter_section(nbk_id, section)` OR `get_table(nbk_id, table_id)` OR
 `get_passages_batch(ids=[...])` for up to 20 passage_ids at once.
 
