@@ -763,7 +763,7 @@ class EutilsClient:
 
     def _extract_metadata(self, soup: BeautifulSoup, content_div: Tag) -> dict[str, Any]:
         """Extract comprehensive metadata from the document."""
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         # Extract authors
         authors = self._extract_authors(content_div)
@@ -788,7 +788,7 @@ class EutilsClient:
         # Extract and parse references
         references = self._extract_references(content_div)
         if references:
-            metadata["references"] = "\n".join(references)
+            metadata["references"] = references
 
         return metadata
 

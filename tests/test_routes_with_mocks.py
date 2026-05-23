@@ -580,6 +580,33 @@ class TestFulltextRoute:
         assert body["sections"]["summary"]["level"] == 1
         assert body["sections"]["summary"]["subsections"] == {}
 
+    @pytest.mark.asyncio
+    async def test_fulltext_references_is_json_array(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        """Regression for #34: metadata.references must be a JSON array, not a string."""
+        fake_client._fulltext = {
+            "nbk_id": "1247",
+            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+            "title": "T",
+            "sections": {"summary": {"title": "Summary", "content": "s"}},
+            "metadata": {
+                "references": [
+                    "Smith AB et al. J Genet. 2020;1:1-10.",
+                    "Jones CD et al. Nat Genet. 2021;2:11-20.",
+                ]
+            },
+        }
+        resp = await http_client.get("/fulltext/NBK1247")
+        assert resp.status_code == 200
+        body = resp.json()
+        refs = body["metadata"]["references"]
+        assert isinstance(refs, list), (
+            f"metadata.references in JSON response must be an array, got {type(refs).__name__!r}"
+        )
+        assert len(refs) == 2
+        assert all(isinstance(r, str) for r in refs)
+
 
 class TestGenereviewRoute:
     @pytest.mark.asyncio
