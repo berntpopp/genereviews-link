@@ -148,6 +148,11 @@ async def get_chapter_section(
                 passages=[],
                 passage_count=0,
                 note=_note_for_empty_section(section, nbk_id),
+                next_commands=(
+                    [{"tool": "get_abstract", "arguments": {"pubmed_id": chapter.pubmed_id}}]
+                    if chapter.pubmed_id
+                    else None
+                ),
                 meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
             )
         raise StructuredHTTPException(

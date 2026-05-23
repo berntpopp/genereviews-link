@@ -6,7 +6,7 @@ Defines structured data models for validation and serialization.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, StringConstraints
 
@@ -383,6 +383,7 @@ class ChapterSectionResponse(BaseModel):
     concatenated_text: str | None = None  # opt-in via include=concatenated_text
     concatenated_char_count: int | None = None  # only when concatenated_text opted in
     note: str | None = None
+    next_commands: list[dict[str, Any]] | None = None
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
     model_config = {"populate_by_name": True}
 
