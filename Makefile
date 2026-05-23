@@ -115,6 +115,34 @@ docker-down: ## Stop Docker services
 docker-logs: ## Tail Docker service logs
 	$(DOCKER_COMPOSE) -f docker/docker-compose.yml logs -f
 
+# --- Dev compose stack -------------------------------------------------------
+# Wires the dockerized app at host port 8765 against the host's gr-pg corpus
+# postgres on port 5436 (bypasses the empty in-stack postgres). Always layers
+# docker-compose.override.gr-pg.yml so the non-standard ports + DATABASE_URL
+# stick across rebuild/restart cycles. Run `gr-pg` separately (one-time):
+#   docker run -d --name gr-pg --restart unless-stopped \
+#     -p 127.0.0.1:5436:5432 \
+#     -e POSTGRES_USER=genereview -e POSTGRES_PASSWORD=genereview \
+#     -e POSTGRES_DB=genereview \
+#     -v genereview_gr_pg:/var/lib/postgresql/data \
+#     pgvector/pgvector:0.8.2-pg18
+DOCKER_DEV_COMPOSE := $(DOCKER_COMPOSE) -f docker/docker-compose.yml -f docker/docker-compose.override.gr-pg.yml
+
+docker-dev-build: ## Build dev image (uses gr-pg override)
+	$(DOCKER_DEV_COMPOSE) build genereview-link
+
+docker-dev-up: ## Start dev app container against host gr-pg on :5436 (publishes :8765)
+	$(DOCKER_DEV_COMPOSE) up -d genereview-link
+
+docker-dev-down: ## Stop dev app container (leaves host gr-pg running)
+	$(DOCKER_DEV_COMPOSE) down genereview-link
+
+docker-dev-rebuild: docker-dev-down docker-dev-build docker-dev-up ## Rebuild + restart dev app in one shot
+
+docker-dev-logs: ## Tail dev app logs
+	$(DOCKER_DEV_COMPOSE) logs -f genereview-link
+# -----------------------------------------------------------------------------
+
 db-migrate: ## Apply control + data migrations against $DATABASE_URL
 	uv run genereview-link db migrate
 
