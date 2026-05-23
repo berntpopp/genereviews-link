@@ -460,6 +460,7 @@ class UnifiedServerManager:
                 "GeneReview-Link grounds gene-disease questions in NCBI GeneReviews.\n\n"
                 "Canonical pipeline: search_passages (brief mode) -> "
                 "get_chapter_metadata(nbk_id) on hits to read sections + tables -> "
+                "search_passages(q, nbk_id=...) for in-chapter search -> "
                 "get_passage(passage_id) OR get_chapter_section(nbk_id, section) OR "
                 "get_table(nbk_id, table_id) OR get_passages_batch for up to 20 "
                 "passage_ids at once.\n\n"
