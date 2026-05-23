@@ -1289,12 +1289,18 @@ class EutilsClient:
         content = re.sub(r"<[^>]+>", "", content)
         # Remove HTML entities
         content = re.sub(r"&[a-zA-Z0-9#]+;", "", content)
-        # NFKC normalization converts compatibility characters (e.g. U+00A0, U+2009,
-        # U+202F) to their ASCII equivalents where possible.
-        content = unicodedata.normalize("NFKC", content)
-        # Explicit belt-and-suspenders replacement for common Unicode spaces that
-        # NFKC may not fully collapse: NBSP (U+00A0), thin space (U+2009), narrow
-        # no-break space (U+202F) -> ASCII space.
+        # NFC normalizes combining-mark sequences (canonical composition) without
+        # folding compatibility characters \u2014 so superscripts, subscripts, the micro
+        # sign, ligatures, and fullwidth forms (e.g. m^2, ug/dL, fi, full-width
+        # punctuation) are preserved verbatim. NFKC would fold those to ASCII,
+        # corrupting clinical/scientific notation in scraped chapters and
+        # reintroducing tag-like '<'/'>'/'&' from full-width forms after the
+        # HTML-strip pass above.
+        content = unicodedata.normalize("NFC", content)
+        # Explicit replacement for Unicode space variants that are not collapsed
+        # by NFC: NBSP (U+00A0), thin space (U+2009), narrow no-break space
+        # (U+202F) -> ASCII space. This is the actual #39 fix; the \s+ collapse
+        # below also catches them, but the explicit pass makes intent clear.
         content = content.replace("\u00a0", " ").replace("\u2009", " ").replace("\u202f", " ")
         # Normalize whitespace
         content = re.sub(r"\s+", " ", content)
