@@ -201,6 +201,168 @@ async def test_small_max_chars_forces_truncation_and_stamps_meta() -> None:
     assert "section" not in args
 
 
+def _build_app_with_shared_service(
+    payload: GeneReview,
+    *,
+    recorded: list[dict[str, Any]],
+    route_via_indexed: bool = True,
+) -> FastAPI:
+    """Build a FastAPI app whose service returns the SAME payload instance every call.
+
+    Mirrors the production alru_cache behavior: the cached impl hands the same
+    object reference to every caller. Used to exercise the route's deep-copy
+    guard against in-place mutation of cached results.
+
+    ``recorded`` collects kwargs from each service call so tests can assert on
+    what the route forwarded (e.g. include_fulltext=False on default).
+
+    When ``route_via_indexed=True`` (default), installs a fake repository on
+    ``app.state.repository`` so the route resolves the indexed code path; this
+    is the cached path in production and the one whose mutation regression is
+    being verified.
+    """
+    config = ServerConfig(transport="http", log_level="WARNING", enable_docs=False)
+    manager = UnifiedServerManager()
+    app = manager.create_fastapi_app(config)
+
+    class SharedService:
+        async def get_genereview_comprehensive_indexed(
+            self, *args: Any, **kwargs: Any
+        ) -> GeneReview:
+            recorded.append({"method": "indexed", "kwargs": dict(kwargs)})
+            return payload
+
+        async def get_genereview_comprehensive_uncached(
+            self, *args: Any, **kwargs: Any
+        ) -> GeneReview:
+            recorded.append({"method": "uncached", "kwargs": dict(kwargs)})
+            return payload
+
+    async def _get_service() -> Any:
+        yield SharedService()
+
+    app.dependency_overrides[get_managed_service] = _get_service
+
+    if route_via_indexed:
+        from datetime import date
+        from unittest.mock import AsyncMock
+
+        from genereview_link.retrieval.repository import ChapterRow
+
+        chapter = ChapterRow(
+            nbk_id="NBK1247",
+            short_name="NBK1247",
+            title="Test Chapter",
+            pubmed_id="20301425",
+            gene_symbols=("BRCA1",),
+            omim_ids=(),
+            authors=None,
+            initial_pub_date=None,
+            last_updated_date=date(2025, 12, 1),
+        )
+        fake_repo = AsyncMock()
+        fake_repo.get_chapter_by_gene = AsyncMock(return_value=chapter)
+        app.state.repository = fake_repo
+
+    return app
+
+
+@pytest.mark.asyncio
+async def test_truncation_does_not_poison_shared_service_result_across_requests() -> None:
+    """Regression: in-place truncation mutated the cached GeneReview instance.
+
+    Request 1 with max_chars=100 used to truncate the cached object; Request 2
+    with max_chars=0 then returned the truncated copy with stale
+    _meta.truncated=True. The route now deep-copies after the indexed call so
+    the shared instance stays pristine. This test uses a SharedService that
+    returns the same payload instance every call (no model_copy) to exercise
+    the real cache shape.
+    """
+    payload = _make_genereview(
+        summary_chars=1000,
+        diagnosis_chars=2000,
+        management_chars=3000,
+    )
+    recorded: list[dict[str, Any]] = []
+    # Drive through the indexed (cached) path — drop fresh=true.
+    app = _build_app_with_shared_service(payload, recorded=recorded)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        first = await c.get("/genereview/BRCA1?include_fulltext=true&max_chars=100")
+        second = await c.get("/genereview/BRCA1?include_fulltext=true&max_chars=0")
+    assert [r["method"] for r in recorded] == ["indexed", "indexed"], (
+        "cache-poisoning regression must exercise the indexed (cached) path"
+    )
+    assert first.status_code == 200 and second.status_code == 200
+    # First request truncates: summary kept at 100 chars, rest cleared.
+    assert len(first.json()["summary"]["content"]) == 100
+    assert first.json()["_meta"]["truncated"] is True
+    # Second request must return un-truncated content. If the cached instance
+    # were mutated by the first call, the second would still be 100 chars.
+    assert len(second.json()["summary"]["content"]) == 1000
+    assert len(second.json()["diagnosis"]["content"]) == 2000
+    assert len(second.json()["management"]["content"]) == 3000
+    assert second.json()["_meta"].get("truncated", False) is False
+    assert second.json()["_meta"].get("next_commands") in (None, [])
+    # The shared payload itself must not have been mutated.
+    assert payload.summary is not None and len(payload.summary.content) == 1000
+
+
+@pytest.mark.asyncio
+async def test_default_route_forwards_include_fulltext_false_to_service() -> None:
+    """Default-flip invariant: the route passes include_fulltext=False on bare calls.
+
+    Without this assertion, a regression that hardcodes include_fulltext=True
+    in the route handler would still pass test_default_response_is_lean
+    (because the FakeService ignored the kwarg).
+    """
+    payload = _make_genereview(summary_chars=0)
+    recorded: list[dict[str, Any]] = []
+    # No fresh=true: prove the route forwards include_fulltext=False through
+    # the standard (indexed) call path.
+    app = _build_app_with_shared_service(payload, recorded=recorded)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/genereview/BRCA1")
+    assert resp.status_code == 200, resp.text
+    assert recorded, "service was not called"
+    assert recorded[-1]["kwargs"]["include_fulltext"] is False
+
+
+@pytest.mark.asyncio
+async def test_truncation_hint_omits_next_commands_when_book_url_has_no_nbk_segment() -> None:
+    """If book_url lacks the canonical /books/NBK<id>/ path, no get_chapter_section
+    hint is emitted (truncated=True is still set). Avoids dead-end recovery
+    hints with empty arguments.
+    """
+    payload = _make_genereview(
+        summary_chars=500,
+        book_url="https://example.com/no-nbk-here/",
+    )
+    app = _build_app_with_service({"indexed": payload, "uncached": payload})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/genereview/BRCA1?include_fulltext=true&max_chars=100&fresh=true")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["_meta"]["truncated"] is True
+    # No useless hint with empty arguments.
+    assert body["_meta"].get("next_commands") in (None, [])
+
+
+@pytest.mark.asyncio
+async def test_truncation_hint_picks_path_anchored_nbk_not_query_string() -> None:
+    """_NBK_ID_PATTERN must anchor on /books/<NBK> path, not match any NBK token."""
+    payload = _make_genereview(
+        summary_chars=500,
+        # Canonical chapter is NBK1247; query-string referer mentions a different ID.
+        book_url="https://www.ncbi.nlm.nih.gov/books/NBK1247/?ref=NBK99999",
+    )
+    app = _build_app_with_service({"indexed": payload, "uncached": payload})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/genereview/BRCA1?include_fulltext=true&max_chars=100&fresh=true")
+    body = resp.json()
+    args = body["_meta"]["next_commands"][0]["arguments"]
+    assert args["nbk_id"] == "NBK1247"
+
+
 @pytest.mark.asyncio
 async def test_max_chars_query_validation_rejects_negative() -> None:
     """ge=0 constraint: negative max_chars is rejected at the query layer."""

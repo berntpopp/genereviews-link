@@ -5,7 +5,7 @@ to full data.
 """
 
 import re
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -29,7 +29,7 @@ from genereview_link.services.service_manager import get_managed_service
 
 router = APIRouter(prefix="/genereview", tags=["GeneReviews"])
 
-_NBK_ID_PATTERN = re.compile(r"NBK\d+")
+_NBK_ID_PATTERN = re.compile(r"/books/(NBK\d+)")
 
 
 def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
@@ -40,11 +40,18 @@ def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
     keeps content until the budget is exhausted, and clears the remainder.
     Stamps ``result.meta.truncated`` and ``result.meta.next_commands`` with a
     ``get_chapter_section`` hint when truncation fires. The hint carries the
-    NBK ID extracted from ``result.book_url`` only — no hardcoded section,
-    per the Risk Notes in the Group B spec.
+    NBK ID extracted from the ``/books/<NBK...>`` path segment of
+    ``result.book_url`` only — no hardcoded section, per the Risk Notes in
+    the Group B spec. If the URL does not match the canonical Bookshelf path
+    the next_commands hint is omitted (truncated is still set) rather than
+    emitting a get_chapter_section call without ``nbk_id``.
 
     Subsection content is not counted; only top-level ``section.content``
     strings contribute to the budget.
+
+    Mutates ``result`` in place. Callers MUST pass a fresh instance (e.g. via
+    ``model_copy(deep=True)``) when the upstream source caches the object —
+    see ``get_genereview`` for the cache-isolation pattern.
     """
     ordered_sections: list[tuple[str, GeneReviewSection | None]] = [
         ("summary", result.summary),
@@ -75,8 +82,11 @@ def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
         return
     result.meta.truncated = True
     match = _NBK_ID_PATTERN.search(result.book_url)
-    arguments: dict[str, Any] = {"nbk_id": match.group(0)} if match else {}
-    result.meta.next_commands = [{"tool": "get_chapter_section", "arguments": arguments}]
+    if not match:
+        return
+    result.meta.next_commands = [
+        {"tool": "get_chapter_section", "arguments": {"nbk_id": match.group(1)}}
+    ]
 
 
 @router.get(
@@ -144,13 +154,18 @@ async def get_genereview(
                     indexed_chapter = chapter
 
         if indexed_chapter is not None:
-            result = await service.get_genereview_comprehensive_indexed(
+            cached_result = await service.get_genereview_comprehensive_indexed(
                 gene_symbol,
                 include_abstract=include_abstract,
                 include_links=include_links,
                 include_fulltext=include_fulltext,
                 chapter=indexed_chapter,
             )
+            # get_genereview_comprehensive_indexed is alru_cache-backed and
+            # returns the same instance on cache hits; copy before the route
+            # mutates result.meta (stamp_response_version) and section bodies
+            # (_truncate_genereview_fulltext) to avoid cross-request leakage.
+            result = cached_result.model_copy(deep=True)
         else:
             result = await service.get_genereview_comprehensive_uncached(
                 gene_symbol,
