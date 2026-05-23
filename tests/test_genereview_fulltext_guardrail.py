@@ -120,7 +120,7 @@ async def test_default_response_is_lean() -> None:
     assert body["management"] is None
     assert body["other_sections"] == {}
     assert body["_meta"].get("truncated", False) is False
-    assert body["_meta"].get("next_commands") in (None, [])
+    assert "next_commands" not in body["_meta"]
 
 
 @pytest.mark.asyncio
@@ -140,7 +140,7 @@ async def test_include_fulltext_below_default_cap_is_not_truncated() -> None:
     assert len(body["diagnosis"]["content"]) == 2000
     assert len(body["management"]["content"]) == 3000
     assert body["_meta"].get("truncated", False) is False
-    assert body["_meta"].get("next_commands") in (None, [])
+    assert "next_commands" not in body["_meta"]
 
 
 @pytest.mark.asyncio
@@ -160,7 +160,7 @@ async def test_max_chars_zero_disables_cap() -> None:
     assert len(body["diagnosis"]["content"]) == 20000
     assert len(body["management"]["content"]) == 20000
     assert body["_meta"].get("truncated", False) is False
-    assert body["_meta"].get("next_commands") in (None, [])
+    assert "next_commands" not in body["_meta"]
 
 
 @pytest.mark.asyncio
@@ -302,7 +302,7 @@ async def test_truncation_does_not_poison_shared_service_result_across_requests(
     assert len(second.json()["diagnosis"]["content"]) == 2000
     assert len(second.json()["management"]["content"]) == 3000
     assert second.json()["_meta"].get("truncated", False) is False
-    assert second.json()["_meta"].get("next_commands") in (None, [])
+    assert "next_commands" not in second.json()["_meta"]
     # The shared payload itself must not have been mutated.
     assert payload.summary is not None and len(payload.summary.content) == 1000
 
@@ -344,7 +344,7 @@ async def test_truncation_hint_omits_next_commands_when_book_url_has_no_nbk_segm
     body = resp.json()
     assert body["_meta"]["truncated"] is True
     # No useless hint with empty arguments.
-    assert body["_meta"].get("next_commands") in (None, [])
+    assert "next_commands" not in body["_meta"]
 
 
 @pytest.mark.asyncio

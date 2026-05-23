@@ -30,19 +30,16 @@ router = APIRouter(tags=["Chapters"])
 def _serialize_section_response(
     response: ChapterSectionResponse, *, drop_concatenated: bool
 ) -> JSONResponse:
-    """Serialize a ChapterSectionResponse with default-None fields excluded.
+    """Serialize a ChapterSectionResponse with opt-in fields excluded.
 
-    Drops `concatenated_text` + `concatenated_char_count` when the caller did
-    not opt in via include=concatenated_text. Drops `next_commands` when it is
-    None so the field is emitted ONLY on the empty-unscraped-section path
-    where the route actually provides a get_abstract hint, rather than leaking
-    `"next_commands": null` into every successful section response.
+    Drops ``concatenated_text`` + ``concatenated_char_count`` when the caller
+    did not opt in via include=concatenated_text. Null ``_meta.next_commands``
+    is stripped by the ResponseMeta model serializer (not here), so the field
+    surfaces only when an actual affordance is set.
     """
-    exclude: set[str] = set()
-    if drop_concatenated:
-        exclude.update({"concatenated_text", "concatenated_char_count"})
-    if response.next_commands is None:
-        exclude.add("next_commands")
+    exclude: set[str] = (
+        {"concatenated_text", "concatenated_char_count"} if drop_concatenated else set()
+    )
     return JSONResponse(response.model_dump(exclude=exclude, mode="json", by_alias=True))
 
 
@@ -168,12 +165,14 @@ async def get_chapter_section(
                 passages=[],
                 passage_count=0,
                 note=_note_for_empty_section(section, nbk_id),
-                next_commands=(
-                    [{"tool": "get_abstract", "arguments": {"pubmed_id": chapter.pubmed_id}}]
-                    if chapter.pubmed_id
-                    else None
+                meta=ResponseMeta(
+                    corpus_version=_get_corpus_version(request),
+                    next_commands=(
+                        [{"tool": "get_abstract", "arguments": {"pubmed_id": chapter.pubmed_id}}]
+                        if chapter.pubmed_id
+                        else None
+                    ),
                 ),
-                meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
             )
             return _serialize_section_response(empty_response, drop_concatenated=True)
         raise StructuredHTTPException(
