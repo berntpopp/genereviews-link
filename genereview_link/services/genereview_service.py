@@ -4,8 +4,6 @@ Service layer for GeneReview business logic.
 Orchestrates data retrieval and processing workflows.
 """
 
-from datetime import timedelta
-
 from async_lru import alru_cache
 
 from genereview_link.api.eutils_client import EutilsClient
@@ -40,16 +38,20 @@ class GeneReviewService:
             client: Optional EutilsClient instance, creates new one if None.
         """
         self.client = client or EutilsClient()
-        self.cache_ttl = timedelta(hours=settings.CACHE_TTL_HOURS)
+        ttl_seconds = settings.CACHE_TTL_HOURS * 3600
 
         # Apply the cache decorator to both implementation methods
-        self.get_genereview = alru_cache(maxsize=settings.CACHE_SIZE)(self._get_genereview_impl)
-        self.get_genereview_comprehensive = alru_cache(maxsize=settings.CACHE_SIZE)(
-            self._get_genereview_comprehensive_cached_impl
+        self.get_genereview = alru_cache(maxsize=settings.CACHE_SIZE, ttl=ttl_seconds)(
+            self._get_genereview_impl
         )
-        self.get_genereview_comprehensive_indexed = alru_cache(maxsize=settings.CACHE_SIZE)(
-            self._get_genereview_comprehensive_indexed_impl
-        )
+        self.get_genereview_comprehensive = alru_cache(
+            maxsize=settings.CACHE_SIZE,
+            ttl=ttl_seconds,
+        )(self._get_genereview_comprehensive_cached_impl)
+        self.get_genereview_comprehensive_indexed = alru_cache(
+            maxsize=settings.CACHE_SIZE,
+            ttl=ttl_seconds,
+        )(self._get_genereview_comprehensive_indexed_impl)
 
     async def _get_genereview_impl(self, gene_symbol: str) -> GeneReview:
         """Implement the GeneReview fetching logic."""
