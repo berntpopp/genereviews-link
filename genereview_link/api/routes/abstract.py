@@ -19,6 +19,7 @@ from genereview_link.api.orchestration import (
 )
 from genereview_link.api.orchestration_errors import (
     abstract_not_found_error,
+    invalid_pubmed_id_error,
     upstream_ncbi_unavailable_error,
 )
 from genereview_link.models.genereview_models import AbstractData
@@ -58,6 +59,9 @@ async def get_abstract(
     Pass ``?fresh=true`` to label the response version as live.
     """
     try:
+        if not pubmed_id.isdigit():
+            raise invalid_pubmed_id_error(pubmed_id)
+
         result = await client.fetch_abstract(pubmed_id)
         if not result:
             raise abstract_not_found_error(pubmed_id)

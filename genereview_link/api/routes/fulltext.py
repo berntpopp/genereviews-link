@@ -65,6 +65,13 @@ def _build_section(section_data: dict[str, Any]) -> GeneReviewSection:
     )
 
 
+def _canonical_fulltext_nbk_id(raw: object, fallback_digits: str) -> str:
+    value = str(raw or fallback_digits)
+    if not value.upper().startswith("NBK"):
+        value = f"NBK{value}"
+    return canonicalize_nbk_id(value.upper())
+
+
 def _filter_sections(
     sections: dict[str, GeneReviewSection], requested: str | None
 ) -> dict[str, GeneReviewSection]:
@@ -175,7 +182,7 @@ async def get_fulltext(
         )
 
         out = FullTextData(
-            nbk_id=result.get("nbk_id", clean_id),
+            nbk_id=_canonical_fulltext_nbk_id(result.get("nbk_id"), clean_id),
             url=result.get("url", book_url),
             title=result.get("title", ""),
             sections=filtered_sections,

@@ -4,8 +4,9 @@ Manages environment variables and application settings using Pydantic.
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -30,8 +31,14 @@ class Settings(BaseSettings):
     # Postgres connection (set in MODE 1/2; empty triggers EutilsClient-only fallback path)
     DATABASE_URL: str = ""
     DATABASE_POOL_MIN_SIZE: int = 2
-    DATABASE_POOL_MAX_SIZE: int = 10
+    DATABASE_POOL_MAX_SIZE: int = 20
     DATABASE_ACQUIRE_TIMEOUT_S: float = 5.0
+    # Close idle pool connections after this many seconds.
+    DATABASE_MAX_INACTIVE_CONNECTION_LIFETIME_S: float = 300.0
+    # None leaves command timeout behavior to asyncpg/Postgres defaults.
+    DATABASE_COMMAND_TIMEOUT_S: float | None = None
+    # asyncpg prepared statement cache; use 0 with PgBouncer transaction pooling.
+    DATABASE_STATEMENT_CACHE_SIZE: int = 100
     CACHE_SIZE: int = 512
     CACHE_TTL_HOURS: int = 24
     LOG_LEVEL: str = "INFO"
@@ -88,6 +95,13 @@ class Settings(BaseSettings):
     AUTO_PULL_RELEASES: bool = False
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @field_validator("DATABASE_COMMAND_TIMEOUT_S", mode="before")
+    @classmethod
+    def _normalize_database_command_timeout(cls, value: Any) -> Any:
+        if isinstance(value, str) and value.strip().lower() in {"", "none", "null"}:
+            return None
+        return value
 
 
 settings = Settings()

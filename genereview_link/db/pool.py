@@ -38,5 +38,9 @@ async def create_pool() -> asyncpg.Pool:
         dsn=s.DATABASE_URL,
         min_size=s.DATABASE_POOL_MIN_SIZE,
         max_size=s.DATABASE_POOL_MAX_SIZE,
+        server_settings={"search_path": "genereview, public"},
+        max_inactive_connection_lifetime=s.DATABASE_MAX_INACTIVE_CONNECTION_LIFETIME_S,
+        command_timeout=s.DATABASE_COMMAND_TIMEOUT_S,
+        statement_cache_size=s.DATABASE_STATEMENT_CACHE_SIZE,
         init=_init_conn,
     )

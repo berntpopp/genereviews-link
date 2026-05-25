@@ -3,7 +3,7 @@
 Provides REST API endpoint for searching NCBI database.
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -22,6 +22,16 @@ from genereview_link.models.genereview_models import SearchResult
 
 router = APIRouter(prefix="/search", tags=["Search"])
 logger = get_logger(__name__)
+
+
+def _empty_search_recovery(gene_symbol: str) -> tuple[str, list[dict[str, Any]]]:
+    gene = gene_symbol.upper()
+    return (
+        "No PubMed resolver hit was found. Use corpus-backed passage search for "
+        "indexed GeneReviews evidence, or broaden the gene/query if this may be a "
+        "multi-gene chapter.",
+        [{"tool": "search_passages", "arguments": {"gene": gene, "q": gene}}],
+    )
 
 
 @router.get(
@@ -102,6 +112,10 @@ async def search_genereviews(
             )
 
             out = SearchResult(**result)
+            if out.count == 0 and not out.ids:
+                recovery_hint, next_commands = _empty_search_recovery(gene_symbol)
+                out.recovery_hint = recovery_hint
+                out.meta.next_commands = next_commands
             stamp_response_version(
                 out,
                 corpus_version=live_corpus_version() if fresh else None,

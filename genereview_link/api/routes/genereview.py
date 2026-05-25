@@ -5,7 +5,7 @@ to full data.
 """
 
 import re
-from typing import Annotated
+from typing import Annotated, Protocol
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -30,6 +30,29 @@ from genereview_link.services.service_manager import get_managed_service
 router = APIRouter(prefix="/genereview", tags=["GeneReviews"])
 
 _NBK_ID_PATTERN = re.compile(r"/books/(NBK\d+)")
+
+
+class _IndexedChapter(Protocol):
+    @property
+    def nbk_id(self) -> str: ...
+
+    @property
+    def pubmed_id(self) -> str | None: ...
+
+    @property
+    def title(self) -> str: ...
+
+
+def _minimal_gene_review_from_indexed_chapter(
+    gene_symbol: str, chapter: _IndexedChapter
+) -> GeneReview:
+    nbk_id = chapter.nbk_id
+    return GeneReview(
+        gene_symbol=gene_symbol.upper(),
+        pubmed_id=str(chapter.pubmed_id),
+        book_url=f"https://www.ncbi.nlm.nih.gov/books/{nbk_id}/",
+        title=chapter.title,
+    )
 
 
 def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
@@ -154,18 +177,21 @@ async def get_genereview(
                     indexed_chapter = chapter
 
         if indexed_chapter is not None:
-            cached_result = await service.get_genereview_comprehensive_indexed(
-                gene_symbol,
-                include_abstract=include_abstract,
-                include_links=include_links,
-                include_fulltext=include_fulltext,
-                chapter=indexed_chapter,
-            )
-            # get_genereview_comprehensive_indexed is alru_cache-backed and
-            # returns the same instance on cache hits; copy before the route
-            # mutates result.meta (stamp_response_version) and section bodies
-            # (_truncate_genereview_fulltext) to avoid cross-request leakage.
-            result = cached_result.model_copy(deep=True)
+            try:
+                cached_result = await service.get_genereview_comprehensive_indexed(
+                    gene_symbol,
+                    include_abstract=include_abstract,
+                    include_links=include_links,
+                    include_fulltext=include_fulltext,
+                    chapter=indexed_chapter,
+                )
+                # get_genereview_comprehensive_indexed is alru_cache-backed and
+                # returns the same instance on cache hits; copy before the route
+                # mutates result.meta (stamp_response_version) and section bodies
+                # (_truncate_genereview_fulltext) to avoid cross-request leakage.
+                result = cached_result.model_copy(deep=True)
+            except DataNotFoundError:
+                result = _minimal_gene_review_from_indexed_chapter(gene_symbol, indexed_chapter)
         else:
             result = await service.get_genereview_comprehensive_uncached(
                 gene_symbol,

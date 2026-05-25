@@ -43,11 +43,22 @@ class SearchResult(BaseModel):
     ids: list[str] = Field(description="List of PubMed IDs found.")
     webenv: str = Field(description="Web environment string for history server.")
     querykey: str = Field(description="Query key for history server.")
+    recovery_hint: str | None = Field(
+        default=None,
+        description="Agent recovery hint emitted only when the search result is empty.",
+    )
     corpus_version: str | None = None
     meta: ResponseMeta = Field(
         alias="_meta", default_factory=lambda: ResponseMeta.live_passthrough()
     )
     model_config = {"populate_by_name": True}
+
+    @model_serializer(mode="wrap")
+    def _drop_null_recovery_hint(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if data.get("recovery_hint") is None:
+            data.pop("recovery_hint", None)
+        return data
 
 
 class AbstractData(BaseModel):

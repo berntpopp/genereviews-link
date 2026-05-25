@@ -4,8 +4,6 @@ Service layer for GeneReview business logic.
 Orchestrates data retrieval and processing workflows.
 """
 
-from datetime import timedelta
-
 from async_lru import alru_cache
 
 from genereview_link.api.eutils_client import EutilsClient
@@ -19,9 +17,26 @@ from genereview_link.models.genereview_models import (
     GeneReviewSection,
     LinkData,
 )
+from genereview_link.models.sections import canonicalize_nbk_id
 from genereview_link.retrieval.repository import ChapterRow
 
 logger = get_logger(__name__)
+
+
+def _book_urls_from_links(links_result: dict[str, object]) -> list[str]:
+    urls = links_result.get("urls", [])
+    if not isinstance(urls, list):
+        return []
+    return [url for url in urls if isinstance(url, str) and "ncbi.nlm.nih.gov/books/" in url]
+
+
+def _canonical_fulltext_nbk_id(raw: object) -> str | None:
+    if raw is None:
+        return None
+    value = str(raw)
+    if not value.upper().startswith("NBK"):
+        value = f"NBK{value}"
+    return canonicalize_nbk_id(value.upper())
 
 
 class DataNotFoundError(Exception):
@@ -40,16 +55,20 @@ class GeneReviewService:
             client: Optional EutilsClient instance, creates new one if None.
         """
         self.client = client or EutilsClient()
-        self.cache_ttl = timedelta(hours=settings.CACHE_TTL_HOURS)
+        ttl_seconds = settings.CACHE_TTL_HOURS * 3600
 
         # Apply the cache decorator to both implementation methods
-        self.get_genereview = alru_cache(maxsize=settings.CACHE_SIZE)(self._get_genereview_impl)
-        self.get_genereview_comprehensive = alru_cache(maxsize=settings.CACHE_SIZE)(
-            self._get_genereview_comprehensive_cached_impl
+        self.get_genereview = alru_cache(maxsize=settings.CACHE_SIZE, ttl=ttl_seconds)(
+            self._get_genereview_impl
         )
-        self.get_genereview_comprehensive_indexed = alru_cache(maxsize=settings.CACHE_SIZE)(
-            self._get_genereview_comprehensive_indexed_impl
-        )
+        self.get_genereview_comprehensive = alru_cache(
+            maxsize=settings.CACHE_SIZE,
+            ttl=ttl_seconds,
+        )(self._get_genereview_comprehensive_cached_impl)
+        self.get_genereview_comprehensive_indexed = alru_cache(
+            maxsize=settings.CACHE_SIZE,
+            ttl=ttl_seconds,
+        )(self._get_genereview_comprehensive_indexed_impl)
 
     async def _get_genereview_impl(self, gene_symbol: str) -> GeneReview:
         """Implement the GeneReview fetching logic."""
@@ -163,6 +182,15 @@ class GeneReviewService:
             if book_url:
                 book_urls = [book_url]
 
+        if not book_urls and not include_links:
+            try:
+                links_result = await self.client.get_all_links(pubmed_id)
+                book_urls = _book_urls_from_links(links_result)
+            except Exception as e:
+                logger.warning(
+                    f"Could not resolve Bookshelf link via PubMed links for {pubmed_id}: {e}"
+                )
+
         if not book_urls:
             raise DataNotFoundError(f"Could not find NCBI Bookshelf link for PMID: {pubmed_id}")
 
@@ -193,7 +221,7 @@ class GeneReviewService:
                     )
 
                     full_text_data = FullTextData(
-                        nbk_id=fulltext_result.get("nbk_id"),
+                        nbk_id=_canonical_fulltext_nbk_id(fulltext_result.get("nbk_id")),
                         url=fulltext_result.get("url", book_url),
                         title=fulltext_result.get("title", ""),
                         sections=sections_data,
