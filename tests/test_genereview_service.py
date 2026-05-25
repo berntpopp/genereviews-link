@@ -189,6 +189,49 @@ class TestGetGenereviewComprehensive:
         assert not any(c[0] == "get_book_url_from_pmid" for c in fake.calls)
 
     @pytest.mark.asyncio
+    async def test_fulltext_data_canonicalizes_bare_nbk_id(self) -> None:
+        service, _ = _make_service(
+            all_links={"urls": ["https://www.ncbi.nlm.nih.gov/books/NBK501979/"]},
+            comprehensive={
+                "nbk_id": "501979",
+                "url": "https://www.ncbi.nlm.nih.gov/books/NBK501979/",
+                "title": "GRIN2B GeneReview",
+                "sections": {"summary": {"title": "Summary", "content": "summary content"}},
+                "metadata": {},
+            },
+        )
+
+        result = await service.get_genereview_comprehensive("GRIN2B")
+
+        assert result.full_text_data is not None
+        assert result.full_text_data.nbk_id == "NBK501979"
+
+    @pytest.mark.asyncio
+    async def test_link_lookup_still_resolves_book_url_when_links_excluded(self) -> None:
+        service, fake = _make_service(
+            all_links={"urls": ["https://www.ncbi.nlm.nih.gov/books/NBK501979/"]},
+            book_url=None,
+            comprehensive={
+                "nbk_id": "NBK501979",
+                "url": "https://www.ncbi.nlm.nih.gov/books/NBK501979/",
+                "title": "GRIN2B GeneReview",
+                "sections": {"summary": {"title": "Summary", "content": "summary content"}},
+                "metadata": {},
+            },
+        )
+
+        result = await service.get_genereview_comprehensive(
+            "GRIN2B",
+            include_abstract=False,
+            include_links=False,
+            include_fulltext=True,
+        )
+
+        assert result.book_url == "https://www.ncbi.nlm.nih.gov/books/NBK501979/"
+        assert result.all_links is None
+        assert ("get_all_links", ("12345",)) in fake.calls
+
+    @pytest.mark.asyncio
     async def test_falls_back_to_book_url_lookup_when_no_book_links(self) -> None:
         service, fake = _make_service(
             all_links={"urls": ["https://example.com/other"]},
