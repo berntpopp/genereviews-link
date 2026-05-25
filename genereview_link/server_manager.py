@@ -18,9 +18,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from genereview_link.api.client_manager import (
-    get_client_manager,
-)
+from genereview_link.api.client_manager import get_client_manager
 from genereview_link.api.routes import (
     abstract,
     fulltext,
@@ -46,7 +44,6 @@ from genereview_link.server_lifecycle import (
     _teardown_state,
 )
 from genereview_link.services.errors import NotYetIndexedError
-from genereview_link.services.service_manager import get_service_manager
 
 logger = get_logger("server.manager")
 
@@ -366,14 +363,12 @@ class UnifiedServerManager:
         self._current_transport = "stdio"
         logger.info("Starting STDIO MCP server...")
         self.app = self.create_fastapi_app(config)
-        # Manually initialize services since lifespan won't run
-        client_manager = await get_client_manager()
-        await client_manager.get_client()
-        service_manager = await get_service_manager()
-        await service_manager.get_service()
-
-        self.mcp = await self.create_mcp_server(self.app, config)
-        await self.mcp.run_async(transport="stdio")
+        await _initialize_state(self.app)
+        try:
+            self.mcp = await self.create_mcp_server(self.app, config)
+            await self.mcp.run_async(transport="stdio")
+        finally:
+            await _teardown_state(self.app)
 
     async def start_http_only_server(self, config: ServerConfig) -> None:
         """Start the server in HTTP-only mode (REST API only)."""
