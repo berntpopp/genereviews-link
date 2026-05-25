@@ -1,10 +1,12 @@
 """Application lifecycle helpers for the GeneReview Link server."""
 
+import hashlib
 import json
 import os
 import shutil
 import tarfile as tf_mod
 from pathlib import Path
+from typing import IO
 
 import asyncpg
 from fastapi import FastAPI
@@ -15,6 +17,14 @@ from genereview_link.logging_config import get_logger
 from genereview_link.services.service_manager import get_service_manager, shutdown_services
 
 logger = get_logger("server.manager")
+
+
+def _sha256_stream(fh: IO[bytes]) -> str:
+    """Return the SHA-256 digest for an open binary stream."""
+    h = hashlib.sha256()
+    for chunk in iter(lambda: fh.read(65536), b""):
+        h.update(chunk)
+    return h.hexdigest()
 
 
 def _bundle_bootstrap_paths(work_dir: Path) -> tuple[Path, Path]:
@@ -33,7 +43,6 @@ async def _bootstrap() -> None:
     In all cases, if an active corpus version already exists the function
     returns immediately (hot-path / already-populated).
     """
-    from genereview_link.corpus.bundle import sha256_file
     from genereview_link.db.migrate import apply_control_migrations
     from genereview_link.db.pool import create_pool
     from genereview_link.ingest.github_release import (
@@ -69,16 +78,38 @@ async def _bootstrap() -> None:
             await download_with_integrity(bundle_url, tmp, expected_sha256=sha)
             extract_dir.mkdir(parents=True, exist_ok=True)
             with tf_mod.open(tmp, "r:gz") as tar:
-                tar.extractall(str(extract_dir))  # noqa: S202
-            manifest = json.loads((extract_dir / "manifest.json").read_text())
-            for relpath, expected in manifest["checksums"].items():
-                actual = sha256_file(extract_dir / relpath)
-                if actual != expected:
-                    raise RuntimeError(f"manifest checksum mismatch on {relpath}")
+                manifest_member = tar.getmember("manifest.json")
+                manifest_file = tar.extractfile(manifest_member)
+                if manifest_file is None:
+                    raise RuntimeError("manifest.json is not a file")
+                manifest = json.loads(manifest_file.read())
+                checksum_entries = manifest["checksums"]
+                expected_names = ["manifest.json", *checksum_entries.keys()]
+                expected_members = set(expected_names)
+
+                seen: set[str] = set()
+                for member in tar.getmembers():
+                    if member.name in seen:
+                        raise RuntimeError(f"duplicate tar member: {member.name}")
+                    seen.add(member.name)
+                    if member.name not in expected_members:
+                        raise RuntimeError(f"unexpected tar member: {member.name}")
+
+                for relpath, expected in checksum_entries.items():
+                    member = tar.getmember(relpath)
+                    member_file = tar.extractfile(member)
+                    if member_file is None:
+                        raise RuntimeError(f"manifest member is not a file: {relpath}")
+                    actual = _sha256_stream(member_file)
+                    if actual != expected:
+                        raise RuntimeError(f"manifest checksum mismatch on {relpath}")
+
+                for name in expected_names:
+                    tar.extract(tar.getmember(name), path=str(extract_dir), filter="data")
             await pg_restore(
                 extract_dir / "corpus.dump",
                 database_url=settings.DATABASE_URL,
-                jobs=os.cpu_count(),
+                jobs=os.cpu_count() or 2,
             )
             logger.info("corpus bundle restored")
             return
