@@ -75,6 +75,5 @@ def test_server_manager_no_longer_defines_mcp_custom_names() -> None:
 
     source = Path("genereview_link/server_manager.py").read_text()
     assert "mcp_custom_names" not in source, (
-        "mcp_custom_names dict is dead code (every key mapped to itself); "
-        "do not reintroduce it"
+        "mcp_custom_names dict is dead code (every key mapped to itself); do not reintroduce it"
     )
