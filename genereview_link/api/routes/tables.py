@@ -38,6 +38,7 @@ async def get_table(
     table_id: Annotated[
         str,
         Path(
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
             description="Table identifier, e.g. 't5'. Discoverable via get_chapter_metadata.",
         ),
     ],

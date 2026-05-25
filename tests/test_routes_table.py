@@ -208,3 +208,12 @@ async def test_get_table_rejects_malformed_nbk_with_422() -> None:
         resp = await c.get("/chapters/not-an-nbk/tables/t5")
 
     assert resp.status_code == 422
+
+
+def test_get_table_openapi_schema_declares_table_id_pattern() -> None:
+    app = _build_app(table=None)
+
+    params = app.openapi()["paths"]["/chapters/{nbk_id}/tables/{table_id}"]["get"]["parameters"]
+    table_param = next(param for param in params if param["name"] == "table_id")
+
+    assert table_param["schema"]["pattern"] == r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"

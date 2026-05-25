@@ -49,6 +49,7 @@ class FakeClient:
         self._fulltext = fulltext
         self._book_url = book_url
         self.book_url_calls: list[str] = []
+        self.abstract_calls: list[str] = []
 
     async def search_genereviews(self, gene_symbol: str, retmax: int = 20) -> dict[str, Any]:
         if isinstance(self._search_result, Exception):
@@ -63,6 +64,7 @@ class FakeClient:
         }
 
     async def fetch_abstract(self, pubmed_id: str) -> dict[str, Any]:
+        self.abstract_calls.append(pubmed_id)
         if isinstance(self._abstract, Exception):
             raise self._abstract
         return self._abstract or {}
@@ -225,6 +227,30 @@ class TestSearchRoute:
         detail = assert_structured_error_detail(resp.json())
         assert detail["next_commands"][0]["tool"] == "search_passages"
 
+    @pytest.mark.asyncio
+    async def test_empty_search_result_includes_agent_recovery_hints(
+        self, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._search_result = {
+            "count": 0,
+            "retmax": 20,
+            "retstart": 0,
+            "ids": [],
+            "webenv": "",
+            "querykey": "",
+        }
+
+        resp = await http_client.get("/search/NO_SUCH_GENE")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 0
+        assert body["ids"] == []
+        assert body["recovery_hint"]
+        assert body["_meta"]["next_commands"] == [
+            {"tool": "search_passages", "arguments": {"gene": "NO_SUCH_GENE", "q": "NO_SUCH_GENE"}}
+        ]
+
 
 class TestAbstractRoute:
     @pytest.mark.asyncio
@@ -266,6 +292,19 @@ class TestAbstractRoute:
         assert resp.status_code == 502
         detail = assert_structured_error_detail(resp.json())
         assert detail["code"] == "upstream_ncbi_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_abstract_rejects_non_numeric_pubmed_id_before_client_call(
+        self, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        fake_client._abstract = RuntimeError("live client should not be called")
+
+        resp = await http_client.get("/abstract/not_a_real_pmid")
+
+        assert resp.status_code == 422
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "invalid_pubmed_id"
+        assert fake_client.abstract_calls == []
 
     @pytest.mark.asyncio
     async def test_abstract_reraises_structured_http_exception(
@@ -356,7 +395,7 @@ class TestFulltextRoute:
         resp = await http_client.get("/fulltext/NBK1247")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["nbk_id"] == "1247"
+        assert body["nbk_id"] == "NBK1247"
         assert "summary" in body["sections"]
         assert body["_meta"]["attribution"].startswith("GeneReviews")
         assert body["corpus_version"] == "2026-05-10-r6"
@@ -647,6 +686,43 @@ class TestGenereviewRoute:
         assert body["corpus_version"] == "2026-05-10-r6"
         assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
         assert fake_client.book_url_calls == []
+
+    @pytest.mark.asyncio
+    async def test_indexed_chapter_degrades_to_minimal_summary_when_service_fails(
+        self, app: FastAPI, http_client: AsyncClient
+    ) -> None:
+        class FakeChapter:
+            nbk_id = "NBK501979"
+            short_name = "grin2b"
+            title = "GRIN2B-Related Neurodevelopmental Disorder"
+            pubmed_id = "29851452"
+            gene_symbols = ("GRIN2B",)
+
+        class FakeRepo:
+            async def get_chapter_by_gene(self, gene_symbol: str) -> FakeChapter:
+                assert gene_symbol == "GRIN2B"
+                return FakeChapter()
+
+        class FakeService:
+            async def get_genereview_comprehensive_indexed(self, *args: Any, **kwargs: Any) -> Any:
+                raise DataNotFoundError("live enrichment failed")
+
+        async def _get_service() -> Any:
+            yield FakeService()
+
+        app.state.repository = FakeRepo()
+        app.state.corpus_version = "2026-05-10-r6"
+        app.dependency_overrides[get_managed_service] = _get_service
+
+        resp = await http_client.get("/genereview/GRIN2B?include_fulltext=true")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["gene_symbol"] == "GRIN2B"
+        assert body["pubmed_id"] == "29851452"
+        assert body["book_url"] == "https://www.ncbi.nlm.nih.gov/books/NBK501979/"
+        assert body["title"] == "GRIN2B-Related Neurodevelopmental Disorder"
+        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
 
     @pytest.mark.asyncio
     async def test_repo_miss_keeps_live_fallback_version_unstamped(
