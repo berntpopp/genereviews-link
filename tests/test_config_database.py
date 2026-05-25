@@ -36,8 +36,19 @@ def test_new_database_tuning_fields_have_documented_defaults(
     monkeypatch.delenv("DATABASE_COMMAND_TIMEOUT_S", raising=False)
     monkeypatch.delenv("DATABASE_STATEMENT_CACHE_SIZE", raising=False)
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.DATABASE_MAX_INACTIVE_CONNECTION_LIFETIME_S == 300.0
     assert settings.DATABASE_COMMAND_TIMEOUT_S is None
     assert settings.DATABASE_STATEMENT_CACHE_SIZE == 100
+
+
+@pytest.mark.parametrize("value", ["", "None", "none", "null"])
+def test_database_command_timeout_nullish_env_values_disable_timeout(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("DATABASE_COMMAND_TIMEOUT_S", value)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.DATABASE_COMMAND_TIMEOUT_S is None

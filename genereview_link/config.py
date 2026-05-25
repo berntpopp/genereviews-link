@@ -4,8 +4,9 @@ Manages environment variables and application settings using Pydantic.
 """
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -94,6 +95,13 @@ class Settings(BaseSettings):
     AUTO_PULL_RELEASES: bool = False
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @field_validator("DATABASE_COMMAND_TIMEOUT_S", mode="before")
+    @classmethod
+    def _normalize_database_command_timeout(cls, value: Any) -> Any:
+        if isinstance(value, str) and value.strip().lower() in {"", "none", "null"}:
+            return None
+        return value
 
 
 settings = Settings()

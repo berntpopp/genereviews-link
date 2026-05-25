@@ -64,7 +64,7 @@ async def test_create_pool_passes_tuning_kwargs(
 def test_default_pool_max_size_is_20(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATABASE_POOL_MAX_SIZE", raising=False)
 
-    settings = config_mod.Settings()
+    settings = config_mod.Settings(_env_file=None)
 
     assert settings.DATABASE_POOL_MAX_SIZE == 20
 
