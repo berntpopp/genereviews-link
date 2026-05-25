@@ -186,6 +186,8 @@ async def test_bootstrap_filter_data_blocks_listed_unsafe_path(
         await _bootstrap()
 
     assert not unsafe_path.exists()
+    assert not (_extract_dir(tmp_path) / "manifest.json").exists()
+    assert not (_extract_dir(tmp_path) / "corpus.dump").exists()
     _assert_no_restore(pg_restore)
 
 

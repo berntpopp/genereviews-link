@@ -73,10 +73,12 @@ async def _bootstrap() -> None:
             sha = await fetch_sibling_sha256(bundle_url)
             work_dir = Path(settings.BUNDLE_BOOTSTRAP_DIR)
             tmp, extract_dir = _bundle_bootstrap_paths(work_dir)
+            staging_dir = work_dir / "bundle_extract.tmp"
             shutil.rmtree(extract_dir, ignore_errors=True)
+            shutil.rmtree(staging_dir, ignore_errors=True)
             work_dir.mkdir(parents=True, exist_ok=True)
             await download_with_integrity(bundle_url, tmp, expected_sha256=sha)
-            extract_dir.mkdir(parents=True, exist_ok=True)
+            staging_dir.mkdir(parents=True, exist_ok=True)
             with tf_mod.open(tmp, "r:gz") as tar:
                 manifest_member = tar.getmember("manifest.json")
                 manifest_file = tar.extractfile(manifest_member)
@@ -105,7 +107,9 @@ async def _bootstrap() -> None:
                         raise RuntimeError(f"manifest checksum mismatch on {relpath}")
 
                 for name in expected_names:
-                    tar.extract(tar.getmember(name), path=str(extract_dir), filter="data")
+                    tar.extract(tar.getmember(name), path=str(staging_dir), filter="data")
+            shutil.rmtree(extract_dir, ignore_errors=True)
+            staging_dir.rename(extract_dir)
             await pg_restore(
                 extract_dir / "corpus.dump",
                 database_url=settings.DATABASE_URL,
@@ -134,6 +138,8 @@ async def _bootstrap() -> None:
     except asyncpg.PostgresError as exc:
         logger.warning("bootstrap failed; server will start without corpus", error=str(exc))
     finally:
+        if "staging_dir" in locals():
+            shutil.rmtree(staging_dir, ignore_errors=True)
         await pool.close()
 
 
