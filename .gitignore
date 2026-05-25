@@ -190,3 +190,7 @@ cython_debug/
 
 # Local DB snapshots taken before destructive corpus rebuilds
 backups/
+
+# Understand-Anything knowledge graph (regenerable via /understand-anything:understand)
+.understand-anything/
+
