@@ -8,7 +8,45 @@ as phase tags where a semver release has not yet been cut.
 
 ---
 
-## Unreleased -- MCP LLM-ergonomics pass 2
+## Unreleased
+
+### Fixed
+
+- Applied `CACHE_TTL_HOURS` to all `GeneReviewService` `alru_cache` wrappers;
+  cached live/scraped summaries now expire according to configuration.
+- STDIO MCP startup now runs the same lifecycle initialization as HTTP/unified
+  startup, so corpus-backed tools have repository, embedder, gene index, and
+  corpus-version state.
+- Hardened corpus bundle bootstrap: manifest checksums are verified against
+  in-tarball bytes before extraction, unexpected/duplicate members are rejected,
+  extraction uses `filter="data"`, and `pg_restore` falls back when
+  `os.cpu_count()` is unavailable.
+- `search_genereviews` empty successful results now include a recovery hint and
+  executable `_meta.next_commands` pointing to `search_passages`.
+- `get_abstract` now rejects non-numeric PubMed IDs with
+  `422 invalid_pubmed_id` before calling live NCBI.
+- `get_fulltext` and embedded `get_genereview_summary.full_text_data` now return
+  canonical `NBK...` identifiers.
+- `get_genereview_summary` can still resolve a Bookshelf chapter when
+  `include_links=false`; include flags control response shape, not resolution.
+
+### Changed
+
+- asyncpg pool default max size is now 20.
+- Postgres `search_path` is configured with asyncpg `server_settings`, avoiding
+  per-query `set search_path` round trips and surviving pool release/reset.
+- Added asyncpg tuning settings:
+  `DATABASE_MAX_INACTIVE_CONNECTION_LIFETIME_S`,
+  `DATABASE_COMMAND_TIMEOUT_S`, and `DATABASE_STATEMENT_CACHE_SIZE`.
+- `get_table` exposes a schema-level `table_id` pattern for earlier malformed
+  input rejection.
+- Removed the dead `mcp_custom_names` identity map from MCP server setup.
+- Split server lifecycle/bootstrap code into `genereview_link/server_lifecycle.py`
+  to keep `server_manager.py` under the module size budget.
+
+---
+
+## MCP LLM-ergonomics pass 2
 
 Four-phase work (Trust -> Discovery -> Content -> Polish) lifting the MCP server from
 a consumer LLM rating of 8.2/10 toward ~9.2/10 by fixing broken metadata promises,
@@ -73,15 +111,15 @@ making tables retrievable, adding discovery affordances, and landing polish item
      `get_chapter_metadata` to obtain the current table list and pick the correct
      ordinal.
 
-6. **`get_license` MCP tool removed; use `genereview://license` resource**
+6. **License content is available as both a tool and resource**
 
-   - *What changed:* The `get_license` MCP tool has been removed from the tool list. The
-     same content is now exposed as the `genereview://license` MCP resource.
-   - *Why:* Static reference material belongs in resources, not tools, per MCP protocol
-     conventions. This frees a tool slot and allows clients to cache the resource.
-   - *Migration:* Replace `call_tool("get_license")` with a resource read:
-     `read_resource("genereview://license")`. The REST route `GET /license` is
-     unchanged.
+   - *What changed:* License and attribution text is exposed through
+     `get_license`, `GET /license`, and the cacheable `genereview://license`
+     MCP resource.
+   - *Why:* Static reference material works well as a resource, while retaining
+     the tool keeps older MCP clients and scripted smoke tests compatible.
+   - *Migration:* No migration is required. Prefer `genereview://license` for
+     cacheable clients; `call_tool("get_license")` remains supported.
 
 7. **Invalid gene symbol now returns a structured 400 instead of empty results**
 

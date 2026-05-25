@@ -18,7 +18,7 @@ A unified Python server providing both REST API and MCP interfaces for searching
 
 ```bash
 # Install with development dependencies
-pip install -e ".[dev]"
+uv sync
 
 # Create environment configuration
 cp .env.example .env
@@ -38,28 +38,28 @@ The server can be run in different modes depending on your needs.
 
 #### Unified Mode (REST API + MCP over HTTP) - Recommended for Web Deployments
 ```bash
-python server.py serve --transport unified
+uv run genereview-link serve --transport unified
 # Or in production:
-uvicorn server:app --host 0.0.0.0 --port 8000
+uv run uvicorn server:app --host 0.0.0.0 --port 8000
 ```
 - REST API available at `http://localhost:8000`  
 - MCP tools available at `http://localhost:8000/mcp`
 
 #### STDIO Mode (MCP only) - For Local AI Assistants
 ```bash
-python server.py serve --transport stdio
+uv run genereview-link serve --transport stdio
 # Or for backwards compatibility:
-python mcp_server.py
+uv run python mcp_server.py
 ```
 
 #### HTTP-Only Mode (REST API only)
 ```bash
-python server.py serve --transport http
+uv run genereview-link serve --transport http
 ```
 
 #### Development Mode
 ```bash
-python server.py serve --dev --transport unified
+uv run genereview-link serve --dev --transport unified
 ```
 
 The REST API provides:
@@ -147,20 +147,22 @@ CORS_ORIGINS=*                         # CORS allowed origins (default: *)
 
 ```bash
 # Linting and formatting
-ruff check .                    # Lint code
-ruff format .                   # Format code  
-black .                         # Alternative formatter
+make lint                       # Ruff lint
+make format                     # Ruff format
 
 # Type checking
-mypy .                          # Type check entire project
+make typecheck                  # Strict mypy
 
 # Testing
-pytest                          # Run all tests
-pytest tests/                   # Run specific test directory
-pytest tests/test_specific.py   # Run single test file
-pytest -k "test_name"           # Run specific test by name
-coverage run -m pytest         # Run tests with coverage
-coverage report                 # Show coverage report
+make test                       # Fast test suite
+make test-unit                  # Unit tests only
+make test-integration           # Integration tests
+make test-cov                   # Coverage with threshold
+uv run pytest tests/test_specific.py -q
+uv run pytest -k "test_name" -q
+
+# Full local gate before handoff
+make ci-local
 ```
 
 ### Project Structure
@@ -201,8 +203,14 @@ Add to your MCP client configuration:
 {
   "mcpServers": {
     "genereview-link": {
-      "command": "python",
-      "args": ["/path/to/mcp_server.py"],
+      "command": "uv",
+      "args": [
+        "run",
+        "genereview-link",
+        "serve",
+        "--transport",
+        "stdio"
+      ],
       "env": {
         "NCBI_API_KEY": "your_api_key_here"
       }
@@ -211,18 +219,40 @@ Add to your MCP client configuration:
 }
 ```
 
+For a local hosted MCP server running on port 8765:
+
+```bash
+claude mcp add --transport http genereview-link http://127.0.0.1:8765/mcp
+```
+
 ### Available MCP Tools
 
 - **`search_genereviews`** - Search for GeneReviews by gene symbol
+- **`search_passages`** - Corpus-backed passage search with modes and filters
+- **`get_chapter_metadata`** - Chapter outline, section counts, and table IDs
+- **`get_chapter_section`** - Retrieve passages for a chapter section
+- **`get_passage`** - Retrieve one passage with optional neighbor context
+- **`get_passages_batch`** - Fetch up to 20 passages by ID
+- **`get_table`** - Fetch a structured GeneReviews table
 - **`get_abstract`** - Fetch PubMed abstract and metadata
 - **`get_links`** - Get all available links for a publication
 - **`get_fulltext`** - Scrape comprehensive content from NCBI Bookshelf
-- **`get_genereview_summary`** - Complete workflow with all data sources
+- **`get_genereview_summary`** - Convenience summary workflow
+- **`get_license`** - License and attribution text
+
+Static references are also available as MCP resources, including
+`genereview://usage` and `genereview://license`.
 
 ### Recent Fixes
 
-✅ **Resolved MCP JSON parsing errors** - Fixed stdout contamination that caused "Unexpected non-whitespace character" errors  
-✅ **Clean protocol communication** - All logs now properly routed to stderr, leaving stdout for JSON protocol
+- **Resolved MCP JSON parsing errors** - Fixed stdout contamination that caused
+  "Unexpected non-whitespace character" errors.
+- **Clean protocol communication** - Logs are routed to stderr, leaving stdout
+  for JSON protocol in stdio mode.
+- **Phase 1 correctness/performance** - Cache TTLs are applied, STDIO now runs
+  the same lifecycle state as HTTP, Postgres search path is configured at pool
+  creation, bundle extraction is hardened, and asyncpg pool defaults are
+  production-tuned.
 
 ## Technical Details
 
@@ -333,7 +363,7 @@ If the schema is empty, `/passages/search` returns 503 until the corpus is loade
 |---|---|
 | Python + FastAPI baseline | ~150 MB |
 | BGE-small-en-v1.5 model (`GENEREVIEW_EAGER_LOAD_BGE=true`) | ~130 MB |
-| asyncpg pool (10 connections) | ~50 MB |
+| asyncpg pool (20 connections, default max) | ~100 MB |
 | Postgres shared_buffers (self-hosted) | ~1 GB |
 | **Total recommended** | **3 GB** |
 

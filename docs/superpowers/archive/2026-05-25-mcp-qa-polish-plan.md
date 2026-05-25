@@ -1,6 +1,7 @@
 # MCP QA Polish Plan
 
 Date: 2026-05-25
+Status: Completed in PR #53 (`39af970`, follow-up `15ffbec`).
 
 ## Tasks
 

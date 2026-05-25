@@ -9,11 +9,33 @@ This is a fundamentally solid system. The gaps below are mostly the "second 80%"
 
 Findings are prioritized P0 (bugs / correctness), P1 (high-impact perf), P2 (architecture / MCP). Each has file:line refs and a concrete fix.
 
+## Status Update After PR #53
+
+PR #53 (`feat/phase1-correctness-and-perf`) landed on `main` as merge commit
+`4496721b5bbe58106220b92baf20e6fd6aa85da6`. It resolved the Phase 1
+correctness/performance set and the follow-up MCP QA polish:
+
+- **Resolved:** #1 cache TTL application, #2 STDIO lifecycle initialization,
+  #4 tarball/manifest extraction hardening, #11 asyncpg `search_path` startup
+  settings, #12 asyncpg pool tuning, #19 dead `mcp_custom_names` removal.
+- **Verified invalid/already mitigated:** #18 `/metrics` MCP exposure. The
+  `/metrics` route is `include_in_schema=False`, so FastMCP does not expose it.
+- **Additional QA polish resolved:** `get_abstract` invalid PMID validation,
+  `search_genereviews` empty-result recovery hints, canonical `NBK...` IDs in
+  `get_fulltext` and embedded summary fulltext, `get_genereview_summary`
+  resolution independent of include flags, and schema-level `table_id` pattern.
+
+Remaining open backlog is concentrated in #3, #5-#10, #13-#17, #20-#24, plus
+the smaller polish table. The active decomposition backlog is still #16
+(`EutilsClient` split) and #23 (`passages.py` split).
+
 ---
 
 ## P0 — Bugs / Latent Correctness Issues
 
-### 1. `CACHE_TTL_HOURS` is read but **never applied** → cache never expires
+### 1. `CACHE_TTL_HOURS` is read but **never applied** -> cache never expires
+
+**Status:** Resolved in PR #53.
 
 **Location:** `genereview_link/services/genereview_service.py:43-52`
 
@@ -33,7 +55,9 @@ Drop the unused `self.cache_ttl` attribute.
 
 ---
 
-### 2. STDIO MCP transport runs without the DB pool, embedder, or gene_index → all `/passages/*` tools 503
+### 2. STDIO MCP transport runs without the DB pool, embedder, or gene_index -> all `/passages/*` tools 503
+
+**Status:** Resolved in PR #53.
 
 **Location:** `genereview_link/server_manager.py:580-592`
 
@@ -76,6 +100,8 @@ async def _encode(self, texts):
 ---
 
 ### 4. `tarfile.extractall` runs **before** manifest checksum verification + no `filter="data"`
+
+**Status:** Resolved in PR #53.
 
 **Location:** `genereview_link/server_manager.py:118-124`
 
@@ -194,7 +220,12 @@ Callers cannot distinguish "rate-limited (retry later)" from any other failure. 
 
 ## P1 — High-Impact Performance Wins
 
-### 11. `set search_path` per query — drop one round-trip per repository call
+### 11. `set search_path` per query - drop one round-trip per repository call
+
+**Status:** Resolved in PR #53. Implemented with
+`server_settings={"search_path": "genereview, public"}` on
+`asyncpg.create_pool`, not connection `init`, so the setting survives asyncpg
+pool release/reset.
 
 **Location:** `genereview_link/retrieval/repository.py:342, 437, 454, 468, 488, 512, 596, 662, 746, 781, 805, 845, 863`
 
@@ -214,6 +245,8 @@ The ingest path correctly uses `SET LOCAL search_path` inside a transaction (`pi
 ---
 
 ### 12. Pool defaults are not production-tuned
+
+**Status:** Resolved in PR #53.
 
 **Location:** `genereview_link/db/pool.py:25-42` and `genereview_link/config.py:32-34`
 
@@ -309,6 +342,16 @@ await conn.execute("set local lock_timeout = '5s'")
 
 ### 18. `/metrics` is exposed as an MCP tool by default
 
+**Status (2026-05-26):** **Invalid / already mitigated.** Verified during
+Phase 1 spec code review: `server_manager.py:427` sets
+`include_in_schema=False` on the `/metrics` route, which removes it
+from the OpenAPI schema that `FastMCP.from_fastapi` walks. The runtime
+MCP tool list does not include `/metrics`. No fix required; the
+RouteMap exclusion would be defense-in-depth at best. Dropped from
+Phase 1 scope.
+
+**Original finding (kept for history):**
+
 **Location:** `genereview_link/server_manager.py:447-454`
 
 The `route_maps` EXCLUDE list covers `/debug/`, `/health`, `/`, `/docs`, `/openapi.json` — **but not `/metrics`** (registered at `_add_utility_endpoints`, line 427). `FastMCP.from_fastapi` walks all GET routes by default; Prometheus scrape format text is then exposed as a tool an LLM might call. Adds noise to the tool list and is useless to clients.
@@ -328,6 +371,8 @@ mcp_route_maps = [
 ---
 
 ### 19. `mcp_custom_names` dict is dead code
+
+**Status:** Resolved in PR #53.
 
 **Location:** `genereview_link/server_manager.py:435-444`
 
@@ -395,7 +440,7 @@ The `_extract_references` regex pipeline has two fallback strategies and is orde
 
 | File:line | Issue | Fix |
 |---|---|---|
-| `server_manager.py:128` | `jobs=os.cpu_count()` can pass `None` | `os.cpu_count() or 2` |
+| `server_manager.py:128` | `jobs=os.cpu_count()` can pass `None` | **Resolved in PR #53:** moved to `server_lifecycle.py` and uses `os.cpu_count() or 2` |
 | `server_manager.py:214,241,258` | `except Exception` swallows tracebacks with `error=str(exc)` only | Add `exc_info=True` to `logger.warning` |
 | `corpus/parallel.py:42-53` | `_iter_tarball` reads each member fully then `del data` immediately — yielding the dataclass means the bytes live in the futures queue anyway | Cap `in_flight` length is good; consider streaming `extractfile` directly to the worker (pickle cost stays) |
 | `retrieval/embeddings.py:135` | `np.asarray(..., dtype=float).tolist()` → float64 round-trip | `vectors.tolist()` |
@@ -403,7 +448,7 @@ The `_extract_references` regex pipeline has two fallback strategies and is orde
 | `services/genereview_service.py:72,180,193,213` | Several `scraped_data.pop(...)` paths assume specific dict shapes and will `KeyError`/`TypeError` on partial failures | Use `.pop(..., None)` and validate types |
 | `api/eutils_client.py:23` | `warnings.filterwarnings(...)` at module import affects every module | Use a context manager around the specific BS4 calls |
 | `api/orchestration.py:30` | `live_corpus_version()` returns `f"live:{datetime.now(UTC).isoformat()}"` — high cardinality if it lands in a Prometheus label anywhere | Verify it never gets used as a label |
-| `db/pool.py:39-40` | min=2/max=10 — see #12 |
+| `db/pool.py:39-40` | min=2/max=10 — see #12 | **Resolved in PR #53:** max default is now 20 and pool tuning is configurable |
 | `corpus/pipeline.py:163` | `TemporaryDirectory(dir=work_dir)` — if `work_dir` is None and `/tmp` is small, this OOMs disk during corpus extract | Make `work_dir` mandatory in production via config |
 
 ---
@@ -412,11 +457,18 @@ The `_extract_references` regex pipeline has two fallback strategies and is orde
 
 If I had a week with this codebase, the work order is:
 
-1. **Day 1** — Fix STDIO transport regression (#2) and cache TTL bug (#1). Both are functional issues users will hit.
-2. **Day 2** — Move `set search_path` into `_init_conn` (#11), tune pool kwargs (#12), and add the `tarfile filter="data"` (#4). Touches one file each, low risk, big quality bump.
-3. **Day 3** — Add `asyncio.Lock` to the embedding lazy load (#3), fix `DistributedRateLimiter` to use `asyncio.Lock` + Postgres advisory locks (#9), tighten `EutilsClient` 429/`Retry-After` handling (#8).
-4. **Day 4** — Either finish or rip out the release watcher (#5); add `corpus_version` + `gene_index` refresh on swap (#6); exclude `/metrics` from MCP (#18); drop the `mcp_custom_names` dead config (#19).
-5. **Day 5** — Split `EutilsClient` (#16) and start a `bookshelf_scraper` module with property tests, so the next NCBI HTML change doesn't take down ingest.
+1. **Done in PR #53** - Fix STDIO transport regression (#2), cache TTL bug
+   (#1), per-query `search_path` (#11), pool tuning (#12), tar extraction
+   hardening (#4), and dead MCP custom names (#19).
+2. **Next** - Add `asyncio.Lock` to the embedding lazy load (#3), fix
+   `DistributedRateLimiter` to use `asyncio.Lock` plus Postgres advisory locks
+   (#9), and tighten `EutilsClient` 429/`Retry-After` handling (#8).
+3. **Next** - Either finish or remove the release watcher (#5), then refresh
+   `app.state.corpus_version` and `app.state.gene_index` after corpus swaps
+   (#6). #18 is already mitigated and does not need implementation.
+4. **Next** - Split `EutilsClient` (#16) and start a `bookshelf_scraper`
+   module with property tests, so the next NCBI HTML change does not take down
+   ingest.
 
 ---
 
