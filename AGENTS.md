@@ -80,6 +80,20 @@ Useful focused commands:
   covered by unit tests.
 - All XML parsing must use `defusedxml`, never `xml.etree.ElementTree`.
 
+## Postgres Connection
+
+- `DATABASE_POOL_MIN_SIZE` and `DATABASE_POOL_MAX_SIZE` control asyncpg pool
+  size. The default max is 20 for production headroom.
+- `DATABASE_MAX_INACTIVE_CONNECTION_LIFETIME_S` controls how long idle
+  connections remain in the pool before asyncpg closes them. The default is
+  300 seconds.
+- `DATABASE_COMMAND_TIMEOUT_S` can set a per-command asyncpg timeout. The
+  default `None` leaves timeout behavior to asyncpg/Postgres defaults.
+- `DATABASE_STATEMENT_CACHE_SIZE` controls asyncpg's prepared statement cache.
+  Keep the default 100 for direct Postgres connections. Set it to 0 when using
+  PgBouncer in transaction-pooling mode, where prepared statements are unsafe
+  across backend connection swaps.
+
 ## File Size Discipline
 
 Hard cap: **600 lines per Python module** in `genereview_link/`, `server.py`,
