@@ -13,7 +13,7 @@ from genereview_link.config import Settings
 def test_database_url_defaults_to_empty() -> None:
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("DATABASE_URL", None)
-        settings = Settings()
+        settings = Settings(_env_file=None)
         assert settings.DATABASE_URL == ""
 
 
@@ -24,7 +24,7 @@ def test_database_url_from_env() -> None:
 
 
 def test_database_pool_min_max_defaults() -> None:
-    settings = Settings()
+    settings = Settings(_env_file=None)
     assert settings.DATABASE_POOL_MIN_SIZE == 2
     assert settings.DATABASE_POOL_MAX_SIZE == 20
 
