@@ -363,8 +363,8 @@ class UnifiedServerManager:
         self._current_transport = "stdio"
         logger.info("Starting STDIO MCP server...")
         self.app = self.create_fastapi_app(config)
-        await _initialize_state(self.app)
         try:
+            await _initialize_state(self.app)
             self.mcp = await self.create_mcp_server(self.app, config)
             await self.mcp.run_async(transport="stdio")
         finally:

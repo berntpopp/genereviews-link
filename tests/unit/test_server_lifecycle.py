@@ -81,3 +81,24 @@ async def test_start_stdio_server_teardown_runs_on_exception() -> None:
     create_mcp_server.assert_awaited_once()
     mcp.run_async.assert_awaited_once_with(transport="stdio")
     teardown.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_stdio_server_teardown_runs_when_initialize_fails() -> None:
+    with (
+        patch(
+            "genereview_link.server_manager._initialize_state",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("init boom"),
+        ) as init,
+        patch("genereview_link.server_manager._teardown_state", new_callable=AsyncMock) as teardown,
+        patch.object(
+            UnifiedServerManager, "create_mcp_server", new_callable=AsyncMock
+        ) as create_mcp,
+        pytest.raises(RuntimeError, match="init boom"),
+    ):
+        await UnifiedServerManager().start_stdio_server(ServerConfig(transport="stdio"))
+
+    init.assert_awaited_once()
+    create_mcp.assert_not_awaited()
+    teardown.assert_awaited_once()
