@@ -339,7 +339,6 @@ class GeneReviewRepository:
             )
 
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             rows = await conn.fetch(
                 f"""
                 with q as (
@@ -434,7 +433,6 @@ class GeneReviewRepository:
         limit: int | None = None,
     ) -> list[ChapterRow]:
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             rows = await conn.fetch(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
@@ -451,7 +449,6 @@ class GeneReviewRepository:
 
     async def get_chapter_by_nbk(self, nbk_id: str) -> ChapterRow | None:
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             row = await conn.fetchrow(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
@@ -465,7 +462,6 @@ class GeneReviewRepository:
 
     async def get_chapter_by_pmid(self, pmid: str) -> ChapterRow | None:
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             row = await conn.fetchrow(
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
@@ -485,7 +481,6 @@ class GeneReviewRepository:
         heading_path_contains: str | None = None,
     ) -> list[PassageRow]:
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             rows = await conn.fetch(
                 """
                 select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
@@ -509,7 +504,6 @@ class GeneReviewRepository:
 
     async def get_passage(self, passage_id: str) -> PassageRow | None:
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             row = await conn.fetchrow(
                 """
                 select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
@@ -593,7 +587,6 @@ class GeneReviewRepository:
         before_rows, after_rows, has_more_before, has_more_after).
         """
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             focal = await self._fetch_passage_row(conn, passage_id)
             if focal is None:
                 return None, [], [], False, False
@@ -659,7 +652,6 @@ class GeneReviewRepository:
         number of table-type passages stored for this chapter.
         """
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             chapter = await conn.fetchrow(
                 """
                 select nbk_id, title, last_updated_date, ingested_at, gene_symbols
@@ -743,7 +735,6 @@ class GeneReviewRepository:
     async def get_table(self, nbk_id: str, table_id: str) -> TableRow | None:
         """Fetch a single table passage by nbk_id + table_id."""
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             row = await conn.fetchrow(
                 """
                 select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
@@ -777,7 +768,6 @@ class GeneReviewRepository:
     async def list_table_ids(self, nbk_id: str) -> list[str]:
         """Return all table_ids for a chapter, ordered by chunk_index."""
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             rows = await conn.fetch(
                 """
                 select table_id
@@ -802,7 +792,6 @@ class GeneReviewRepository:
         nbks = [n for n, _ in passage_ids]
         pids = [p for _, p in passage_ids]
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             # model_table is operator-controlled (not user input); S608 suppressed
             sql = f'select passage_id, 1 - (embedding <=> $1::vector) as score from "{model_table}" where (nbk_id, passage_id) in (select unnest($2::text[]), unnest($3::text[]))'  # noqa: S608
             rows = await conn.fetch(
@@ -841,12 +830,10 @@ class GeneReviewRepository:
             top_k=top_k,
         )
         params[0] = query_vector
-        async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
-            async with conn.transaction():
-                for stmt in setup:
-                    await conn.execute(stmt)
-                rows = await conn.fetch(select_sql, *params)
+        async with self._acquire() as conn, conn.transaction():
+            for stmt in setup:
+                await conn.execute(stmt)
+            rows = await conn.fetch(select_sql, *params)
         return [
             {"passage_id": r["passage_id"], "dense_score": float(r["dense_score"])} for r in rows
         ]
@@ -860,7 +847,6 @@ class GeneReviewRepository:
         if not passage_ids:
             return {}
         async with self._acquire() as conn:
-            await conn.execute("set search_path to genereview, public")
             rows = await conn.fetch(
                 """
                 select p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,

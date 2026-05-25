@@ -7,9 +7,10 @@ from collections.abc import AsyncIterator
 from urllib.parse import urlparse
 
 import asyncpg
-import pgvector.asyncpg
 import pytest
 import pytest_asyncio
+
+from genereview_link.db.pool import _init_conn
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -76,7 +77,11 @@ async def pool() -> AsyncIterator[asyncpg.Pool]:
     """Yield a pool against the test Postgres; wipe genereview state before and after."""
     url = _database_url()
     pool = await asyncpg.create_pool(
-        url, min_size=1, max_size=4, init=pgvector.asyncpg.register_vector
+        url,
+        min_size=1,
+        max_size=4,
+        server_settings={"search_path": "genereview, public"},
+        init=_init_conn,
     )
     await _wipe(pool)
     yield pool

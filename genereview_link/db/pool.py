@@ -38,5 +38,6 @@ async def create_pool() -> asyncpg.Pool:
         dsn=s.DATABASE_URL,
         min_size=s.DATABASE_POOL_MIN_SIZE,
         max_size=s.DATABASE_POOL_MAX_SIZE,
+        server_settings={"search_path": "genereview, public"},
         init=_init_conn,
     )
