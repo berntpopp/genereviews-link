@@ -71,8 +71,8 @@ typecheck-fresh: ## Clear mypy cache and run typecheck
 test: ## Run tests quickly
 	uv run pytest tests -q
 
-test-fast: ## Run tests in parallel with pytest-xdist
-	uv run pytest tests -q -n auto
+test-fast: ## Run fast non-integration tests in parallel with pytest-xdist
+	uv run pytest tests -q -n auto -m "not integration and not slow"
 
 test-unit: ## Run unit tests in parallel
 	uv run pytest tests -q -n auto -m "not integration and not slow"
