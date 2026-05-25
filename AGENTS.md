@@ -54,6 +54,7 @@ Useful focused commands:
 - `make format`
 - `make lint`
 - `make lint-fix`
+- `make lint-loc`
 - `make typecheck`
 - `make typecheck-fast`
 - `make test`
@@ -78,6 +79,35 @@ Useful focused commands:
 - Keep FastAPI route behavior covered by route tests and service behavior
   covered by unit tests.
 - All XML parsing must use `defusedxml`, never `xml.etree.ElementTree`.
+
+## File Size Discipline
+
+Hard cap: **600 lines per Python module** in `genereview_link/`, `server.py`,
+and `mcp_server.py`. Enforced by `make lint-loc` (wired into `ci-local` and
+pre-commit). Tests are exempt.
+
+Why: large modules concentrate complexity, slow mypy and import cost, and
+degrade LLM-assisted refactors (a single edit risks unrelated breakage).
+When a file approaches 500 lines, plan its split.
+
+How:
+
+- New files MUST stay under 600 lines.
+- Existing oversized files are grandfathered in `.loc-allowlist` with their
+  current line count as the ceiling. They may shrink but not grow. Removing
+  an entry after a successful split is the goal.
+- Prefer cohesive splits: one module per responsibility (e.g.,
+  `scraping/{bookshelf_scraper,reference_parser}.py`), not random
+  partitioning to slip under the cap.
+- Keep the public Protocol or facade stable across splits so call sites
+  don't churn.
+- If you must add to an allowlisted file as part of an unrelated fix, raise
+  the ceiling explicitly in `.loc-allowlist` in the same commit and link the
+  decomposition plan in the message.
+
+The active decomposition backlog lives in
+`.planning/2026-05-25-senior-engineering-review.md` (findings #16 EutilsClient
+split, #23 passages.py split).
 
 ## Testing Notes
 
