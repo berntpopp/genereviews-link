@@ -1,10 +1,12 @@
 """Client lifecycle management for EutilsClient with singleton pattern and distributed rate limiting."""
 
 import asyncio
+import os
+import tempfile
 import threading
 import time
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any, Optional
 
 from genereview_link.api.eutils_client import EutilsClient
@@ -35,25 +37,73 @@ class DistributedRateLimiter:
         self.shared_state_file = shared_state_file
         self._local_last_request = 0.0
         self._lock = threading.Lock()
+        self._shared_state_warning_emitted = False
+        self._prepare_shared_state_file()
+
+    def _prepare_shared_state_file(self) -> None:
+        """Create and probe the shared state path once before distributed use."""
+        if not self.shared_state_file:
+            return
+        try:
+            directory = os.path.dirname(self.shared_state_file)
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            self._probe_shared_state_file()
+        except OSError as exc:
+            self._disable_shared_state(exc)
+
+    def _probe_shared_state_file(self) -> None:
+        """Verify the shared state directory is writable without touching live state."""
+        if not self.shared_state_file:
+            return
+        directory = os.path.dirname(self.shared_state_file) or "."
+        fd, tmp_path = tempfile.mkstemp(prefix=".rate-limit-probe.", dir=directory)
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write("probe")
+        except OSError:
+            with suppress(OSError):
+                os.close(fd)
+            raise
+        finally:
+            with suppress(OSError):
+                os.unlink(tmp_path)
+
+    def _disable_shared_state(self, exc: OSError) -> None:
+        """Disable distributed coordination after logging one visible warning."""
+        if not self.shared_state_file:
+            return
+        state_file = self.shared_state_file
+        self.shared_state_file = None
+        if self._shared_state_warning_emitted:
+            return
+        self._shared_state_warning_emitted = True
+        logger.warning(
+            "Distributed rate limiting shared state disabled",
+            state_file=state_file,
+            errno=getattr(exc, "errno", None),
+            error=str(exc),
+        )
+
+    async def _wait_local(self, current_time: float) -> None:
+        """Use in-memory timing for single-worker or degraded operation."""
+        time_since_last = current_time - self._local_last_request
+        if time_since_last < self.delay:
+            wait_time = self.delay - time_since_last
+            logger.debug(f"Rate limiting: waiting {wait_time:.3f}s")
+            await asyncio.sleep(wait_time)
+        self._local_last_request = time.time()
 
     async def wait_if_needed(self) -> None:
         """Wait if necessary to respect rate limits across all workers."""
         with self._lock:
             current_time = time.time()
 
-            # For single worker: use in-memory timing
             if not self.shared_state_file:
-                time_since_last = current_time - self._local_last_request
-                if time_since_last < self.delay:
-                    wait_time = self.delay - time_since_last
-                    logger.debug(f"Rate limiting: waiting {wait_time:.3f}s")
-                    await asyncio.sleep(wait_time)
-                self._local_last_request = time.time()
+                await self._wait_local(current_time)
                 return
 
-            # For multi-worker: use file-based coordination
             try:
-                # Read last request time from shared state
                 last_request_time = self._read_shared_state()
                 time_since_last = current_time - last_request_time
 
@@ -62,17 +112,11 @@ class DistributedRateLimiter:
                     logger.debug(f"Rate limiting (distributed): waiting {wait_time:.3f}s")
                     await asyncio.sleep(wait_time)
 
-                # Update shared state with current time
                 self._write_shared_state(time.time())
 
-            except Exception as e:
-                logger.warning(f"Distributed rate limiting failed, falling back to local: {e}")
-                # Fallback to local timing
-                time_since_last = current_time - self._local_last_request
-                if time_since_last < self.delay:
-                    wait_time = self.delay - time_since_last
-                    await asyncio.sleep(wait_time)
-                self._local_last_request = time.time()
+            except OSError as exc:
+                self._disable_shared_state(exc)
+                await self._wait_local(current_time)
 
     def _read_shared_state(self) -> float:
         """Read last request time from shared state file."""
@@ -85,14 +129,19 @@ class DistributedRateLimiter:
             return 0.0
 
     def _write_shared_state(self, timestamp: float) -> None:
-        """Write current timestamp to shared state file."""
+        """Atomically write current timestamp to shared state file."""
         if not self.shared_state_file:
             return
+        directory = os.path.dirname(self.shared_state_file) or "."
+        fd, tmp_path = tempfile.mkstemp(prefix=".rate-limit.", dir=directory)
         try:
-            with open(self.shared_state_file, "w") as f:
+            with os.fdopen(fd, "w") as f:
                 f.write(str(timestamp))
-        except Exception as e:
-            logger.warning(f"Failed to write shared state: {e}")
+            os.replace(tmp_path, self.shared_state_file)
+        except OSError:
+            with suppress(FileNotFoundError):
+                os.unlink(tmp_path)
+            raise
 
 
 class ClientManager:
