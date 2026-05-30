@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any  # ET.Element type lives in defusedxml; use Any to keep mypy quiet
 
@@ -36,12 +37,21 @@ def _positive_int_attr(node: Any, name: str) -> int:
         return 1
 
 
-def parse_rows(table_elem: Any) -> list[list[str]]:
+def _strip_header_artifacts(text: str) -> str:
+    """Strip Bookshelf-style trailing numeric footnote markers from header text."""
+    return re.sub(r"\s{2,}\d+\s*$", "", text).strip()
+
+
+def _parse_rows_from_trs(
+    tr_nodes: list[Any],
+    *,
+    strip_header_artifacts: bool = False,
+) -> list[list[str]]:
     """Parse NXML table rows, expanding rowspan and colspan."""
     rows: list[list[str]] = []
     pending: dict[int, tuple[str, int]] = {}
 
-    for tr in table_elem.findall(".//tr"):
+    for tr in tr_nodes:
         row: list[str] = []
         col_idx = 0
         cells = iter(child for child in tr if _local_name(child) in {"td", "th"})
@@ -61,6 +71,8 @@ def parse_rows(table_elem: Any) -> list[list[str]]:
                 break
 
             value = _text_or_empty(cell)
+            if strip_header_artifacts:
+                value = _strip_header_artifacts(value)
             colspan = _positive_int_attr(cell, "colspan")
             rowspan = _positive_int_attr(cell, "rowspan")
 
@@ -84,6 +96,29 @@ def parse_rows(table_elem: Any) -> list[list[str]]:
     return rows
 
 
+def _flatten_header_rows(header_rows: list[list[str]]) -> list[str]:
+    """Flatten expanded grouped header rows into one label per leaf column."""
+    if not header_rows:
+        return []
+
+    width = max(len(row) for row in header_rows)
+    padded_rows = [row + [""] * (width - len(row)) for row in header_rows]
+    header: list[str] = []
+    for col_idx in range(width):
+        parts: list[str] = []
+        for row in padded_rows:
+            value = row[col_idx].strip()
+            if value and value not in parts:
+                parts.append(value)
+        header.append(" / ".join(parts))
+    return header
+
+
+def parse_rows(table_elem: Any) -> list[list[str]]:
+    """Parse NXML table rows, expanding rowspan and colspan."""
+    return _parse_rows_from_trs(list(table_elem.findall(".//tr")))
+
+
 def extract_table(table_wrap: Any, *, ordinal: int) -> ExtractedTable:
     """Extract a single <table-wrap> element."""
     nxml_id = table_wrap.get("id")
@@ -105,9 +140,11 @@ def extract_table(table_wrap: Any, *, ordinal: int) -> ExtractedTable:
     if table is not None:
         thead = table.find("thead")
         if thead is not None:
-            header_row = thead.find("tr")
-            if header_row is not None:
-                header = [_text_or_empty(th) for th in header_row.findall("th")]
+            header_rows = _parse_rows_from_trs(
+                list(thead.findall("tr")),
+                strip_header_artifacts=True,
+            )
+            header = _flatten_header_rows(header_rows)
         tbody = table.find("tbody")
         if tbody is not None:
             rows = parse_rows(tbody)
@@ -152,10 +189,12 @@ def render_table_markdown(
     if header:
         parts.append("| " + " | ".join(header) + " |")
         parts.append("| " + " | ".join("---" for _ in header) + " |")
+    if header:
+        for index, row in enumerate(rows, start=1):
+            if len(row) != len(header):
+                raise ValueError(f"row {index} has {len(row)} cells but header has {len(header)}")
     for row in rows:
-        # pad rows to header width
-        padded = list(row) + [""] * max(0, len(header) - len(row))
-        parts.append("| " + " | ".join(padded) + " |")
+        parts.append("| " + " | ".join(row) + " |")
     if footnotes:
         parts.append("")
         parts.append(footnotes)

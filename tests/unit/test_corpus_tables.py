@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from defusedxml import ElementTree as ET  # noqa: N817 - drop-in replacement for stdlib ET
 
 from genereview_link.corpus.tables import extract_table, render_table_markdown
@@ -23,6 +24,34 @@ def test_extract_table_returns_id_caption_header_rows() -> None:
     assert table.header == ["Variant", "Drug", "Min age"]
     assert len(table.rows) == 2
     assert table.rows[0] == ["Class I", "elexacaftor", "6 yrs"]
+
+
+def test_extract_table_flattens_nested_headers_to_match_rows() -> None:
+    table = extract_table(load_fixture("table_nested_header.nxml"), ordinal=2)
+
+    assert table.table_id == "T.nested"
+    assert table.header == [
+        "Cancer type",
+        "Risk for Malignancy / BRCA1",
+        "Risk for Malignancy / BRCA2",
+        "Management",
+    ]
+    assert all(len(row) == len(table.header) for row in table.rows)
+    assert table.rows[0] == [
+        "Breast cancer",
+        "60%-80%",
+        "45%-70%",
+        "Surveillance",
+    ]
+
+
+def test_render_table_markdown_rejects_width_mismatch() -> None:
+    with pytest.raises(ValueError, match="row 1 has 1 cells but header has 2"):
+        render_table_markdown(
+            caption="Broken table",
+            header=["A", "B"],
+            rows=[["1"]],
+        )
 
 
 def test_extract_table_falls_back_to_ordinal_when_no_id() -> None:

@@ -1,0 +1,30 @@
+<table-wrap id="T.nested">
+  <caption><title>Table 2</title><p>Breast and ovarian cancer risk</p></caption>
+  <table>
+    <thead>
+      <tr>
+        <th rowspan="2">Cancer type</th>
+        <th colspan="2">Risk for Malignancy  1</th>
+        <th rowspan="2">Management</th>
+      </tr>
+      <tr>
+        <th>BRCA1</th>
+        <th>BRCA2</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Breast cancer</td>
+        <td>60%-80%</td>
+        <td>45%-70%</td>
+        <td>Surveillance</td>
+      </tr>
+      <tr>
+        <td>Ovarian cancer</td>
+        <td>35%-45%</td>
+        <td>10%-20%</td>
+        <td>Risk-reducing surgery</td>
+      </tr>
+    </tbody>
+  </table>
+</table-wrap>
