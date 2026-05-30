@@ -114,7 +114,7 @@ def test_production_compose_uses_unified_cli_server_not_gunicorn_env() -> None:
     assert "GUNICORN_LOG_LEVEL" not in service["environment"]
 
 
-def test_production_tmpfs_matches_bundle_bootstrap_dir_and_size() -> None:
+def test_production_tmpfs_matches_bundle_bootstrap_dir_size_and_mode() -> None:
     compose = yaml.load(
         (REPO_ROOT / "docker/docker-compose.prod.yml").read_text(),
         Loader=_ComposeLoader,  # noqa: S506
@@ -122,4 +122,21 @@ def test_production_tmpfs_matches_bundle_bootstrap_dir_and_size() -> None:
 
     tmpfs = compose["services"]["genereview-link"]["tmpfs"]
 
-    assert "/tmp/genereview-link:rw,noexec,nosuid,size=512m" in tmpfs  # noqa: S108
+    assert "/tmp/genereview-link:rw,noexec,nosuid,size=512m,mode=1777" in tmpfs  # noqa: S108
+
+
+def test_npm_overlay_inherits_production_tmpfs_mode() -> None:
+    config = _compose_config(
+        "docker/docker-compose.yml",
+        "docker/docker-compose.prod.yml",
+        "docker/docker-compose.npm.yml",
+    )
+
+    tmpfs = config["services"]["genereview-link"]["tmpfs"]
+
+    assert any(
+        entry.startswith("/tmp/genereview-link:")  # noqa: S108
+        and "size=512m" in entry
+        and "mode=1777" in entry
+        for entry in tmpfs
+    )

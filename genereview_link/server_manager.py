@@ -33,6 +33,7 @@ from genereview_link.api.routes import passages as passages_routes
 from genereview_link.api.routes import tables as tables_routes
 from genereview_link.config import ServerConfig, settings
 from genereview_link.logging_config import get_logger
+from genereview_link.mcp.error_passthrough import wrap_structured_error_tools
 from genereview_link.server_lifecycle import (
     _bootstrap as _bootstrap,
 )
@@ -259,6 +260,7 @@ class UnifiedServerManager:
                 "Research use only; not for clinical decision support."
             ),
             route_maps=mcp_route_maps,
+            mcp_component_fn=wrap_structured_error_tools,
         )
 
         # Register genereview://license as an MCP resource.

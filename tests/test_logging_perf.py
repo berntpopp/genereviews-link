@@ -8,16 +8,19 @@ All tests are pure-Python; no network or HTTP.
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
 
+from genereview_link.config import settings
 from genereview_link.logging_config import (
     LogContext,
     PerformanceLogger,
     add_log_level,
     add_service_context,
     add_timestamp,
+    configure_structlog,
     create_request_logger,
     get_logger,
     json_serializer,
@@ -132,11 +135,39 @@ class TestProcessors:
 
 
 class TestSerializer:
-    def test_json_serializer_returns_bytes_with_newline(self) -> None:
+    def test_json_serializer_returns_str_without_embedded_newline(self) -> None:
         payload: dict[str, Any] = {"a": 1, "b": "x"}
+
         data = json_serializer(payload)
-        assert isinstance(data, bytes)
-        assert data.endswith(b"\n")
+
+        assert isinstance(data, str)
+        assert not data.endswith("\n")
+        assert "\\n" not in data
+        assert json.loads(data) == payload
+
+    def test_configured_json_logging_emits_parseable_json(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(settings, "LOG_JSON", True)
+        monkeypatch.setattr(settings, "LOG_LEVEL", "INFO")
+        configure_structlog()
+
+        logger = get_logger("test.logging.json")
+        logger.info("structured-event", answer=42)
+        captured = capsys.readouterr()
+        line = captured.err.strip()
+
+        assert line
+        assert not line.startswith("b'")
+        assert "\\n" not in line
+        parsed = json.loads(line)
+        assert parsed["event"] == "structured-event"
+        assert parsed["answer"] == 42
+        assert parsed["level"] == "INFO"
+        assert parsed["service"] == "genereview-link"
+        assert "timestamp" in parsed
 
 
 class TestRequestUtilities:

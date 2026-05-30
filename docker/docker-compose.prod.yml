@@ -12,7 +12,7 @@ services:
 
     read_only: true
     tmpfs:
-      - /tmp/genereview-link:rw,noexec,nosuid,size=512m
+      - /tmp/genereview-link:rw,noexec,nosuid,size=512m,mode=1777
 
     security_opt:
       - no-new-privileges:true
