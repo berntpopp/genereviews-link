@@ -217,3 +217,85 @@ def test_get_table_openapi_schema_declares_table_id_pattern() -> None:
     table_param = next(param for param in params if param["name"] == "table_id")
 
     assert table_param["schema"]["pattern"] == r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+
+
+# ---------------------------------------------------------------------------
+# format query parameter -- markdown_table output mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_table_default_format_has_null_markdown_table() -> None:
+    """Default (no format param) must leave markdown_table absent/null."""
+    app = _build_app(table=_make_table_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/tables/t5")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # markdown_table should be absent or explicitly null -- not a string
+    assert body.get("markdown_table") is None
+
+
+@pytest.mark.asyncio
+async def test_get_table_structured_format_has_null_markdown_table() -> None:
+    """Explicit format=structured must also leave markdown_table null."""
+    app = _build_app(table=_make_table_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/tables/t5?format=structured")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("markdown_table") is None
+
+
+@pytest.mark.asyncio
+async def test_get_table_markdown_table_format_returns_nonempty_string() -> None:
+    """format=markdown_table must populate markdown_table with a non-empty string."""
+    app = _build_app(table=_make_table_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/tables/t5?format=markdown_table")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    md = body.get("markdown_table")
+    assert isinstance(md, str) and len(md) > 0, f"expected non-empty string, got {md!r}"
+
+
+@pytest.mark.asyncio
+async def test_get_table_markdown_table_contains_gfm_separator() -> None:
+    """markdown_table string must contain GFM header-separator cells (|---|)."""
+    app = _build_app(table=_make_table_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/tables/t5?format=markdown_table")
+
+    body = resp.json()
+    md: str = body["markdown_table"]
+    assert "---" in md, "GFM separator row missing"
+    assert "|" in md, "GFM pipe characters missing"
+
+
+@pytest.mark.asyncio
+async def test_get_table_markdown_table_contains_header_cell_text() -> None:
+    """markdown_table must contain the header cell values."""
+    app = _build_app(table=_make_table_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/tables/t5?format=markdown_table")
+
+    body = resp.json()
+    md: str = body["markdown_table"]
+    # Default fixture header is ["Variant", "Class"]
+    assert "Variant" in md
+    assert "Class" in md
+
+
+@pytest.mark.asyncio
+async def test_get_table_markdown_table_keeps_header_and_rows_populated() -> None:
+    """In markdown_table mode, header and rows must still be present (additive)."""
+    app = _build_app(table=_make_table_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/tables/t5?format=markdown_table")
+
+    body = resp.json()
+    assert body["header"] == ["Variant", "Class"]
+    assert body["rows"] == [["c.1A>G", "Pathogenic"]]
