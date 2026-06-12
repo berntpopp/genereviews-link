@@ -7,6 +7,7 @@ boot). Set GENEREVIEW_EAGER_LOAD_BGE=true to use the real SentenceTransformer.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal, cast, get_args
 
@@ -157,6 +158,20 @@ async def search_passages(
             ),
         ),
     ] = None,
+    gene_role: Annotated[
+        Literal["any", "primary", "mentioned"],
+        Query(
+            description=(
+                "Filter by gene role in the chapter. 'any' (default): gene in "
+                "gene_symbols (current behaviour). 'primary': gene in "
+                "primary_gene_symbols (chapter-defining gene). 'mentioned': gene "
+                "in gene_symbols but NOT in primary_gene_symbols. "
+                "Requires gene to be set; ignored when gene is absent. "
+                "Note: primary_gene_symbols is populated on re-ingest; existing "
+                "installs default to '{}' until then."
+            ),
+        ),
+    ] = "any",
     nbk_id: Annotated[
         str | None,
         Query(
@@ -331,6 +346,7 @@ async def search_passages(
                 brief=(mode == "brief"),
                 snippet_max_fragments=snippet_max_fragments,
                 snippet_max_words=snippet_max_words,
+                gene_role=gene_role,
             )
         )
         dense_task = asyncio.create_task(
@@ -341,6 +357,7 @@ async def search_passages(
                 sections=sections_tuple,
                 heading_path_contains=heading_path_contains,
                 top_k=k_parallel,
+                gene_role=gene_role,
             )
         )
         lex_rows, dense_rows = await asyncio.gather(lexical_task, dense_task)
@@ -364,6 +381,7 @@ async def search_passages(
 
         # Build LexicalPassageRow objects for dense-only candidates.
         # These have zero lexical scores so they compete only via dense rank in RRF.
+        # Set primary_gene_match=True when the queried gene is in primary_gene_symbols.
         dense_only_rows: list[LexicalPassageRow] = [
             LexicalPassageRow(
                 passage=p,
@@ -373,15 +391,25 @@ async def search_passages(
                 recall_overlap_count=0,
                 lexical_rank=0.0,
                 snippet=None,
+                primary_gene_match=bool(gene and gene in p.primary_gene_symbols),
             )
             for pid in dense_only_ids
             if (p := dense_only_passages.get(pid)) is not None
         ]
 
+        # Annotate lexical rows with primary_gene_match for ranker boost.
+        lex_rows = [
+            dataclasses.replace(
+                r,
+                primary_gene_match=bool(gene and gene in r.passage.primary_gene_symbols),
+            )
+            for r in lex_rows
+        ]
+
         lex = list(lex_rows) + dense_only_rows
 
     else:
-        lex = await repo.search_passages(
+        raw_lex = await repo.search_passages(
             q,
             gene_symbol=gene,
             nbk_id=nbk_id,
@@ -391,7 +419,15 @@ async def search_passages(
             brief=(mode == "brief"),
             snippet_max_fragments=snippet_max_fragments,
             snippet_max_words=snippet_max_words,
+            gene_role=gene_role,
         )
+        lex = [
+            dataclasses.replace(
+                r,
+                primary_gene_match=bool(gene and gene in r.passage.primary_gene_symbols),
+            )
+            for r in raw_lex
+        ]
 
     if rerank == "off":
         # Truly raw lexical order from the repo (no section_priority tiebreak).
@@ -405,6 +441,8 @@ async def search_passages(
     applied_filters: list[str] = []
     if gene:
         applied_filters.append(f"gene={gene}")
+        if gene_role != "any":
+            applied_filters.append(f"gene_role={gene_role}")
     if nbk_id:
         applied_filters.append(f"nbk_id={nbk_id}")
     if sections:

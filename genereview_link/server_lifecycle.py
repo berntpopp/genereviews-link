@@ -43,7 +43,7 @@ async def _bootstrap() -> None:
     In all cases, if an active corpus version already exists the function
     returns immediately (hot-path / already-populated).
     """
-    from genereview_link.db.migrate import apply_control_migrations
+    from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
     from genereview_link.db.pool import create_pool
     from genereview_link.ingest.github_release import (
         download_with_integrity,
@@ -62,6 +62,19 @@ async def _bootstrap() -> None:
             "select 1 from public.genereview_corpus_version where is_active"
         )
         if active:
+            # Ensure the live schema has any data-migration columns added since
+            # the last ingest (e.g. primary_gene_symbols / #43). Data migrations
+            # only reach the live 'genereview' schema via a full re-ingest +
+            # atomic_swap, so deploying code that SELECTs a new column against a
+            # corpus ingested before that migration would otherwise break every
+            # search query (UndefinedColumnError). apply_data_migrations is
+            # idempotent and keyed by public.schema_migrations: atomic_swap
+            # records genereview:0001..NNNN, so only unapplied versions run here
+            # (just the new column, added with its default). The ranker boost
+            # stays inactive until a re-ingest populates the values.
+            applied_data = await apply_data_migrations(pool, schema="genereview")
+            if applied_data:
+                logger.info("applied data migrations to live schema", versions=applied_data)
             logger.info("active corpus found; skipping bootstrap")
             return  # MODE 1 hot path / already-populated
 

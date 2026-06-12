@@ -52,9 +52,10 @@ def _app() -> FastAPI:
         brief: bool = False,
         snippet_max_fragments: int = 2,
         snippet_max_words: int = 30,
+        gene_role: str = "any",
     ) -> list[LexicalPassageRow]:
         del query, gene_symbol, nbk_id, sections, limit, brief, snippet_max_fragments
-        del snippet_max_words
+        del snippet_max_words, gene_role
         if heading_path_contains is None:
             return rows
         needle = heading_path_contains.casefold()

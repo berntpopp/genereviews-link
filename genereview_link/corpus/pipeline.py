@@ -15,6 +15,7 @@ from tempfile import TemporaryDirectory
 import asyncpg
 
 from genereview_link.corpus.archive import ArchiveListing, download_tarball, fetch_listing
+from genereview_link.corpus.nxml import extract_primary_gene_symbols
 from genereview_link.corpus.parallel import copy_chapters, copy_passages, parse_pipeline
 from genereview_link.corpus.records import ChapterRecord, PassageRecord
 from genereview_link.corpus.sidedata import load_sidedata
@@ -187,18 +188,20 @@ async def run_full_ingest(
 
         async for chapter, passages in parse_pipeline(tarball, sidedata):
             # apply sidedata joins
+            sidedata_gs = sidedata.gene_symbols.get(chapter.nbk_id, ())
             chapter = ChapterRecord(
                 nbk_id=chapter.nbk_id,
                 short_name=chapter.short_name,
                 title=chapter.title,
                 pubmed_id=chapter.pubmed_id,
-                gene_symbols=sidedata.gene_symbols.get(chapter.nbk_id, ()),
+                gene_symbols=sidedata_gs,
                 omim_ids=sidedata.omim_ids.get(chapter.nbk_id, ()),
                 authors=chapter.authors,
                 initial_pub_date=chapter.initial_pub_date,
                 last_updated_date=chapter.last_updated_date,
                 nxml_relpath=chapter.nxml_relpath,
                 raw_metadata={},
+                primary_gene_symbols=extract_primary_gene_symbols(chapter.title, sidedata_gs),
             )
             chapter_buf.append(chapter)
             passage_buf.extend(passages)

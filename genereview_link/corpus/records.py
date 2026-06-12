@@ -24,6 +24,7 @@ class ChapterRecord:
     last_updated_date: date | None
     nxml_relpath: str
     raw_metadata: dict[str, object] = field(default_factory=dict)
+    primary_gene_symbols: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
