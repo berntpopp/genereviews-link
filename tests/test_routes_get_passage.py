@@ -320,3 +320,86 @@ async def test_get_passage_carries_source_url() -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert body["passage"]["source_url"] == "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
+
+
+# ---------------------------------------------------------------------------
+# include=table_data opt-in tests (#44)
+# ---------------------------------------------------------------------------
+
+
+def _make_table_row(
+    *,
+    passage_id: str = "NBK1247:0099",
+    chunk_index: int = 99,
+    table_data: dict | None = None,
+) -> PassageRow:
+    return PassageRow(
+        nbk_id="NBK1247",
+        passage_id=passage_id,
+        chapter_section="management",
+        heading_path="Management > Table 1",
+        section_level=2,
+        chunk_index=chunk_index,
+        text="| Gene | Phenotype |\n| --- | --- |\n| BRCA1 | HBOC |",
+        chapter_title="BRCA1- and BRCA2-Associated HBOC",
+        chapter_last_updated=date(2025, 12, 1),
+        gene_symbols=("BRCA1",),
+        passage_type="table",
+        table_data=table_data,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_passage_table_data_absent_by_default() -> None:
+    """header/rows/markdown_table absent from response without include=table_data."""
+    pr = _make_table_row(
+        table_data={
+            "caption": "T1",
+            "header": ["Gene", "Phenotype"],
+            "rows": [["BRCA1", "HBOC"]],
+        }
+    )
+    app = _build_app(focal=pr)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1247:0099")
+    assert resp.status_code == 200
+    passage = resp.json()["passage"]
+    assert passage.get("header") is None
+    assert passage.get("rows") is None
+    assert passage.get("markdown_table") is None
+
+
+@pytest.mark.asyncio
+async def test_get_passage_table_data_opt_in_populates_fields() -> None:
+    """include=table_data populates header, rows, markdown_table for table passage."""
+    pr = _make_table_row(
+        table_data={
+            "caption": "Gene-phenotype correlations",
+            "header": ["Gene", "Phenotype"],
+            "rows": [["BRCA1", "HBOC"], ["BRCA2", "HBOC/PC"]],
+        }
+    )
+    app = _build_app(focal=pr)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1247:0099", params={"include": "table_data"})
+    assert resp.status_code == 200
+    passage = resp.json()["passage"]
+    assert passage["header"] == ["Gene", "Phenotype"]
+    assert passage["rows"] == [["BRCA1", "HBOC"], ["BRCA2", "HBOC/PC"]]
+    assert passage["markdown_table"] is not None
+    assert "Gene" in passage["markdown_table"]
+    assert "BRCA1" in passage["markdown_table"]
+
+
+@pytest.mark.asyncio
+async def test_get_passage_table_data_narrative_always_null() -> None:
+    """include=table_data on a narrative passage → header/rows/markdown_table all None."""
+    pr = _make_row(passage_id="NBK1247:0010", chunk_index=10)
+    app = _build_app(focal=pr)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/passages/NBK1247:0010", params={"include": "table_data"})
+    assert resp.status_code == 200
+    passage = resp.json()["passage"]
+    assert passage.get("header") is None
+    assert passage.get("rows") is None
+    assert passage.get("markdown_table") is None

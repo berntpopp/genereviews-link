@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from genereview_link.api.diagnostics import build_search_diagnostics
 from genereview_link.api.errors import FieldError, StructuredHTTPException
+from genereview_link.api.routes.table_enrichment import table_fields
 from genereview_link.models.genereview_models import (
     IdsOnlyPassage,
     IdsOnlySearchResponse,
@@ -210,13 +211,15 @@ async def search_passages(
         ),
     ] = None,
     include: Annotated[
-        list[Literal["score_breakdown", "heading_path_array"]] | None,
+        list[Literal["score_breakdown", "heading_path_array", "table_data"]] | None,
         Query(
             description=(
                 'Opt into default-off response fields. Values: "score_breakdown" '
                 "(returns raw lexical/dense ranks and populates "
                 '_meta.dense_model_id + embedding_dim), "heading_path_array" '
-                "(returns heading_path split on ' > ')."
+                "(returns heading_path split on ' > '), "
+                '"table_data" (for table passages: populates header, rows, '
+                "markdown_table; narrative passages remain unaffected)."
             )
         ),
     ] = None,
@@ -472,6 +475,7 @@ async def search_passages(
     include_set = set(include or [])
     include_score_breakdown = "score_breakdown" in include_set
     include_heading_array = "heading_path_array" in include_set
+    include_table_data = "table_data" in include_set
 
     out: list[RankedPassage] = []
     for pos, r in enumerate(ranked, start=1):
@@ -499,6 +503,7 @@ async def search_passages(
             if include_heading_array and r.passage.heading_path
             else None
         )
+        tdata = table_fields(r.passage, want=include_table_data)
         out.append(
             RankedPassage(
                 passage_id=r.passage.passage_id,
@@ -528,6 +533,7 @@ async def search_passages(
                 ),
                 table_id=r.passage.table_id if r.passage.passage_type == "table" else None,
                 source_url=_format_source_url(r.passage.nbk_id),
+                **tdata,
             )
         )
 
@@ -541,13 +547,15 @@ async def search_passages(
     else:
         meta = ResponseMeta(corpus_version=corpus, diagnostics=diagnostics_model)
 
-    # score_breakdown and heading_path_array are opt-in (absent by default).
+    # score_breakdown, heading_path_array, and table_data fields are opt-in.
     # Always exclude them from model_dump, then re-inject only when requested.
     excluded: set[str] = {str(field) for field in (exclude or [])}
     if not include_score_breakdown:
         excluded.add("score_breakdown")
     if not include_heading_array:
         excluded.add("heading_path_array")
+    if not include_table_data:
+        excluded.update({"header", "rows", "markdown_table"})
 
     if excluded:
         return JSONResponse(
@@ -607,9 +615,12 @@ async def get_passage(
         ),
     ] = False,
     include: Annotated[
-        list[Literal["heading_path_array"]] | None,
+        list[Literal["heading_path_array", "table_data"]] | None,
         Query(
-            description="Opt into heading_path_array (heading_path split on ' > ').",
+            description=(
+                "Opt into heading_path_array (heading_path split on ' > ') "
+                "and/or table_data (header, rows, markdown_table for table passages)."
+            ),
         ),
     ] = None,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
@@ -633,15 +644,31 @@ async def get_passage(
             ],
         )
 
-    include_heading_array = "heading_path_array" in set(include or [])
+    include_set = set(include or [])
+    include_heading_array = "heading_path_array" in include_set
+    include_table_data = "table_data" in include_set
 
     return PassageWindowResponse(  # type: ignore[call-arg]
-        passage=_passage_row_to_detail(focal, include_heading_array=include_heading_array),
+        passage=_passage_row_to_detail(
+            focal,
+            include_heading_array=include_heading_array,
+            include_table_data=include_table_data,
+        ),
         neighbors_before=[
-            _passage_row_to_detail(r, include_heading_array=include_heading_array) for r in before
+            _passage_row_to_detail(
+                r,
+                include_heading_array=include_heading_array,
+                include_table_data=include_table_data,
+            )
+            for r in before
         ],
         neighbors_after=[
-            _passage_row_to_detail(r, include_heading_array=include_heading_array) for r in after
+            _passage_row_to_detail(
+                r,
+                include_heading_array=include_heading_array,
+                include_table_data=include_table_data,
+            )
+            for r in after
         ],
         has_more_before=has_more_before,
         has_more_after=has_more_after,
@@ -650,12 +677,16 @@ async def get_passage(
 
 
 def _passage_row_to_detail(
-    row: PassageRow, *, include_heading_array: bool = False
+    row: PassageRow,
+    *,
+    include_heading_array: bool = False,
+    include_table_data: bool = False,
 ) -> PassageDetail:
     """Convert a PassageRow to a PassageDetail response model."""
     heading_path_array = (
         row.heading_path.split(" > ") if include_heading_array and row.heading_path else None
     )
+    tdata = table_fields(row, want=include_table_data)
     return PassageDetail(
         nbk_id=row.nbk_id,
         passage_id=row.passage_id,
@@ -678,6 +709,7 @@ def _passage_row_to_detail(
             passage_id=row.passage_id,
         ),
         source_url=_format_source_url(row.nbk_id),
+        **tdata,
     )
 
 
@@ -721,6 +753,7 @@ async def get_passages_batch(
 
     include_set = set(body.include or [])
     include_heading_array = "heading_path_array" in include_set
+    include_table_data = "table_data" in include_set
 
     found: list[PassageDetail] = []
     missing: list[str] = []
@@ -732,7 +765,13 @@ async def get_passages_batch(
             if row is None:
                 missing.append(pid)
                 continue
-            found.append(_passage_row_to_detail(row, include_heading_array=include_heading_array))
+            found.append(
+                _passage_row_to_detail(
+                    row,
+                    include_heading_array=include_heading_array,
+                    include_table_data=include_table_data,
+                )
+            )
 
     return PassageBatchResponse(  # type: ignore[call-arg]
         passages=found,

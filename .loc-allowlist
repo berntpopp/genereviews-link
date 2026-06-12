@@ -10,5 +10,5 @@
 
 genereview_link/api/eutils_client.py:1327
 genereview_link/retrieval/repository.py:915
-genereview_link/api/routes/passages.py:741
+genereview_link/api/routes/passages.py:780  # raised for #44 table_data include; see #23 decomposition backlog
 genereview_link/server_manager.py:402
