@@ -483,6 +483,14 @@ class TableResponse(BaseModel):
     header: list[str]
     rows: list[list[str]]
     passage_id: str
+    markdown_table: str | None = Field(
+        default=None,
+        description=(
+            "GitHub-flavored markdown rendering of the table. "
+            "Populated only when the request includes format=markdown_table; "
+            "null otherwise. header and rows are always included in both modes."
+        ),
+    )
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
 
     model_config = {"populate_by_name": True}

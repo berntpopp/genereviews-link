@@ -1,13 +1,14 @@
-"""GET /chapters/{nbk_id}/tables/{table_id} — fetch a single table as structured rows."""
+"""GET /chapters/{nbk_id}/tables/{table_id} -- fetch a single table as structured rows."""
 
 from __future__ import annotations
 
-from typing import Annotated, cast
+from typing import Annotated, Literal, cast
 
-from fastapi import APIRouter, Depends, Path, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 
 from genereview_link.api.errors import FieldError, StructuredHTTPException
 from genereview_link.api.routes.passages import _get_corpus_version, get_repository
+from genereview_link.corpus.tables import render_table_markdown
 from genereview_link.models.genereview_models import ResponseMeta, TableResponse
 from genereview_link.models.sections import SectionName, canonicalize_nbk_id
 from genereview_link.retrieval.repository import GeneReviewRepository
@@ -42,6 +43,17 @@ async def get_table(
             description="Table identifier, e.g. 't5'. Discoverable via get_chapter_metadata.",
         ),
     ],
+    format: Annotated[
+        Literal["structured", "markdown_table"],
+        Query(
+            description=(
+                "Output format. 'structured' (default) returns header/rows only. "
+                "'markdown_table' additionally populates markdown_table with a "
+                "GitHub-flavored-markdown rendering of the table. "
+                "header and rows are always present in both modes."
+            ),
+        ),
+    ] = "structured",
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
 ) -> TableResponse:
@@ -50,6 +62,11 @@ async def get_table(
     Use after search_passages or get_chapter_metadata to retrieve a
     specific table's data when you need row-level access (the table is
     also retrievable as a passage_type='table' passage via search_passages).
+
+    format=markdown_table adds a GitHub-flavored-markdown rendering in the
+    markdown_table field. header and rows are still returned in that mode so
+    the response remains self-describing and callers can switch formats without
+    losing structured access.
 
     Latency: ~1ms p50.
     """
@@ -77,6 +94,14 @@ async def get_table(
             next_commands=[{"tool": "get_chapter_metadata", "arguments": {"nbk_id": nbk_id}}],
         )
 
+    markdown_table: str | None = None
+    if format == "markdown_table":
+        markdown_table = render_table_markdown(
+            caption=table.caption,
+            header=table.header,
+            rows=table.rows,
+        )
+
     return TableResponse(
         nbk_id=table.nbk_id,
         table_id=table.table_id,
@@ -86,5 +111,6 @@ async def get_table(
         header=table.header,
         rows=table.rows,
         passage_id=table.passage_id,
+        markdown_table=markdown_table,
         **{"_meta": ResponseMeta(corpus_version=_get_corpus_version(request))},
     )
