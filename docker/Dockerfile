@@ -23,7 +23,9 @@ ENV VIRTUAL_ENV="/opt/venv" \
 WORKDIR /app
 COPY uv.lock pyproject.toml README.md ./
 
-RUN pip install --upgrade pip uv && \
+# Upgrade pip to a patched release (clears CVE-2025-8869, CVE-2026-1703,
+# CVE-2026-3219, CVE-2026-6357 flagged by image scanners) before installing uv.
+RUN pip install --upgrade "pip>=26.1" uv && \
     uv sync --frozen --no-dev --active
 
 # --- Production Stage ---
@@ -57,7 +59,11 @@ COPY --chown=app:app ./genereview_link ./genereview_link
 COPY --chown=app:app ./server.py ./mcp_server.py ./pyproject.toml ./README.md ./
 COPY --chown=app:app ./docker/gunicorn_conf.py ./
 
-RUN /opt/venv/bin/pip install -e . --no-deps
+# Upgrade the base image's system pip (/usr/local) to a patched release so it is
+# not flagged by image scanners (CVE-2025-8869, CVE-2026-1703/3219/6357), then
+# install the project into the (already patched) virtualenv.
+RUN /usr/local/bin/python -m pip install --no-cache-dir --upgrade "pip>=26.1" && \
+    /opt/venv/bin/pip install -e . --no-deps
 
 USER app
 

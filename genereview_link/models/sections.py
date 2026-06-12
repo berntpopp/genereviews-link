@@ -25,7 +25,11 @@ SectionName = Literal[
 
 SECTION_NAMES: tuple[str, ...] = get_args(SectionName)
 
-_NBK_PATTERN = re.compile(r"^NBK0*(\d+)$")
+# A single, unambiguous digit run. The previous pattern ``NBK0*(\d+)`` let
+# both ``0*`` and ``\d+`` match a leading zero, so an input like ``NBK000...0``
+# forced quadratic backtracking (polynomial ReDoS, CodeQL py/polynomial-redos).
+# Here ``\d+`` owns all digits; leading zeroes are stripped in Python below.
+_NBK_PATTERN = re.compile(r"^NBK(\d+)$")
 
 
 def canonicalize_nbk_id(raw: str) -> str:
@@ -33,7 +37,8 @@ def canonicalize_nbk_id(raw: str) -> str:
     match = _NBK_PATTERN.fullmatch(raw)
     if match is None:
         return raw
-    return f"NBK{match.group(1)}"
+    digits = match.group(1).lstrip("0") or "0"
+    return f"NBK{digits}"
 
 
 SYSTEMATICALLY_UNSCRAPED_SECTIONS: frozenset[str] = frozenset({"summary"})
