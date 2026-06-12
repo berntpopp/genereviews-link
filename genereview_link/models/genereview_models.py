@@ -467,6 +467,12 @@ class ChapterMetadataResponse(BaseModel):
     sections: list[SectionSummary] = Field(default_factory=list)
     table_count: int = 0
     tables: list[TableSummary] = Field(default_factory=list)
+    # Staleness / token-estimate fields (computed at response time, #46 / #40)
+    years_since_update: float | None = None
+    staleness_band: Literal["current", "aging", "stale", "very_stale"] | None = None
+    likely_stale_for_therapeutics: bool = False
+    total_char_count: int = 0
+    total_tokens_estimate: int = 0
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
 
     model_config = {"populate_by_name": True}

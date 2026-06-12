@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, Path, Query, Request
@@ -21,6 +22,15 @@ from genereview_link.models.sections import (
     SYSTEMATICALLY_UNSCRAPED_SECTIONS,
     SectionName,
     canonicalize_nbk_id,
+)
+from genereview_link.models.staleness import (
+    likely_stale_for_therapeutics as _likely_stale,
+)
+from genereview_link.models.staleness import (
+    staleness_band as _staleness_band,
+)
+from genereview_link.models.staleness import (
+    years_since as _years_since,
 )
 from genereview_link.retrieval.repository import GeneReviewRepository, _note_for_empty_section
 
@@ -264,21 +274,26 @@ async def get_chapter_metadata(
                 {"tool": "search_passages", "arguments": {"q": "<gene symbol or term>"}}
             ],
         )
+    sections_built = [
+        SectionSummary(
+            section=cast(SectionName, s.section),
+            passage_count=s.passage_count,
+            total_char_count=s.total_char_count,
+            note=s.note,
+        )
+        for s in meta.sections
+    ]
+    today = datetime.now(tz=UTC).date()
+    ysu = _years_since(meta.chapter_last_updated, today)
+    band = _staleness_band(ysu)
+    total_chars = sum(s.total_char_count for s in sections_built)
     return ChapterMetadataResponse(  # type: ignore[call-arg]
         nbk_id=meta.nbk_id,
         title=meta.title,
         chapter_last_updated=meta.chapter_last_updated,
         chapter_ingested_at=meta.chapter_ingested_at,
         gene_symbols=list(meta.gene_symbols),
-        sections=[
-            SectionSummary(
-                section=cast(SectionName, s.section),
-                passage_count=s.passage_count,
-                total_char_count=s.total_char_count,
-                note=s.note,
-            )
-            for s in meta.sections
-        ],
+        sections=sections_built,
         table_count=meta.table_count,
         tables=[
             TableSummary(
@@ -290,5 +305,10 @@ async def get_chapter_metadata(
             )
             for t in meta.tables
         ],
+        years_since_update=ysu,
+        staleness_band=band,
+        likely_stale_for_therapeutics=_likely_stale(band, sections_built),
+        total_char_count=total_chars,
+        total_tokens_estimate=total_chars // 4,
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )
