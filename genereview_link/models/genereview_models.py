@@ -281,6 +281,10 @@ class RankedPassage(BaseModel):
     recommended_citation: str  # always populated; no default to prevent silent omission
     table_id: str | None = None  # populated only when passage_type='table'
     source_url: str  # always populated; chapter-level NCBI Bookshelf URL
+    # Structured table fields — opt-in via include=table_data (#44)
+    header: list[str] | None = None
+    rows: list[list[str]] | None = None
+    markdown_table: str | None = None
 
 
 class PassageDetail(BaseModel):
@@ -302,6 +306,10 @@ class PassageDetail(BaseModel):
     heading_path_array: list[str] | None = None
     recommended_citation: str  # always populated; no default to prevent silent omission
     source_url: str  # always populated; chapter-level NCBI Bookshelf URL
+    # Structured table fields — opt-in via include=table_data (#44)
+    header: list[str] | None = None
+    rows: list[list[str]] | None = None
+    markdown_table: str | None = None
 
 
 class SearchDiagnosticsModel(BaseModel):
@@ -514,7 +522,7 @@ class PassageBatchRequest(BaseModel):
         list[Annotated[str, StringConstraints(pattern=r"^NBK\d+:\d{4}$")]],
         Field(min_length=1),
     ]
-    include: list[Literal["heading_path_array"]] | None = None
+    include: list[Literal["heading_path_array", "table_data"]] | None = None
 
 
 class PassageBatchResponse(BaseModel):
