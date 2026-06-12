@@ -30,6 +30,7 @@ from genereview_link.api.routes import chapters as chapters_routes
 from genereview_link.api.routes import debug as debug_routes
 from genereview_link.api.routes import license as license_routes
 from genereview_link.api.routes import passages as passages_routes
+from genereview_link.api.routes import search_batch as search_batch_routes
 from genereview_link.api.routes import tables as tables_routes
 from genereview_link.config import ServerConfig, settings
 from genereview_link.logging_config import get_logger
@@ -198,6 +199,7 @@ class UnifiedServerManager:
         app.include_router(fulltext.router)
         app.include_router(genereview.router)
         app.include_router(passages_routes.router)
+        app.include_router(search_batch_routes.router)
         app.include_router(chapters_routes.router)
         app.include_router(tables_routes.router)
         app.include_router(debug_routes.router)

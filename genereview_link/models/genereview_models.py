@@ -525,3 +525,54 @@ class PassageBatchResponse(BaseModel):
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
 
     model_config = {"populate_by_name": True}
+
+
+# ---------------------------------------------------------------------------
+# Search-batch models (Issue #45)
+# ---------------------------------------------------------------------------
+
+
+class SearchBatchSpec(BaseModel):
+    """One search spec in a batch request; mirrors GET /passages/search params."""
+
+    q: Annotated[str, Field(min_length=1, max_length=512)]
+    gene: str | None = None
+    nbk_id: str | None = None
+    sections: list[SectionName] | None = None
+    heading_path_contains: Annotated[str | None, Field(min_length=1, max_length=200)] = None
+    mode: Literal["brief", "full", "ids_only"] = "brief"
+    limit: Annotated[int, Field(ge=1, le=100)] = 5
+    rerank: Literal["rrf", "lexical", "off"] = "rrf"
+    snippet_chars: Annotated[int, Field(ge=80, le=800)] = 400
+
+
+class SearchBatchRequest(BaseModel):
+    """Body for POST /passages/search/batch — 1-5 independent search specs."""
+
+    specs: Annotated[list[SearchBatchSpec], Field(min_length=1, max_length=5)]
+
+
+class SearchBatchResultItem(BaseModel):
+    """One result in a batch search response.
+
+    ``query_index`` matches the spec's zero-based position in the request.
+    ``hits`` mirrors GET /passages/search results for that spec's ``mode``.
+    Deduplication: when a passage_id appears in multiple results, every
+    non-canonical occurrence (query_index > lowest) carries
+    ``also_matched_query_indices`` listing the other matching indices.
+    Hits are never removed; the annotation signals redundancy only.
+    """
+
+    query_index: int
+    q: str
+    sections: list[SectionName] | None = None
+    hits: list[Any] = Field(default_factory=list)
+
+
+class SearchBatchResponse(BaseModel):
+    """Envelope returned by POST /passages/search/batch."""
+
+    results: list[SearchBatchResultItem]
+    meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
+
+    model_config = {"populate_by_name": True}
