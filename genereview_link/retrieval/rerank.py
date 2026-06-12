@@ -31,6 +31,7 @@ SECTION_PRIORITY: Mapping[str, int] = {
 
 GUARDED_SECTIONS = frozenset({"references"})
 RRF_STRATEGY = "lexical_top_k_dense_rrf"
+PRIMARY_GENE_BOOST = 1.25  # chapters where queried gene is primary rank higher
 
 ROLE_MULTIPLIER: Mapping[str, float] = {
     "cross_reference": 0.4,
@@ -124,11 +125,15 @@ def adjusted_score_for(
     role: str,
     section: str,
     query_intents: Sequence[str],
+    primary_gene_match: bool = False,
 ) -> tuple[float, float, float]:
     role_multiplier = ROLE_MULTIPLIER.get(role, ROLE_MULTIPLIER["evidence"])
     section_boost = _section_boost(section, query_intents)
+    adjusted = rrf_score * role_multiplier * (1.0 + section_boost)
+    if primary_gene_match:
+        adjusted = adjusted * PRIMARY_GENE_BOOST
     return (
-        rrf_score * role_multiplier * (1.0 + section_boost),
+        adjusted,
         role_multiplier,
         section_boost,
     )
@@ -207,6 +212,7 @@ def rerank_with_embeddings(
             role=r.passage.passage_role or "evidence",
             section=r.passage.chapter_section,
             query_intents=query_intents,
+            primary_gene_match=r.primary_gene_match,
         )
         scored_evidence.append(
             dataclasses.replace(

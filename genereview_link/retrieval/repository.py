@@ -49,6 +49,7 @@ class PassageRow:
     chapter_last_updated: date | None = None
     chapter_ingested_at: datetime | None = None
     gene_symbols: tuple[str, ...] = ()
+    primary_gene_symbols: tuple[str, ...] = ()
     passage_type: str = "narrative"
     passage_role: str | None = None
     table_id: str | None = None
@@ -61,6 +62,8 @@ class LexicalPassageRow:
 
     Gene symbols live on ``passage.gene_symbols`` — there is no top-level
     duplicate field. Read them via ``row.passage.gene_symbols``.
+    primary_gene_match is set True when the queried gene is in the chapter's
+    primary_gene_symbols array; used by the reranker boost.
     """
 
     passage: PassageRow
@@ -76,6 +79,7 @@ class LexicalPassageRow:
     adjusted_score: float | None = None
     role_multiplier: float = 1.0
     intent_section_boost: float = 0.0
+    primary_gene_match: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +136,7 @@ def build_dense_candidates_sql(
     sections: tuple[str, ...] | None,
     heading_path_contains: str | None,
     top_k: int,
+    gene_role: str = "any",
 ) -> tuple[list[str], str, list[object]]:
     """Build the dense-candidate SQL with filter-aware top-K.
 
@@ -149,6 +154,7 @@ def build_dense_candidates_sql(
     select_sql is the parameterized SELECT.
     params: first element is the query embedding placeholder; rest are filter values
     in the order: gene, nbk_id, sections, heading_path_contains.
+    gene_role: 'any' (default), 'primary', or 'mentioned'.
     """
     params: list[object] = []
     param_idx = 1
@@ -164,7 +170,16 @@ def build_dense_candidates_sql(
     where_clauses: list[str] = []
 
     if gene:
-        where_clauses.append(f"c.gene_symbols @> array[{next_param(gene)}]")
+        gene_param = next_param(gene)
+        if gene_role == "primary":
+            where_clauses.append(f"c.primary_gene_symbols @> array[{gene_param}]")
+        elif gene_role == "mentioned":
+            where_clauses.append(
+                f"c.gene_symbols @> array[{gene_param}]"
+                f" and not (c.primary_gene_symbols @> array[{gene_param}])"
+            )
+        else:  # any
+            where_clauses.append(f"c.gene_symbols @> array[{gene_param}]")
     if nbk_id:
         where_clauses.append(f"p.nbk_id = {next_param(nbk_id)}")
     if sections:
@@ -301,6 +316,7 @@ class GeneReviewRepository:
         brief: bool = False,
         snippet_max_fragments: int = 2,
         snippet_max_words: int = 30,
+        gene_role: str = "any",
     ) -> list[LexicalPassageRow]:
         """Run the three-tsquery hybrid lexical search.
 
@@ -308,6 +324,11 @@ class GeneReviewRepository:
         by the FastAPI route's ge/le validators (snippet_chars in [80, 800]),
         so interpolating them into the ts_headline options string via f-string
         is safe — no raw user input reaches SQL.
+
+        ``gene_role`` controls how the gene filter uses the chapter columns:
+          'any' (default): gene in gene_symbols (current behaviour)
+          'primary': gene in primary_gene_symbols only
+          'mentioned': gene in gene_symbols but NOT in primary_gene_symbols
         """
         from genereview_link.retrieval.lexical import recall_terms, recall_tsquery
 
@@ -338,6 +359,21 @@ class GeneReviewRepository:
                 ") as snippet"
             )
 
+        # Role-aware gene filter: gene_role is validated by the route layer to be
+        # one of 'any', 'primary', 'mentioned'. Interpolated as a literal SQL
+        # constant (not user string) because gene_role is a Literal param.
+        if gene_role == "primary":
+            gene_filter = "and ($3::text is null or $3 = any(c.primary_gene_symbols))"
+        elif gene_role == "mentioned":
+            gene_filter = (
+                "and ($3::text is null or ("
+                "$3 = any(c.gene_symbols)"
+                " and not ($3 = any(c.primary_gene_symbols))"
+                "))"
+            )
+        else:  # any (default — backward compatible)
+            gene_filter = "and ($3::text is null or $3 = any(c.gene_symbols))"
+
         async with self._acquire() as conn:
             rows = await conn.fetch(
                 f"""
@@ -354,6 +390,7 @@ class GeneReviewRepository:
                         p.nbk_id, p.passage_id, p.chapter_section, p.heading_path,
                         p.section_level, p.chunk_index, p.text,
                         c.gene_symbols,
+                        c.primary_gene_symbols,
                         c.title as chapter_title,
                         c.last_updated_date as chapter_last_updated,
                         c.ingested_at as chapter_ingested_at,
@@ -374,7 +411,7 @@ class GeneReviewRepository:
                            or p.search_vector @@ q.strict_query
                            or p.search_vector @@ q.recall_query
                           )
-                       and ($3::text is null or $3 = any(c.gene_symbols))
+                       {gene_filter}
                        and ($4::text is null or p.nbk_id = $4)
                        and ($5::text[] is null or p.chapter_section = any($5::text[]))
                        and ($9::text is null or p.heading_path ILIKE '%' || $9 || '%')
@@ -489,6 +526,7 @@ class GeneReviewRepository:
                        c.last_updated_date as chapter_last_updated,
                        c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
+                       c.primary_gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
@@ -512,6 +550,7 @@ class GeneReviewRepository:
                        c.last_updated_date as chapter_last_updated,
                        c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
+                       c.primary_gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
@@ -543,6 +582,7 @@ class GeneReviewRepository:
             chapter_last_updated=row["chapter_last_updated"],
             chapter_ingested_at=_record_get(row, "chapter_ingested_at"),
             gene_symbols=tuple(row["gene_symbols"] or ()),
+            primary_gene_symbols=tuple(_record_get(row, "primary_gene_symbols") or ()),
             passage_type=row["passage_type"],
             passage_role=_record_get(row, "passage_role"),
             table_id=row["table_id"],
@@ -563,6 +603,7 @@ class GeneReviewRepository:
                    c.last_updated_date as chapter_last_updated,
                    c.ingested_at as chapter_ingested_at,
                    c.gene_symbols,
+                   c.primary_gene_symbols,
                    p.passage_type, p.passage_role, p.table_id, p.table_data
               from genereview_passages p
               join genereview_chapters c on c.nbk_id = p.nbk_id
@@ -607,6 +648,7 @@ class GeneReviewRepository:
                        c.last_updated_date as chapter_last_updated,
                        c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
+                       c.primary_gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
@@ -626,6 +668,7 @@ class GeneReviewRepository:
                        c.last_updated_date as chapter_last_updated,
                        c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
+                       c.primary_gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id
@@ -811,6 +854,7 @@ class GeneReviewRepository:
         sections: tuple[str, ...] | None,
         heading_path_contains: str | None,
         top_k: int,
+        gene_role: str = "any",
     ) -> list[dict[str, object]]:
         """Fetch top-K dense candidates filter-aware, corpus-wide.
 
@@ -828,6 +872,7 @@ class GeneReviewRepository:
             sections=sections,
             heading_path_contains=heading_path_contains,
             top_k=top_k,
+            gene_role=gene_role,
         )
         params[0] = query_vector
         async with self._acquire() as conn, conn.transaction():
@@ -855,6 +900,7 @@ class GeneReviewRepository:
                        c.last_updated_date as chapter_last_updated,
                        c.ingested_at as chapter_ingested_at,
                        c.gene_symbols,
+                       c.primary_gene_symbols,
                        p.passage_type, p.passage_role, p.table_id, p.table_data
                   from genereview_passages p
                   join genereview_chapters c on c.nbk_id = p.nbk_id

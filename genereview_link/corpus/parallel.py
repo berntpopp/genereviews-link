@@ -188,6 +188,7 @@ async def copy_chapters(
             corpus_version,
             c.nxml_relpath,
             "{}",  # raw_metadata default
+            list(c.primary_gene_symbols),
         )
         for c in chapters
     ]
@@ -207,6 +208,7 @@ async def copy_chapters(
             "corpus_version",
             "nxml_relpath",
             "raw_metadata",
+            "primary_gene_symbols",
         ),
     )
 

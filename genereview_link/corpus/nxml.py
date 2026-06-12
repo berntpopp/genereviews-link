@@ -21,6 +21,7 @@ See docs/superpowers/specs/2026-05-12-chunker-data-loss-findings.md.
 
 from __future__ import annotations
 
+import re
 import warnings
 from collections.abc import Generator
 from dataclasses import dataclass, field
@@ -314,6 +315,27 @@ def _parse_pub_date(el: etree._Element | None) -> date | None:
         return date(y, m, d)
     except (TypeError, ValueError):
         return None
+
+
+def extract_primary_gene_symbols(
+    title: str,
+    sidedata_genes: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return the subset of sidedata_genes that appear as whole words in title.
+
+    Intersects the chapter title against the known sidedata_genes for this
+    chapter using whole-word regex matching (case-insensitive).  Returns the
+    matching genes in the order they appear in sidedata_genes so the result
+    is deterministic across ingest runs.
+
+    Examples:
+        - "BRCA1- and BRCA2-Associated ... Cancer", ("BRCA1", "BRCA2") -> ("BRCA1", "BRCA2")
+        - "Fanconi Anemia", ("FANCA", "FANCB", "FANCS") -> ()
+    """
+    title_upper = title.upper()
+    return tuple(
+        g for g in sidedata_genes if re.search(r"\b" + re.escape(g.upper()) + r"\b", title_upper)
+    )
 
 
 def _flush_paragraphs(

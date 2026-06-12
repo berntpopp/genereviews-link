@@ -1221,6 +1221,7 @@ def _build_app_with_fake_repo(rows: list[LexicalPassageRow]) -> FastAPI:
             brief: bool = False,
             snippet_max_fragments: int = 2,
             snippet_max_words: int = 30,
+            gene_role: str = "any",
         ) -> list[LexicalPassageRow]:
             del heading_path_contains
             if not brief:
