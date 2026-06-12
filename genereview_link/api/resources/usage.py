@@ -218,6 +218,37 @@ The canonical `table_id` is the NXML slug attribute (e.g.
 `heading_path`. Always use the slug for `get_table` calls and for matching
 `tables[]` entries in `get_chapter_metadata` responses.
 
+## Chapter staleness signal (#46)
+
+`get_chapter_metadata` returns three derived staleness fields computed at
+response time from `chapter_last_updated` (no database changes):
+
+- **`years_since_update`** (`float | null`): `(today - chapter_last_updated)
+  / 365.25`, rounded to 1 decimal.  `null` when the date is absent.
+- **`staleness_band`** (`string | null`): bucketed freshness indicator.
+
+  | Band        | years_since_update |
+  |-------------|-------------------|
+  | `current`   | < 2.0             |
+  | `aging`     | 2.0 - <4.0        |
+  | `stale`     | 4.0 - <7.0        |
+  | `very_stale`| >= 7.0            |
+
+  `null` when `chapter_last_updated` is absent.
+
+- **`likely_stale_for_therapeutics`** (`bool`, default `false`): `true` when
+  `staleness_band` is `stale` or `very_stale` AND the chapter has a
+  `management` section with at least one passage.
+  **This is a heuristic signal, NOT a substitute for primary-literature
+  follow-up.**  Always verify therapeutic recommendations against current
+  literature.
+
+Two token-budget fields are also returned (issue #40):
+
+- **`total_char_count`** (`int`): sum of each section's `total_char_count`.
+- **`total_tokens_estimate`** (`int`): `total_char_count // 4` (rough
+  English-token heuristic; use for context-window budgeting only).
+
 ## Chapter date semantics
 
 `chapter_last_updated` usually reflects NCBI's `<date date-type="updated">`

@@ -267,3 +267,111 @@ async def test_chapter_metadata_tables_empty_list_when_none() -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["tables"] == []
+
+
+# ---------------------------------------------------------------------------
+# Staleness signal and token estimate (issues #46 / #40)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chapter_metadata_staleness_fields_present() -> None:
+    """Response must include years_since_update, staleness_band, and token fields."""
+    app = _build_app(metadata=_make_metadata_row(chapter_last_updated=date(2025, 12, 1)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/metadata")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "years_since_update" in body
+    assert "staleness_band" in body
+    assert "likely_stale_for_therapeutics" in body
+    assert "total_char_count" in body
+    assert "total_tokens_estimate" in body
+
+
+@pytest.mark.asyncio
+async def test_chapter_metadata_years_since_update_is_numeric() -> None:
+    """years_since_update must be a float when chapter_last_updated is not None."""
+    app = _build_app(metadata=_make_metadata_row(chapter_last_updated=date(2024, 1, 1)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/metadata")
+
+    body = resp.json()
+    assert isinstance(body["years_since_update"], float)
+    assert body["years_since_update"] > 0.0
+
+
+@pytest.mark.asyncio
+async def test_chapter_metadata_null_date_yields_none_staleness() -> None:
+    """When chapter_last_updated is None, years_since_update and staleness_band must be None."""
+    app = _build_app(
+        metadata=_make_metadata_row(chapter_last_updated=None, chapter_ingested_at=None)
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK9999/metadata")
+
+    body = resp.json()
+    assert body["years_since_update"] is None
+    assert body["staleness_band"] is None
+    assert body["likely_stale_for_therapeutics"] is False
+
+
+@pytest.mark.asyncio
+async def test_chapter_metadata_staleness_band_current_for_recent_chapter() -> None:
+    """A recently-updated chapter (< 2 years) must get staleness_band='current'."""
+    # _make_metadata_row default chapter_last_updated is date(2025, 12, 1);
+    # test date context is 2026-06-12, so ~0.5 years -> current
+    app = _build_app(metadata=_make_metadata_row(chapter_last_updated=date(2025, 12, 1)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/metadata")
+
+    body = resp.json()
+    assert body["staleness_band"] == "current"
+
+
+@pytest.mark.asyncio
+async def test_chapter_metadata_staleness_band_very_stale_for_old_chapter() -> None:
+    """A chapter last updated > 7 years ago must get staleness_band='very_stale'."""
+    app = _build_app(metadata=_make_metadata_row(chapter_last_updated=date(2015, 1, 1)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/metadata")
+
+    body = resp.json()
+    assert body["staleness_band"] == "very_stale"
+
+
+@pytest.mark.asyncio
+async def test_chapter_metadata_total_char_count_is_sum_of_sections() -> None:
+    """total_char_count must equal the sum of each section's total_char_count."""
+    # Default _make_metadata_row gives summary=50, rest=0 -> total=50
+    app = _build_app(metadata=_make_metadata_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/metadata")
+
+    body = resp.json()
+    expected = sum(s["total_char_count"] for s in body["sections"])
+    assert body["total_char_count"] == expected
+    assert body["total_char_count"] == 50
+
+
+@pytest.mark.asyncio
+async def test_chapter_metadata_total_tokens_estimate_is_chars_div_4() -> None:
+    """total_tokens_estimate must equal total_char_count // 4."""
+    app = _build_app(metadata=_make_metadata_row())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/metadata")
+
+    body = resp.json()
+    assert body["total_tokens_estimate"] == body["total_char_count"] // 4
+
+
+@pytest.mark.asyncio
+async def test_chapter_metadata_likely_stale_for_therapeutics_false_for_current() -> None:
+    """A current chapter must have likely_stale_for_therapeutics=False."""
+    app = _build_app(metadata=_make_metadata_row(chapter_last_updated=date(2025, 12, 1)))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/chapters/NBK1247/metadata")
+
+    body = resp.json()
+    assert body["likely_stale_for_therapeutics"] is False
