@@ -107,7 +107,7 @@ class UnifiedServerManager:
             description=(
                 "A comprehensive API for searching, fetching, and scraping NCBI GeneReviews data."
             ),
-            version="2.0.0",
+            version="3.0.0",
             lifespan=self.lifespan,
             docs_url="/docs" if config.enable_docs else None,
             redoc_url=None,

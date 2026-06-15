@@ -58,7 +58,7 @@ async def test_empty_summary_section_routes_to_get_abstract() -> None:
     next_commands = body["_meta"]["next_commands"]
     assert isinstance(next_commands, list) and len(next_commands) == 1
     assert next_commands[0]["tool"] == "get_abstract"
-    assert next_commands[0]["arguments"]["pubmed_id"] == "20301425"
+    assert next_commands[0]["arguments"]["pmid"] == "20301425"
 
 
 @pytest.mark.asyncio

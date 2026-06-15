@@ -160,7 +160,7 @@ async def _initialize_state(app: FastAPI) -> None:
     """Initialize shared application state for request serving."""
     logger.info(
         "Starting GeneReview Link Server",
-        version="2.0.0",
+        version="3.0.0",
         environment=settings.ENVIRONMENT,
     )
 

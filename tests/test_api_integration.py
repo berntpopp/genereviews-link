@@ -424,8 +424,8 @@ class TestAPIDocumentation:
         # Should have all expected endpoints
         expected_paths = [
             "/search/{gene_symbol}",
-            "/abstract/{pubmed_id}",
-            "/links/{pubmed_id}",
+            "/abstract/{pmid}",
+            "/links/{pmid}",
             "/fulltext/{nbk_id}",
             "/genereview/{gene_symbol}",
         ]

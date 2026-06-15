@@ -8,6 +8,53 @@ as phase tags where a semver release has not yet been cut.
 
 ---
 
+## 3.0.0 — GeneFoundry Tool-Naming Standard v1
+
+Adopts the fleet-wide [GeneFoundry Tool-Naming & Normalization Standard v1]
+so this server composes cleanly behind the `genefoundry-router` gateway under the
+`genereviews` namespace (tools surface as `genereviews_<tool>`). Closes #67.
+
+### Breaking changes
+
+1. **`pubmed_id` argument renamed to `pmid` on `get_abstract` and `get_links`**
+
+   - *What changed:* The request argument for both tools (the path parameter on
+     the underlying `GET /abstract/{...}` and `GET /links/{...}` routes) is renamed
+     from `pubmed_id` to the fleet-canonical `pmid`. No deprecation alias is kept.
+   - *Why:* The Tool-Naming Standard v1 mandates the fleet-canonical argument name
+     `pmid` for PubMed identifiers across all `*-link` servers.
+   - *Migration:* Call `get_abstract(pmid="20301425")` /
+     `get_links(pmid="20301425")` instead of `pubmed_id=...`. For the REST API,
+     the routes are now `GET /abstract/{pmid}` and `GET /links/{pmid}` (the path
+     value is unchanged; only the parameter name differs).
+
+### Added
+
+- **Domain tags on every MCP tool** — tools now advertise canonical domain tags
+  (`gene`, `literature`, `meta`) so the gateway can filter/curate the surfaced
+  toolset (standard rule 6).
+- **CI tool-name guard** — `tests/unit/test_tool_names.py` asserts every
+  registered tool name matches `^[a-z0-9_]{1,50}$`, starts with a canonical verb
+  (`get`/`search`/`list`/`resolve`/`find`/`compare`/`compute`), does not
+  self-prefix the `genereviews` namespace token, and carries a domain tag.
+
+### Unchanged (Tool-Naming Standard v1 review outcomes)
+
+- **Tool names:** 0 renames. All 13 tools were already unprefixed, `verb_noun`,
+  canonical-verb, and within the length budget. `search_genereviews` /
+  `get_genereview_summary` are `verb_noun` where the noun is the data type, not
+  namespace self-prefixes; they surface within budget at the gateway.
+- **`serverInfo.name`:** already explicitly set to `GeneReview Link Tool`; the
+  `genereviews` namespace token is now documented in the README.
+- **`search_passages` `mode` / `q`+`query`:** deliberately left as-is. The
+  fleet-canonical `response_mode` (`minimal|compact|standard|full`) is a different
+  concept from this server's result-shape `mode` (`brief|full|ids_only`), so it is
+  not a straight rename; the `q`/`query` pair is a harmless documented alias.
+
+[GeneFoundry Tool-Naming & Normalization Standard v1]: https://github.com/berntpopp/genereviews-link/issues/67
+
+---
+
 ## Unreleased
 
 ### Fixed
