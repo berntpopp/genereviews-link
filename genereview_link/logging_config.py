@@ -30,7 +30,7 @@ def add_service_context(logger: Any, method_name: str, event_dict: EventDict) ->
     event_dict.update(
         {
             "service": "genereview-link",
-            "version": "2.0.0",
+            "version": "3.0.0",
             "environment": getattr(settings, "ENVIRONMENT", "development"),
         }
     )

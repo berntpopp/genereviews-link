@@ -10,6 +10,26 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.providers.openapi import OpenAPITool
 from fastmcp.tools.base import ToolResult
 
+# Canonical domain tags per tool (GeneFoundry Tool-Naming Standard v1, rule 6) so
+# the gateway can filter/curate the surfaced toolset. ``gene``/``literature`` for
+# gene-keyed lookups, ``literature`` for corpus passage/chapter retrieval, ``meta``
+# for static reference material.
+DOMAIN_TAGS: dict[str, frozenset[str]] = {
+    "search_genereviews": frozenset({"gene", "literature"}),
+    "get_genereview_summary": frozenset({"gene", "literature"}),
+    "get_abstract": frozenset({"gene", "literature"}),
+    "get_fulltext": frozenset({"gene", "literature"}),
+    "get_links": frozenset({"gene", "literature"}),
+    "search_passages": frozenset({"literature"}),
+    "search_passages_batch": frozenset({"literature"}),
+    "get_passage": frozenset({"literature"}),
+    "get_passages_batch": frozenset({"literature"}),
+    "get_chapter_section": frozenset({"literature"}),
+    "get_chapter_metadata": frozenset({"literature"}),
+    "get_table": frozenset({"literature"}),
+    "get_license": frozenset({"meta"}),
+}
+
 
 def _find_http_status_response(exc: BaseException) -> httpx.Response | None:
     """Find an httpx response in an exception cause or context chain."""
@@ -69,9 +89,14 @@ def raise_structured_tool_error(exc: Exception) -> NoReturn:
 
 
 def wrap_structured_error_tools(route: Any, component: Any) -> None:
-    """Wrap generated OpenAPI tools so structured REST errors reach MCP clients."""
+    """Wrap generated OpenAPI tools so structured REST errors reach MCP clients
+    and attach canonical domain tags (Tool-Naming Standard v1, rule 6)."""
     if not isinstance(component, OpenAPITool):
         return
+
+    domain_tags = DOMAIN_TAGS.get(component.name)
+    if domain_tags:
+        object.__setattr__(component, "tags", set(component.tags) | domain_tags)
 
     original_run = component.run
 

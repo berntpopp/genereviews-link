@@ -23,7 +23,7 @@ router = APIRouter(prefix="/links", tags=["Links"])
 
 
 @router.get(
-    "/{pubmed_id}",
+    "/{pmid}",
     response_model=LinkData,
     summary="Get normalized categorized links for a PubMed ID",
     description=(
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/links", tags=["Links"])
 )
 async def get_links(
     request: Request,
-    pubmed_id: str,
+    pmid: str,
     client: Annotated[EutilsClient, Depends(get_managed_client)],
     fresh: bool = Query(
         False,
@@ -53,7 +53,7 @@ async def get_links(
     Pass ``?fresh=true`` to label the response version as live.
     """
     try:
-        payload = await client.get_all_links(pubmed_id)
+        payload = await client.get_all_links(pmid)
         out = LinkData(**payload)
         stamp_response_version(
             out,
@@ -63,5 +63,5 @@ async def get_links(
     except StructuredHTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error fetching links for PMID {pubmed_id}: {e}", exc_info=True)
+        logging.error(f"Error fetching links for PMID {pmid}: {e}", exc_info=True)
         raise upstream_ncbi_unavailable_error("fetch links") from e

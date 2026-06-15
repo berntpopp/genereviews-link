@@ -40,8 +40,8 @@ def test_orchestration_route_descriptions_document_fallbacks_and_versions() -> N
 
     search_description = str(_operation(app, "/search/{gene_symbol}", "get")["description"])
     summary_description = str(_operation(app, "/genereview/{gene_symbol}", "get")["description"])
-    abstract_description = str(_operation(app, "/abstract/{pubmed_id}", "get")["description"])
-    links_description = str(_operation(app, "/links/{pubmed_id}", "get")["description"])
+    abstract_description = str(_operation(app, "/abstract/{pmid}", "get")["description"])
+    links_description = str(_operation(app, "/links/{pmid}", "get")["description"])
     fulltext_description = str(_operation(app, "/fulltext/{nbk_id}", "get")["description"])
 
     assert "indexed corpus first" in search_description
@@ -71,8 +71,8 @@ def test_live_upstream_tools_fresh_parameter_only_labels_version() -> None:
     app = _app()
 
     for path, method in (
-        ("/abstract/{pubmed_id}", "get"),
-        ("/links/{pubmed_id}", "get"),
+        ("/abstract/{pmid}", "get"),
+        ("/links/{pmid}", "get"),
         ("/fulltext/{nbk_id}", "get"),
     ):
         desc = _parameter_description(app, path, method, "fresh")
@@ -148,12 +148,12 @@ def test_get_chapter_section_description_mentions_in_section_search() -> None:
 
 
 def test_get_abstract_description_names_value_add() -> None:
-    desc = str(_operation(_app(), "/abstract/{pubmed_id}", "get")["description"])
+    desc = str(_operation(_app(), "/abstract/{pmid}", "get")["description"])
     assert "normalized response shape" in desc
     assert "structured error envelopes" in desc
 
 
 def test_get_links_description_names_value_add() -> None:
-    desc = str(_operation(_app(), "/links/{pubmed_id}", "get")["description"])
+    desc = str(_operation(_app(), "/links/{pmid}", "get")["description"])
     assert "normalized" in desc.lower()
     assert "structured error envelopes" in desc

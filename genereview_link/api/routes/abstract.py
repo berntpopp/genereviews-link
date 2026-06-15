@@ -28,7 +28,7 @@ router = APIRouter(prefix="/abstract", tags=["Abstract"])
 
 
 @router.get(
-    "/{pubmed_id}",
+    "/{pmid}",
     response_model=AbstractData,
     summary="Get normalized abstract and metadata for a PubMed ID",
     description=(
@@ -43,7 +43,7 @@ router = APIRouter(prefix="/abstract", tags=["Abstract"])
 )
 async def get_abstract(
     request: Request,
-    pubmed_id: str,
+    pmid: str,
     client: Annotated[EutilsClient, Depends(get_managed_client)],
     fresh: bool = Query(
         False,
@@ -59,16 +59,16 @@ async def get_abstract(
     Pass ``?fresh=true`` to label the response version as live.
     """
     try:
-        if not pubmed_id.isdigit():
-            raise invalid_pubmed_id_error(pubmed_id)
+        if not pmid.isdigit():
+            raise invalid_pubmed_id_error(pmid)
 
-        result = await client.fetch_abstract(pubmed_id)
+        result = await client.fetch_abstract(pmid)
         if not result:
-            raise abstract_not_found_error(pubmed_id)
+            raise abstract_not_found_error(pmid)
 
         # Ensure all required fields have default values
         out = AbstractData(
-            pmid=result.get("pmid", pubmed_id),
+            pmid=result.get("pmid", pmid),
             title=result.get("title", ""),
             abstract=result.get("abstract", ""),
             authors=result.get("authors", []),
@@ -83,5 +83,5 @@ async def get_abstract(
     except StructuredHTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error fetching abstract for PMID {pubmed_id}: {e}", exc_info=True)
+        logging.error(f"Error fetching abstract for PMID {pmid}: {e}", exc_info=True)
         raise upstream_ncbi_unavailable_error("fetch abstract") from e

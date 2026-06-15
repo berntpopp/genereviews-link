@@ -75,8 +75,8 @@ The REST API provides:
   - Query params: `include_abstract`, `include_links`, `include_fulltext` (default `false`), `max_chars` (default `16000`, `0` disables the cap), `fresh`
 - **`GET /search/{gene_symbol}`** - Search for GeneReviews by gene symbol
   - Query params: `retmax` (max results, default 20)
-- **`GET /abstract/{pubmed_id}`** - Get abstract and metadata for PubMed articles
-- **`GET /links/{pubmed_id}`** - Get all available links (Bookshelf, PMC, external)
+- **`GET /abstract/{pmid}`** - Get abstract and metadata for PubMed articles
+- **`GET /links/{pmid}`** - Get all available links (Bookshelf, PMC, external)
 - **`GET /fulltext/{nbk_id}`** - Get comprehensive scraped content with hierarchical sections
   - Query params: `sections` (optional, comma-separated section keys for selective retrieval; fuzzy substring matching, e.g. `summary` matches both `summary` and `clinical_summary`)
 - **`GET /health`** - System health check with optional connection testing
@@ -194,6 +194,18 @@ mcp_server.py               # MCP server for AI integration
 ## MCP Integration
 
 The server supports the Model Context Protocol for seamless AI integration with Claude and other MCP-compatible clients.
+
+### Gateway namespace and identity
+
+This server follows the **GeneFoundry Tool-Naming Standard v1**. Leaf tools are
+exposed **unprefixed** (e.g. `get_abstract`, `search_passages`); the
+[`genefoundry-router`](https://github.com/berntpopp/genefoundry-router) gateway
+adds the namespace at mount time.
+
+- **`serverInfo.name`:** `GeneReview Link Tool`
+- **Canonical gateway namespace token:** `genereviews`
+- **At the gateway, tools surface as:** `genereviews_<tool>` (e.g.
+  `genereviews_get_abstract`, `genereviews_search_passages`).
 
 ### Configuration
 

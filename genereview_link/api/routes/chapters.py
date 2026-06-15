@@ -178,7 +178,7 @@ async def get_chapter_section(
                 meta=ResponseMeta(
                     corpus_version=_get_corpus_version(request),
                     next_commands=(
-                        [{"tool": "get_abstract", "arguments": {"pubmed_id": chapter.pubmed_id}}]
+                        [{"tool": "get_abstract", "arguments": {"pmid": chapter.pubmed_id}}]
                         if chapter.pubmed_id
                         else None
                     ),
