@@ -43,6 +43,15 @@ def _compose_config(*files: str) -> dict[str, Any]:
     return loaded
 
 
+def test_compose_sets_explicit_project_name() -> None:
+    compose = yaml.load(
+        (REPO_ROOT / "docker/docker-compose.yml").read_text(),
+        Loader=_ComposeLoader,  # noqa: S506
+    )
+
+    assert compose["name"] == "genereviews-link"
+
+
 def test_npm_overlay_keeps_app_connected_to_postgres_network() -> None:
     config = _compose_config(
         "docker/docker-compose.yml",
