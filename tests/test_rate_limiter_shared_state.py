@@ -129,7 +129,7 @@ def test_concurrent_callers_do_not_deadlock_event_loop(tmp_path: Path) -> None:
 
         try:
             asyncio.run(run())
-        except BaseException as exc:  # noqa: BLE001 - surface to assertion
+        except BaseException as exc:
             errors.append(exc)
         finally:
             done.set()
