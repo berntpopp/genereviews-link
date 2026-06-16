@@ -1,3 +1,12 @@
+# Explicit project name isolates this stack. Without it, Compose defaults the project to the
+# parent-dir basename ("docker"), shared by every -link repo that roots its compose at
+# docker/docker-compose.yml — pooling unrelated containers/volumes into one "docker" project
+# and triggering spurious orphan-container warnings (and making --remove-orphans able to delete
+# a sibling stack). See https://docs.docker.com/reference/compose-file/version-and-name/
+# NOTE: this changes Compose's named-volume prefix; on a host with an existing
+# docker_genereview_pg_data volume, migrate the data on next redeploy (do not recreate blindly).
+name: genereviews-link
+
 services:
   postgres:
     image: pgvector/pgvector:0.8.2-pg18
