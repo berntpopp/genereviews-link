@@ -36,7 +36,13 @@ class DistributedRateLimiter:
         self.delay = 1.0 / requests_per_second
         self.shared_state_file = shared_state_file
         self._local_last_request = 0.0
-        self._lock = threading.Lock()
+        # asyncio.Lock (NOT threading.Lock): wait_if_needed awaits asyncio.sleep
+        # while holding this lock. A threading.Lock held across an await
+        # deadlocks the single event loop — a second concurrent caller blocks the
+        # loop thread in .acquire() while the holder can never be resumed to
+        # release it. asyncio.Lock makes contenders yield cooperatively instead.
+        # Cross-process coordination is via the shared state file, not this lock.
+        self._lock = asyncio.Lock()
         self._shared_state_warning_emitted = False
         self._prepare_shared_state_file()
 
@@ -96,7 +102,7 @@ class DistributedRateLimiter:
 
     async def wait_if_needed(self) -> None:
         """Wait if necessary to respect rate limits across all workers."""
-        with self._lock:
+        async with self._lock:
             current_time = time.time()
 
             if not self.shared_state_file:

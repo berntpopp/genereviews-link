@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from pathlib import Path
 
 import pytest
@@ -96,3 +98,47 @@ async def test_distributed_rate_limiter_disables_unwritable_state_once(
     assert all(
         not event.startswith("Failed to write shared state") for event, _ in captured_warnings
     )
+
+
+def test_concurrent_callers_do_not_deadlock_event_loop(tmp_path: Path) -> None:
+    """Concurrent wait_if_needed callers must not wedge the single event loop.
+
+    Regression: wait_if_needed awaits asyncio.sleep while holding self._lock. If
+    that lock is a threading.Lock, a second concurrent caller blocks the only
+    event-loop thread in .acquire() while the holder can never be resumed to
+    release it -> permanent deadlock at 0% CPU (every request, incl. /health,
+    hangs). With an asyncio.Lock contenders yield cooperatively and all complete.
+
+    Run inside a worker thread so the bug fails this test cleanly (the main
+    thread's join times out) instead of hanging the suite on the frozen loop.
+    """
+    state = tmp_path / "rate-limit.state"
+    done = threading.Event()
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        async def run() -> None:
+            limiter = DistributedRateLimiter(
+                requests_per_second=20.0,  # delay=0.05s, so later calls must sleep
+                shared_state_file=str(state),
+            )
+            # Prime the state so the concurrent batch below must await
+            # asyncio.sleep (the deadlock trigger) while contending for the lock.
+            await limiter.wait_if_needed()
+            await asyncio.gather(*(limiter.wait_if_needed() for _ in range(10)))
+
+        try:
+            asyncio.run(run())
+        except BaseException as exc:  # noqa: BLE001 - surface to assertion
+            errors.append(exc)
+        finally:
+            done.set()
+
+    threading.Thread(target=worker, daemon=True).start()
+    finished = done.wait(timeout=10.0)
+
+    assert finished, (
+        "wait_if_needed deadlocked the event loop — a sync lock is held across "
+        "an await (use asyncio.Lock, not threading.Lock)"
+    )
+    assert not errors, f"wait_if_needed raised under concurrency: {errors!r}"
