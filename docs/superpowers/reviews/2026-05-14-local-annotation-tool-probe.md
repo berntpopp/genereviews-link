@@ -352,9 +352,10 @@ gazetteer, and retrieval-pipeline shapes.
      `uv run --with ...` until the winning stack is chosen.
 3. In parallel, design the stable entity schema/gazetteer interface using the
    `mdr-mcp` provenance pattern. Keep annotator choice behind a loader contract.
-4. Implement query-time deterministic gazetteer extraction before passage
-   annotation integration, because it can immediately test GRIN2B/HFE/CFTR query
-   anchor recovery without putting a model on the request path.
+4. Investigate production-grade query-time deterministic gazetteer extraction
+   from authoritative sources before passage annotation integration. Do not
+   start with a hand-curated HFE/CFTR/GRIN2B seed list as implementation data;
+   use those anchors as benchmark probes and regression tests only.
 5. Only after the probe and query gazetteer pass the three C-gamma anchors, wire
    `entity_overlap_boost` into RRF and rerun `make bench-ranking` against the
    locked fixture.

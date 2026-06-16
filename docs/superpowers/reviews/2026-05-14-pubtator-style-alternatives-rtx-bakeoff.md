@@ -471,11 +471,13 @@ Use this bake-off to supersede the PubTator-3-first C-gamma plan:
    Build `scripts/probe_biomedical_annotation.py` as an offline script. Keep
    heavy optional packages out of core dependencies until a stack wins.
 
-2. **Build a deterministic query gazetteer early.**
-   Start with a tiny curated seed set that covers the locked C-gamma anchors:
-   HFE/C282Y aliases, CFTR/F508del aliases and modulator names, GRIN2B, cystic
-   fibrosis, and hereditary hemochromatosis. Then extend from authoritative
-   bulk sources.
+2. **Investigate deterministic query gazetteer sources early.**
+   Do not implement a hand-curated seed set around the known C-gamma examples.
+   Treat HFE/C282Y, CFTR/F508del/modulators, GRIN2B, cystic fibrosis, and
+   hereditary hemochromatosis as benchmark probes and regression tests. The
+   implementation data should come from authoritative sources such as HGNC/NCBI
+   Gene, MeSH, HPO, RxNorm, NCBI Variation Services, ClinGen Allele Registry,
+   LitVar/tmVar outputs, and GeneReviews-derived alias mining.
 
 3. **Design stable storage independent of annotator choice.**
    Use the MDR-style canonical entity + passage match schema. Do not encode
