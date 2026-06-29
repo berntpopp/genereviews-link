@@ -217,9 +217,16 @@ class UnifiedServerManager:
 
         @app.get("/health", tags=["Health"])
         async def health_check(test_connection: bool = False) -> dict[str, Any]:
+            from genereview_link import __version__
+
             client_manager = await get_client_manager()
             health = await client_manager.health_check(test_connection=test_connection)
-            return {"status": "healthy", "client_health": health}
+            return {
+                "status": "healthy",
+                "version": __version__,
+                "transport": "streamable-http-stateless",
+                "client_health": health,
+            }
 
         @app.get("/metrics", tags=["Observability"], include_in_schema=False)
         async def metrics() -> Response:
@@ -322,9 +329,11 @@ class UnifiedServerManager:
         with the FastAPI lifespan we already use for the Postgres pool, the
         embedder, and the release watcher scheduler.
 
-        We also use ``path="/"`` on ``http_app`` so the resulting mount lives
-        at ``{config.mcp_path}`` (e.g. ``/mcp``) rather than the double-prefix
-        ``{config.mcp_path}/mcp``.
+        MCP Transport Standard v1: we bake ``config.mcp_path`` into ``http_app``
+        (so FastMCP routes to ``/mcp`` internally) and mount the resulting ASGI app
+        at ``"/"`` so the router sees ``POST /mcp`` without a double-prefix.
+        ``stateless_http=True`` and ``json_response=True`` enable the stateless
+        streamable-HTTP profile required by the fleet standard.
         """
         self._current_transport = "unified"
         logger.info(f"Starting unified server on {config.host}:{config.port}")
@@ -337,7 +346,7 @@ class UnifiedServerManager:
         # None → 503 from /passages/search and /chapters/.../sections/...).
         self.app = self.create_fastapi_app(config)
         self.mcp = await self.create_mcp_server(self.app, config)
-        mcp_app = self.mcp.http_app(path="/")
+        mcp_app = self.mcp.http_app(path=config.mcp_path, stateless_http=True, json_response=True)
 
         # Chain mcp_app's lifespan into the existing app's lifespan so the
         # FastMCP StreamableHTTPSessionManager starts at boot.
@@ -349,9 +358,11 @@ class UnifiedServerManager:
                 yield
 
         self.app.router.lifespan_context = combined_lifespan
-        # Mount under config.mcp_path so the full path is /mcp (not /mcp/mcp).
-        self.app.mount(config.mcp_path, mcp_app)
-        logger.info(f"MCP HTTP interface mounted at {config.mcp_path}")
+        # Mount at root; config.mcp_path is baked into http_app so FastMCP
+        # routes POST /mcp without a double-prefix. Host routes (/, /health,
+        # /metrics) are registered first and keep precedence under mount("/").
+        self.app.mount("/", mcp_app)
+        logger.info("MCP HTTP interface mounted at root (stateless streamable-http)")
 
         uvicorn_config = uvicorn.Config(
             app=self.app,
