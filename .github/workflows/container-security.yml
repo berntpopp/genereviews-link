@@ -53,3 +53,17 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
         if: always() && !github.event.repository.private
+
+      - name: Generate SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: genereview-link:scan
+          format: cyclonedx
+          output: genereview-link-sbom.cdx.json
+          exit-code: "0"
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-security-artifacts
+          path: genereview-link-sbom.cdx.json

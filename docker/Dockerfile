@@ -1,7 +1,7 @@
 # Multi-stage Dockerfile for GeneReview-Link
 
 # --- Builder Stage ---
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -29,7 +29,7 @@ RUN pip install --upgrade "pip>=26.1" uv && \
     uv sync --frozen --no-dev --active
 
 # --- Production Stage ---
-FROM python:3.12-slim AS production
+FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf AS production
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -68,5 +68,10 @@ RUN /usr/local/bin/python -m pip install --no-cache-dir --upgrade "pip>=26.1" &&
 USER app
 
 EXPOSE 8000
+
+# NOTE: intentionally NO image-level HEALTHCHECK (see tests/unit/
+# test_dockerfile_healthcheck.py / issue #29): it would apply to the
+# `genereview-link embed` one-shot too and report spurious unhealthy. The
+# healthcheck is defined per service in the compose files instead.
 
 CMD ["genereview-link", "serve", "--transport", "unified", "--host", "0.0.0.0", "--port", "8000"]
