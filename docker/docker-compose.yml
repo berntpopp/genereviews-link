@@ -9,7 +9,9 @@ name: genereviews-link
 
 services:
   postgres:
-    image: pgvector/pgvector:0.8.2-pg18
+    # Pinned by digest (Hardening Standard v1 §1): index digest from
+    # `docker buildx imagetools inspect pgvector/pgvector:0.8.2-pg18`.
+    image: pgvector/pgvector:0.8.2-pg18@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d
     container_name: genereview_link_postgres
     environment:
       POSTGRES_DB: genereview
@@ -68,6 +70,11 @@ services:
           memory: 256M
 
     restart: unless-stopped
+
+    # Runtime hardening (read_only rootfs + tmpfs, cap_drop: ALL,
+    # no-new-privileges, init, pids_limit) is applied by the prod overlay
+    # (docker-compose.prod.yml) and inherited by the npm path
+    # (base + prod + npm). The base file is the unhardened dev/foundation layer.
 
     logging:
       driver: "json-file"
