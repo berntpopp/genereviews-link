@@ -240,7 +240,7 @@ class UnifiedServerManager:
 
         mcp = FastMCP.from_fastapi(
             app=app,
-            name="GeneReview Link Tool",
+            name="genereviews-link",
             instructions=(
                 "GeneReview-Link grounds gene-disease questions in NCBI GeneReviews.\n\n"
                 "Canonical pipeline: search_passages (brief mode) -> "
