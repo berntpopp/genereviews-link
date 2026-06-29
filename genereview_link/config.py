@@ -42,7 +42,10 @@ class Settings(BaseSettings):
     CACHE_SIZE: int = 512
     CACHE_TTL_HOURS: int = 24
     LOG_LEVEL: str = "INFO"
-    CORS_ORIGINS: str = "*"
+    # Never default to "*" (the app sends allow_credentials=True): a wildcard
+    # credentialed origin is an unsafe default the hardening standard forbids.
+    # Production origins are injected at runtime via CORS_ORIGINS (comma-separated).
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # Distributed rate limiting (for multi-worker deployments)
     RATE_LIMIT_STATE_FILE: str = (
