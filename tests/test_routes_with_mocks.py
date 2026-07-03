@@ -271,8 +271,10 @@ class TestAbstractRoute:
         body = resp.json()
         assert body["pmid"] == "1"
         assert body["_meta"]["attribution"].startswith("GeneReviews")
-        assert body["corpus_version"] == "2026-05-10-r6"
-        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
+        # get_abstract always fetches live from PubMed -> version reflects live provenance,
+        # never the local corpus version (which the retrieval did not use).
+        assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
 
     @pytest.mark.asyncio
     async def test_abstract_404_when_empty(
@@ -348,8 +350,9 @@ class TestLinksRoute:
         assert body["_meta"]["attribution"].startswith("GeneReviews")
         assert body["link_entries"][0]["link_type"] == "llinks"
         assert body["by_type"]["llinks"] == ["https://example.com/a"]
-        assert body["corpus_version"] == "2026-05-10-r6"
-        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
+        # get_links always fetches live from NCBI -> version reflects live provenance.
+        assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
 
     @pytest.mark.asyncio
     async def test_links_500_on_error(
@@ -398,8 +401,9 @@ class TestFulltextRoute:
         assert body["nbk_id"] == "NBK1247"
         assert "summary" in body["sections"]
         assert body["_meta"]["attribution"].startswith("GeneReviews")
-        assert body["corpus_version"] == "2026-05-10-r6"
-        assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
+        # get_fulltext always live-scrapes NCBI Bookshelf -> version reflects live provenance.
+        assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
 
     @pytest.mark.asyncio
     async def test_fulltext_400_when_invalid_id(
@@ -725,7 +729,7 @@ class TestGenereviewRoute:
         assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
 
     @pytest.mark.asyncio
-    async def test_repo_miss_keeps_live_fallback_version_unstamped(
+    async def test_repo_miss_live_fallback_stamps_live_version(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
         class FakeRepo:
@@ -752,11 +756,12 @@ class TestGenereviewRoute:
         assert body["gene_symbol"] == "BRCA1"
         assert body["pubmed_id"] == "20301425"
         assert body["book_url"] == "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
-        assert body["corpus_version"] is None
-        assert body["_meta"]["corpus_version"] is None
+        # repo miss -> live NCBI fallback -> version reflects live provenance, not null.
+        assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
 
     @pytest.mark.asyncio
-    async def test_absent_repository_keeps_live_fallback_version_unstamped(
+    async def test_absent_repository_live_fallback_stamps_live_version(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
         fake_client._search_result = {"ids": ["20301425"]}
@@ -774,8 +779,9 @@ class TestGenereviewRoute:
 
         assert resp.status_code == 200
         body = resp.json()
-        assert body["corpus_version"] is None
-        assert body["_meta"]["corpus_version"] is None
+        # absent repository -> live NCBI fallback -> version reflects live provenance, not null.
+        assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
 
     @pytest.mark.asyncio
     async def test_returns_404_when_service_raises(self, fake_client: FakeClient) -> None:
