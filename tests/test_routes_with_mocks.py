@@ -178,7 +178,7 @@ class TestSearchRoute:
         assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
 
     @pytest.mark.asyncio
-    async def test_live_fallback_keeps_version_unstamped(
+    async def test_live_fallback_stamps_live_version(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
         fake_client._search_result = {
@@ -196,8 +196,9 @@ class TestSearchRoute:
         assert resp.status_code == 200
         body = resp.json()
         assert body["ids"] == ["1"]
-        assert body["corpus_version"] is None
-        assert body["_meta"]["corpus_version"] is None
+        # live NCBI search (repo miss / no repo) -> live provenance, not null.
+        assert body["corpus_version"].startswith("live:")
+        assert body["_meta"]["corpus_version"] == body["corpus_version"]
 
     @pytest.mark.asyncio
     async def test_returns_search_result(
@@ -941,10 +942,10 @@ class TestFreshParam:
         assert "license" not in body
 
     @pytest.mark.asyncio
-    async def test_search_no_fresh_has_null_corpus_version(
+    async def test_search_no_fresh_live_search_stamps_live_version(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
-        """Without ?fresh the corpus_version should be None (index not yet populated)."""
+        """With no corpus, the live NCBI search stamps live provenance, not null."""
         fake_client._search_result = {
             "count": 0,
             "retmax": 20,
@@ -956,7 +957,7 @@ class TestFreshParam:
         resp = await http_client.get("/search/BRCA1")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["corpus_version"] is None
+        assert body["corpus_version"].startswith("live:")
         # License never appears on per-record responses (dedicated /license endpoint).
         assert "license" not in body
 

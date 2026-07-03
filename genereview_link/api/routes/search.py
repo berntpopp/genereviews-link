@@ -118,7 +118,10 @@ async def search_genereviews(
                 out.meta.next_commands = next_commands
             stamp_response_version(
                 out,
-                corpus_version=live_corpus_version() if fresh else None,
+                # This path is reached only via the live NCBI search (a repository hit
+                # returns early above), so the version always reflects live provenance
+                # -- never null. (A corpus hit keeps the active corpus_version, above.)
+                corpus_version=live_corpus_version(),
             )
             return out
 
