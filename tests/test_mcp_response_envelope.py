@@ -31,7 +31,7 @@ from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
 from genereview_link.server_manager import UnifiedServerManager
 
 
-async def _build_mcp() -> Any:
+async def _build_mcp(**repo_overrides: Any) -> Any:
     repo = MagicMock()
     repo.get_chapter_metadata = AsyncMock(return_value=None)
     repo.search_passages = AsyncMock(return_value=[])
@@ -39,6 +39,8 @@ async def _build_mcp() -> Any:
     repo.dense_scores_for_passages = AsyncMock(return_value={})
     repo._dense_candidates_filtered = AsyncMock(return_value=[])
     repo.fetch_passages_by_ids = AsyncMock(return_value={})
+    for attr, value in repo_overrides.items():
+        setattr(repo, attr, value)
 
     app = FastAPI()
     app.include_router(license_routes.router)
@@ -113,6 +115,33 @@ async def test_forced_failure_has_flat_error_shape() -> None:
 
     meta = body["_meta"]
     assert meta["tool"] == "get_chapter_metadata"
+    assert meta["unsafe_for_clinical_use"] is True
+
+
+@pytest.mark.asyncio
+async def test_non_http_exception_is_internal_error_not_upstream_unavailable() -> None:
+    """A genuine internal bug (a bare, non-HTTP exception raised inside the
+    route/repository — e.g. a ValueError) never touched an HTTP response, so
+    it must be classified as a non-retryable internal_error, not misattributed
+    to a retryable upstream outage."""
+    mcp = await _build_mcp(search_passages=AsyncMock(side_effect=ValueError("boom")))
+
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "search_passages",
+            {"q": "BRCA1"},
+            raise_on_error=False,
+        )
+
+    body = result.structured_content
+    assert body is not None
+    assert body["success"] is False
+    assert body["error_code"] == "internal_error"
+    assert body["retryable"] is False
+    assert body["recovery_action"]
+
+    meta = body["_meta"]
+    assert meta["tool"] == "search_passages"
     assert meta["unsafe_for_clinical_use"] is True
 
 

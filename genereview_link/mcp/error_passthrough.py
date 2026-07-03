@@ -110,12 +110,21 @@ def _build_error_envelope_from_exception(
     response = _find_http_status_response(exc)
     request_id = envelope.new_request_id()
     if response is None:
-        # No HTTP response to inspect (e.g. a connection error, or a ValueError
-        # raised while building the request). Treat as internal/unavailable.
+        # No HTTP response anywhere in the exception's cause/context chain —
+        # this was never an upstream outage. It's either a connection-level
+        # failure, or (per fastmcp's OpenAPITool.run, and the ASGI transport's
+        # raise_app_exceptions=True) a genuine internal bug: an unhandled
+        # exception raised while building the request or inside the
+        # route/repository, re-raised verbatim rather than wrapped in an
+        # httpx.HTTPStatusError. Route it through the closed `internal_error`
+        # code explicitly — passing status_code=500 with detail=None here
+        # would fall through envelope._classify's generic `status_code >= 500`
+        # bucket and mislabel a deterministic bug as a retryable upstream
+        # outage.
         return envelope.build_error_envelope(
             tool_name,
             status_code=500,
-            detail=None,
+            detail={"code": "internal_error"},
             fallback_message=f"{type(exc).__name__}: {exc}"[:300],
             request_id=request_id,
             elapsed_ms=elapsed_ms,
