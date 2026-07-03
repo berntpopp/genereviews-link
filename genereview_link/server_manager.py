@@ -236,6 +236,8 @@ class UnifiedServerManager:
         """Create a FastMCP server instance from the FastAPI app."""
         from fastmcp.server.providers.openapi import MCPType, RouteMap
 
+        from genereview_link import __version__
+
         mcp_route_maps = [
             # Exclude debug routes from MCP tool exposure
             RouteMap(pattern=r"^/debug/", mcp_type=MCPType.EXCLUDE),
@@ -248,6 +250,7 @@ class UnifiedServerManager:
         mcp = FastMCP.from_fastapi(
             app=app,
             name="genereviews-link",
+            version=__version__,
             instructions=(
                 "GeneReview-Link grounds gene-disease questions in NCBI GeneReviews.\n\n"
                 "Canonical pipeline: search_passages (brief mode) -> "
