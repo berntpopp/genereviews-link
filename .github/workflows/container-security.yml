@@ -1,4 +1,4 @@
-name: Container security
+name: Container Security
 
 on:
   push:
@@ -16,12 +16,9 @@ permissions:
   contents: read
 
 jobs:
-  trivy:
-    name: Trivy scan
+  container-security:
+    name: Container scan and SBOM
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
 
     steps:
       - name: Checkout
@@ -39,30 +36,26 @@ jobs:
           load: true
           tags: genereview-link:scan
 
-      - name: Run Trivy scanner
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Trivy scan (fail on fixable CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: genereview-link:scan
-          format: sarif
-          output: trivy-results.sarif
+          format: table
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+          exit-code: "1"
 
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b # v4
-        with:
-          sarif_file: trivy-results.sarif
-        if: always() && !github.event.repository.private
-
-      - name: Generate SBOM
-        uses: aquasecurity/trivy-action@v0.36.0
+      - name: Generate SBOM (CycloneDX)
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: genereview-link:scan
           format: cyclonedx
           output: genereview-link-sbom.cdx.json
           exit-code: "0"
 
-      - name: Upload SBOM
+      - name: Upload scan artifacts
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: container-security-artifacts
