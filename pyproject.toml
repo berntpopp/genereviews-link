@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "genereview-link"
-version = "3.0.2"
+version = "3.0.3"
 description = "A unified server providing REST API and MCP interfaces for NCBI GeneReviews data."
 readme = "README.md"
 authors = [{ name = "Bernt Popp", email = "bernt.popp@charite.de" }]
