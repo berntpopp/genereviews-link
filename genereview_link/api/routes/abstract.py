@@ -13,7 +13,6 @@ from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.api.orchestration import (
-    active_corpus_version,
     live_corpus_version,
     stamp_response_version,
 )
@@ -47,7 +46,11 @@ async def get_abstract(
     client: Annotated[EutilsClient, Depends(get_managed_client)],
     fresh: bool = Query(
         False,
-        description="Label response version as live:<timestamp>; retrieval already uses live NCBI",
+        description=(
+            "Retained for backward compatibility; no longer affects versioning. "
+            "Retrieval is ALWAYS a live PubMed E-utils fetch, so the response "
+            "version is always live:<timestamp>."
+        ),
     ),
 ) -> AbstractData:
     """
@@ -77,7 +80,9 @@ async def get_abstract(
         )
         stamp_response_version(
             out,
-            corpus_version=live_corpus_version() if fresh else active_corpus_version(request),
+            # get_abstract ALWAYS fetches live from PubMed E-utils, so the version reflects
+            # live provenance -- not the local corpus version, and never null.
+            corpus_version=live_corpus_version(),
         )
         return out
     except StructuredHTTPException:

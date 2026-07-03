@@ -206,7 +206,9 @@ async def get_genereview(
                 if fresh
                 else active_corpus_version(request)
                 if indexed_chapter is not None
-                else None
+                # Non-indexed -> served by a live NCBI fetch, so stamp live provenance
+                # (was ``None``, which mislabeled live content as version-less).
+                else live_corpus_version()
             ),
         )
         if include_fulltext and max_chars > 0:
