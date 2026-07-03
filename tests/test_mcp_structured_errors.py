@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -36,14 +35,16 @@ async def _build_mcp() -> Any:
 
 
 def _error_payload(result: Any) -> dict[str, Any]:
-    assert result.is_error is True
-    assert result.structured_content is None
+    """Response-Envelope Standard v1: errors carry structured_content in-band
+    (success: false), not just an opaque content[] text blob. See
+    docs/RESPONSE-ENVELOPE-STANDARD-v1.md and genereview_link.mcp.envelope."""
+    assert result.structured_content is not None
+    payload = result.structured_content
+    assert payload["success"] is False
     assert result.content
     text = result.content[0].text
     assert "HTTPStatusError" not in text
     assert "Traceback" not in text
-    payload = json.loads(text)
-    assert isinstance(payload, dict)
     return payload
 
 
@@ -59,10 +60,10 @@ async def test_mcp_get_chapter_metadata_returns_structured_chapter_not_found() -
         )
 
     payload = _error_payload(result)
-    assert payload["code"] == "chapter_not_found"
+    assert payload["error_code"] == "not_found"
     assert payload["message"] == "chapter 'NBK999999' not in corpus"
-    assert payload["recovery_hint"]
-    assert payload["next_commands"][0]["tool"] == "search_passages"
+    assert payload["recovery_action"]
+    assert payload["_meta"]["next_commands"][0]["tool"] == "search_passages"
 
 
 @pytest.mark.asyncio
@@ -77,9 +78,9 @@ async def test_mcp_search_passages_error_uses_same_structured_shape() -> None:
         )
 
     payload = _error_payload(result)
-    assert payload["code"] == "conflicting_query_param"
+    assert payload["error_code"] == "invalid_input"
     assert payload["message"] == "both q and query supplied with different values"
-    assert payload["recovery_hint"] == (
+    assert payload["recovery_action"] == (
         "pass only one of q or query, or pass the same string in both"
     )
-    assert payload["next_commands"] == []
+    assert payload["_meta"]["next_commands"] == []

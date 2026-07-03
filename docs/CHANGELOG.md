@@ -57,6 +57,36 @@ so this server composes cleanly behind the `genefoundry-router` gateway under th
 
 ## Unreleased
 
+### Breaking changes
+
+1. **Adopted the GeneFoundry Response-Envelope Standard v1**
+
+   - *What changed:* Every MCP tool's `structuredContent` is now the fleet-wide
+     flat banner frame: `{"success": true, "results": [...], "_meta": {...}}`
+     for collection tools (`search_genereviews`, `search_passages`,
+     `search_passages_batch`, `get_passages_batch`) or
+     `{"success": true, "result": {...}, "_meta": {...}}` for single-item
+     tools (`get_genereview_summary`, `get_abstract`, `get_fulltext`,
+     `get_links`, `get_passage`, `get_chapter_section`, `get_chapter_metadata`,
+     `get_table`, `get_license`). `search_passages`'s historical
+     `{"result": {"results": [...]}}` double-wrap (an artifact of its
+     `PassageSearchResponse | IdsOnlySearchResponse` OpenAPI union schema) is
+     gone — `results` is always top-level. Execution errors now return an
+     in-band flat frame — `{"success": false, "error_code", "message",
+     "retryable", "recovery_action", "_meta"}` — as `structured_content`
+     instead of an opaque `ToolError` text blob. `_meta` on every response
+     (success and error) carries `tool`, `request_id`, `elapsed_ms`, `source`,
+     `capabilities_version`, and `unsafe_for_clinical_use: true`. This is an
+     MCP `structuredContent` contract only — the REST API response bodies are
+     unchanged.
+   - *Why:* Fleet-wide consistency and token economy; see
+     `docs/RESPONSE-ENVELOPE-STANDARD-v1.md` (`genefoundry-router-standards`).
+   - *Migration:* Read collection results from `response.results` (not
+     `response.result.results`); read single-item payloads from
+     `response.result`. Branch on `response.success` and, on failure, on
+     `response.error_code`/`response.retryable` instead of parsing a raw
+     `ToolError` message string.
+
 ### Fixed
 
 - Applied `CACHE_TTL_HOURS` to all `GeneReviewService` `alru_cache` wrappers;

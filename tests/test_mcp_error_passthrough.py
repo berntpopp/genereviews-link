@@ -1,29 +1,13 @@
-"""Tests for structured FastAPI error passthrough to MCP tool errors."""
+"""Tests for structured FastAPI error detail extraction used by the MCP envelope."""
 
 from __future__ import annotations
 
-import json
-
 import httpx
-import pytest
-from fastmcp.exceptions import ToolError
 
-from genereview_link.mcp.error_passthrough import raise_structured_tool_error
+from genereview_link.mcp.error_passthrough import _fallback_message, _structured_detail
 
 
-def _wrapped_http_status_error(response: httpx.Response) -> ValueError:
-    status_error = httpx.HTTPStatusError(
-        "not found",
-        request=response.request,
-        response=response,
-    )
-    try:
-        raise ValueError("HTTP error 404: Not Found") from status_error
-    except ValueError as exc:
-        return exc
-
-
-def test_raise_structured_tool_error_extracts_structured_detail() -> None:
+def test_structured_detail_extracts_structured_body() -> None:
     request = httpx.Request("GET", "http://fastapi/chapters/NBK999/metadata")
     response = httpx.Response(
         404,
@@ -41,22 +25,39 @@ def test_raise_structured_tool_error_extracts_structured_detail() -> None:
         },
     )
 
-    with pytest.raises(ToolError) as exc_info:
-        raise_structured_tool_error(_wrapped_http_status_error(response))
+    detail = _structured_detail(response)
 
-    payload = json.loads(str(exc_info.value))
-    assert payload["code"] == "chapter_not_found"
-    assert payload["message"] == "chapter 'NBK999' not in corpus"
-    assert payload["recovery_hint"] == "check the NBK ID"
-    assert payload["next_commands"][0]["tool"] == "search_passages"
+    assert detail is not None
+    assert detail["code"] == "chapter_not_found"
+    assert detail["message"] == "chapter 'NBK999' not in corpus"
+    assert detail["recovery_hint"] == "check the NBK ID"
+    assert detail["next_commands"][0]["tool"] == "search_passages"
 
 
-def test_raise_structured_tool_error_reraises_unstructured_error() -> None:
+def test_structured_detail_returns_none_for_unstructured_body() -> None:
     request = httpx.Request("GET", "http://fastapi/plain")
     response = httpx.Response(500, request=request, text="plain failure")
-    original = _wrapped_http_status_error(response)
 
-    with pytest.raises(ValueError) as exc_info:
-        raise_structured_tool_error(original)
+    assert _structured_detail(response) is None
 
-    assert exc_info.value is original
+
+def test_fallback_message_uses_hint_field_when_present() -> None:
+    request = httpx.Request("GET", "http://fastapi/genereview/BRCA9")
+    response = httpx.Response(
+        404,
+        request=request,
+        json={
+            "error": "not_yet_indexed",
+            "gene_symbol": "BRCA9",
+            "hint": "Pass ?fresh=true to fetch from NCBI live",
+        },
+    )
+
+    assert _fallback_message(response) == "Pass ?fresh=true to fetch from NCBI live"
+
+
+def test_fallback_message_falls_back_to_status_line_for_plain_text() -> None:
+    request = httpx.Request("GET", "http://fastapi/plain")
+    response = httpx.Response(500, request=request, text="")
+
+    assert _fallback_message(response) == "HTTP 500"

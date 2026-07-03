@@ -59,13 +59,17 @@ async def _build_mcp() -> tuple[Any, MagicMock]:
 
 
 async def _call_search_passages(client: Client[Any], arguments: dict[str, Any]) -> dict[str, Any]:
+    """Call search_passages and return the envelope body.
+
+    Response-Envelope Standard v1: a collection tool's `structured_content` is
+    always the flat `{"success": true, "results": [...], "_meta": {...}}` frame
+    at the top level — never double-wrapped under an outer `result` key.
+    """
     result = await client.call_tool("search_passages", arguments)
     assert result.structured_content is not None
     assert isinstance(result.structured_content, dict)
-    if set(result.structured_content) == {"result"}:
-        wrapped = result.structured_content["result"]
-        assert isinstance(wrapped, dict)
-        return wrapped
+    assert result.structured_content["success"] is True
+    assert "results" in result.structured_content
     return result.structured_content
 
 
@@ -102,45 +106,44 @@ async def test_mcp_search_passages_conflicting_q_and_query_returns_structured_er
             raise_on_error=False,
         )
 
-    assert result.is_error is True
-    assert result.structured_content is None
-    assert result.content
-    error_text = result.content[0].text
-    assert "conflicting_query_param" in error_text
-    assert "both q and query supplied with different values" in error_text
+    body = result.structured_content
+    assert body is not None
+    assert body["success"] is False
+    assert body["error_code"] == "invalid_input"
+    assert body["retryable"] is False
+    assert body["message"] == "both q and query supplied with different values"
+    assert body["recovery_action"] == "pass only one of q or query, or pass the same string in both"
 
 
 @pytest.mark.asyncio
-async def test_mcp_search_passages_ids_only_schema_uses_slim_rows() -> None:
+async def test_mcp_search_passages_ids_only_schema_declares_envelope_frame() -> None:
+    """The declared outputSchema is the Response-Envelope frame (success/_meta),
+    not a deep per-record schema — see envelope.reshape_output_schema. Per-record
+    slim-row shape is verified behaviorally below, not via schema introspection."""
     mcp, _repo = await _build_mcp()
     tool = next(tool for tool in await mcp.list_tools() if tool.name == "search_passages")
 
-    def find_schema(node: Any, title: str) -> dict[str, Any] | None:
-        if isinstance(node, dict):
-            if node.get("title") == title:
-                return node
-            for value in node.values():
-                found = find_schema(value, title)
-                if found is not None:
-                    return found
-        elif isinstance(node, list):
-            for item in node:
-                found = find_schema(item, title)
-                if found is not None:
-                    return found
-        return None
+    assert tool.output_schema["type"] == "object"
+    assert set(tool.output_schema["required"]) == {"success", "_meta"}
+    assert tool.output_schema["additionalProperties"] is True
 
-    ids_only_schema = find_schema(tool.output_schema, "IdsOnlyPassage")
 
-    assert ids_only_schema is not None
-    assert set(ids_only_schema["properties"]) == {
+@pytest.mark.asyncio
+async def test_mcp_search_passages_ids_only_mode_returns_slim_rows() -> None:
+    mcp, _repo = await _build_mcp()
+
+    async with Client(mcp) as client:
+        result = await _call_search_passages(client, {"q": "BRCA1", "mode": "ids_only"})
+
+    row = result["results"][0]
+    assert set(row) == {
         "passage_id",
         "nbk_id",
         "chapter_section",
         "rrf_score",
         "lexical_rank_position",
     }
-    assert "chapter_title" not in ids_only_schema["properties"]
-    assert "char_count" not in ids_only_schema["properties"]
-    assert "recommended_citation" not in ids_only_schema["properties"]
-    assert "source_url" not in ids_only_schema["properties"]
+    assert "chapter_title" not in row
+    assert "char_count" not in row
+    assert "recommended_citation" not in row
+    assert "source_url" not in row
