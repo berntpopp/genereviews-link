@@ -42,8 +42,8 @@ class Settings(BaseSettings):
     CACHE_SIZE: int = 512
     CACHE_TTL_HOURS: int = 24
     LOG_LEVEL: str = "INFO"
-    # Never default to "*" (the app sends allow_credentials=True): a wildcard
-    # credentialed origin is an unsafe default the hardening standard forbids.
+    # Credentialed CORS is disabled at the app layer (unauthenticated backend
+    # holds no cookies/session); the startup guard also rejects "*"+credentials.
     # Production origins are injected at runtime via CORS_ORIGINS (comma-separated).
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 

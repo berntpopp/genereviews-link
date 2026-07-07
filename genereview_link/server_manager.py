@@ -61,6 +61,21 @@ REQUEST_LATENCY = Histogram(
 )
 
 
+def validate_cors_config(origins: list[str], allow_credentials: bool) -> None:
+    """Fail closed on the unsafe credentials + wildcard-origin CORS combination.
+
+    This backend is unauthenticated by design (it holds no cookies or session),
+    so credentialed CORS is meaningless; combined with a ``*`` origin it is also
+    rejected by browsers and would only broaden exposure. Refuse it at startup
+    rather than ship the footgun.
+    """
+    if allow_credentials and "*" in origins:
+        raise ValueError(
+            "CORS misconfiguration: allow_credentials=True cannot be combined "
+            "with a wildcard '*' origin on an unauthenticated backend."
+        )
+
+
 class PrometheusMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
         start = time.perf_counter()
@@ -116,10 +131,16 @@ class UnifiedServerManager:
         # asgi-correlation-id should be added last so it becomes the outermost
         # middleware and tags every response (including CORS preflight) with the
         # correlation ID. See https://github.com/snok/asgi-correlation-id
+        # Unauthenticated backend: no cookies/session to protect, so credentialed
+        # CORS is meaningless and a footgun. Keep credentials OFF and refuse the
+        # unsafe wildcard-origin + credentials combination at startup. Preserve the
+        # existing method list — several endpoints (/health, /) are served over GET.
+        cors_origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",")]
+        validate_cors_config(cors_origins, allow_credentials=False)
         app.add_middleware(
             CORSMiddleware,
-            allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",")],
-            allow_credentials=True,
+            allow_origins=cors_origins,
+            allow_credentials=False,
             allow_methods=["*"],
             allow_headers=["*"],
         )
