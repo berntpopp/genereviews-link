@@ -130,11 +130,13 @@ async def search_genereviews(
         except StructuredHTTPException:
             raise
         except Exception as e:
+            # SECURITY: do not log the exception detail (str(e)) or a traceback
+            # (exc_info) — both can echo the caller-supplied gene_symbol
+            # (free-text / GDPR Art. 9). Log the exception type only; the API
+            # response still carries a recovery hint via internal_orchestration_error.
             request_logger.error(
                 "Search failed",
                 error_type=type(e).__name__,
-                error_message=str(e),
-                exc_info=True,
             )
             raise internal_orchestration_error(
                 "search GeneReviews",

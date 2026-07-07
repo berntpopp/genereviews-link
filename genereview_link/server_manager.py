@@ -76,12 +76,36 @@ def validate_cors_config(origins: list[str], allow_credentials: bool) -> None:
         )
 
 
+def _metrics_path_label(request: Request) -> str:
+    """Return a low-cardinality, PII-free path label for Prometheus.
+
+    The raw request path can embed caller-supplied free text (a gene symbol or
+    query on ``/search/{gene_symbol}``). Exporting it verbatim as a metric label
+    both leaks request data through ``/metrics`` (possibly GDPR Art. 9
+    patient-derived) and explodes label cardinality. Substitute each matched path
+    parameter with its ``{name}`` template token, and bucket unrouted paths (404s)
+    so an unauthenticated caller cannot mint arbitrary new labels.
+    """
+    if request.scope.get("endpoint") is None:
+        return "__unmatched__"
+    label = request.scope.get("path") or request.url.path
+    path_params = request.scope.get("path_params") or {}
+    for name, value in path_params.items():
+        if value is None:
+            continue
+        token = str(value)
+        if token:
+            label = label.replace(token, "{" + name + "}")
+    return label
+
+
 class PrometheusMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):  # type: ignore[no-untyped-def]
         start = time.perf_counter()
         response = await call_next(request)
         elapsed = time.perf_counter() - start
-        path = request.url.path
+        # Use the redacted route template, never the raw path (PII + cardinality).
+        path = _metrics_path_label(request)
         REQUEST_LATENCY.labels(method=request.method, path=path).observe(elapsed)
         REQUEST_COUNTER.labels(
             method=request.method,

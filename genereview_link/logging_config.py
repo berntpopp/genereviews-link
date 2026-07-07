@@ -257,11 +257,14 @@ class PerformanceLogger:
         duration_ms = (time.time() - (self.start_time or 0)) * 1000
 
         if exc_type is not None:
+            # SECURITY: do not log str(exc_val) — an exception raised on a
+            # request-handling path can embed caller-supplied input (a free-text
+            # query / gene symbol) in its message, or in a StructuredHTTPException
+            # detail (next_commands). Log the exception type only.
             self.logger.error(
                 "Operation failed",
                 duration_ms=round(duration_ms, 2),
                 error_type=exc_type.__name__,
-                error_message=str(exc_val),
             )
         else:
             self.logger.info("Operation completed", duration_ms=round(duration_ms, 2))

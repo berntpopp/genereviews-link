@@ -102,12 +102,12 @@ class EutilsClient:
             )
             raise TimeoutError("Request to NCBI E-utilities timed out. Please try again.") from e
         except httpx.HTTPStatusError as e:
+            # SECURITY: never log the URL or str(e) — both carry the E-utils query
+            # term (caller-supplied gene symbol). Log the endpoint + status only.
             logger.error(
                 "HTTP error from NCBI E-utils",
                 endpoint=endpoint,
-                url=str(e.request.url),
                 status_code=e.response.status_code,
-                error=str(e),
             )
             if e.response.status_code == 429:
                 raise Exception(
@@ -204,12 +204,12 @@ class EutilsClient:
             )
             raise TimeoutError("Request to NCBI E-utilities timed out. Please try again.") from e
         except httpx.HTTPStatusError as e:
+            # SECURITY: never log the URL or str(e) — both carry the E-utils query
+            # term (caller-supplied gene symbol). Log the endpoint + status only.
             logger.error(
                 "HTTP error from NCBI E-utils XML endpoint",
                 endpoint=endpoint,
-                url=str(e.request.url),
                 status_code=e.response.status_code,
-                error=str(e),
             )
             if e.response.status_code == 429:
                 raise Exception(
