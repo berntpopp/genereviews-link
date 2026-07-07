@@ -63,8 +63,10 @@ async def search_genereviews(
     """
     # Create request-scoped logger. correlation_id is injected automatically by
     # the structlog processor wired in logging_config.py (Task B3).
+    # SECURITY: never bind the raw free-text search term (gene_symbol) into the
+    # logger — it is caller-supplied input. Keep only non-sensitive context
+    # (retmax, correlation-id, timings); the term is not a log field.
     request_logger = logger.bind(
-        gene_symbol=gene_symbol,
         retmax=retmax,
     )
 
