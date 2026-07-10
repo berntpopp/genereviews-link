@@ -6,13 +6,6 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-# fastmcp >=3.4.3 defaults http_host_origin_protection on, which returns 421
-# Misdirected Request for any proxied /mcp request whose Host is not localhost
-# (e.g. traffic from the genefoundry-router). NPM already validates the Host
-# via server_name + TLS SNI, so disable the redundant app-layer guard. This is
-# a no-op on fastmcp <3.4.3 (the setting does not exist yet), so it is safe to
-# land before the version bump that would otherwise break federation.
-import fastmcp
 import uvicorn
 from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI, Request
@@ -25,6 +18,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+from genereview_link import http_security
 from genereview_link.api.client_manager import get_client_manager
 from genereview_link.api.routes import (
     abstract,
@@ -53,9 +47,6 @@ from genereview_link.server_lifecycle import (
     _teardown_state,
 )
 from genereview_link.services.errors import NotYetIndexedError
-
-if hasattr(fastmcp.settings, "http_host_origin_protection"):
-    fastmcp.settings.http_host_origin_protection = False
 
 logger = get_logger("server.manager")
 
@@ -186,6 +177,7 @@ class UnifiedServerManager:
 
         if settings.ENABLE_METRICS:
             app.add_middleware(PrometheusMiddleware)
+        http_security.add_host_origin_guard(app)
 
         @app.exception_handler(NotYetIndexedError)
         async def not_yet_indexed_handler(
@@ -396,15 +388,13 @@ class UnifiedServerManager:
         self._current_transport = "unified"
         logger.info(f"Starting unified server on {config.host}:{config.port}")
 
-        # Build the FastAPI app once, then construct FastMCP against the SAME
-        # app instance. FastMCP captures a reference to the FastAPI app for
+        # FastMCP must capture the same app instance that serves HTTP because
         # dispatching tool calls — if we built a discovery-only app for the
         # MCP and a separate serving app for HTTP, tool calls would land on
-        # the discovery app whose lifespan never ran (app.state.repository =
-        # None → 503 from /passages/search and /chapters/.../sections/...).
+        # a separate discovery app's lifespan never initializes its repository.
         self.app = self.create_fastapi_app(config)
         self.mcp = await self.create_mcp_server(self.app, config)
-        mcp_app = self.mcp.http_app(path=config.mcp_path, stateless_http=True, json_response=True)
+        mcp_app = http_security.create_mcp_http_app(self.mcp, config.mcp_path)
 
         # Chain mcp_app's lifespan into the existing app's lifespan so the
         # FastMCP StreamableHTTPSessionManager starts at boot.

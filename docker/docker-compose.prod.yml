@@ -6,6 +6,7 @@ services:
     environment:
       GENEREVIEW_LINK_LOG_LEVEL: INFO
       LOG_JSON: "true"
+      MCP_ALLOWED_HOSTS: '["localhost","127.0.0.1","::1","genereviews-link.genefoundry.org"]'
 
     volumes: []
     ports: !reset []
@@ -41,7 +42,7 @@ services:
         window: 120s
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "-H", "Host: localhost", "http://localhost:8000/health"]
       interval: 20s
       timeout: 5s
       retries: 5

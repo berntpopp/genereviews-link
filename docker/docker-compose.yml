@@ -44,6 +44,7 @@ services:
       GENEREVIEW_LINK_LOG_LEVEL: INFO
       GENEREVIEW_LINK_HOST: 0.0.0.0
       GENEREVIEW_LINK_PORT: 8000
+      MCP_ALLOWED_HOSTS: '["localhost","127.0.0.1","::1"]'
       DATABASE_URL: postgresql://${POSTGRES_USER:-genereview}:${POSTGRES_PASSWORD:-genereview}@postgres:5432/genereview
 
     depends_on:
@@ -61,7 +62,7 @@ services:
     command: ["genereview-link", "serve", "--transport", "unified", "--host", "0.0.0.0", "--port", "8000"]
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "-H", "Host: localhost", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
