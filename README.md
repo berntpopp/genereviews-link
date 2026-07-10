@@ -139,7 +139,14 @@ ENVIRONMENT=development                # Environment name for logging context
 ### Server Configuration
 ```bash
 CORS_ORIGINS=*                         # CORS allowed origins (default: *)
+MCP_ALLOWED_HOSTS='["localhost","127.0.0.1","::1"]'
+MCP_ALLOWED_ORIGINS='[]'
 ```
+
+Host and Origin validation is strict for every HTTP route. Add reverse-proxy
+hostnames to `MCP_ALLOWED_HOSTS` as exact JSON strings; wildcards are rejected.
+Browser deployments must add exact origins to both `MCP_ALLOWED_ORIGINS` and
+`CORS_ORIGINS`, because transport validation and browser CORS are independent.
 
 ## Development
 
