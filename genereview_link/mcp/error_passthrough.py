@@ -89,17 +89,17 @@ def _structured_detail(response: httpx.Response) -> dict[str, Any] | None:
 
 
 def _fallback_message(response: httpx.Response) -> str:
-    """Best-effort human-readable message when no structured detail body exists."""
-    try:
-        body = response.json()
-    except ValueError:
-        text = response.text.strip()
-        return text[:300] if text else f"HTTP {response.status_code}"
-    if isinstance(body, dict):
-        for key in ("hint", "message", "error", "detail"):
-            value = body.get(key)
-            if isinstance(value, str) and value:
-                return value[:300]
+    """Fixed, status-keyed message when no structured detail body exists.
+
+    SECURITY: the upstream response BODY is deliberately NOT interpolated. When a
+    route (or an upstream) returns an unstructured error body, that body is
+    caller-influenceable and can carry injection prose plus control/zero-width/
+    bidi/NUL code points; echoing any of its ``hint``/``message``/``error``/
+    ``detail``/text fields would smuggle it into the caller-visible MCP error
+    frame. The HTTP status is a bounded, non-attacker-controlled scalar, so a
+    fixed message keyed on it is safe; the actionable guidance travels separately
+    in ``recovery_action`` (keyed on the classified ``error_code``).
+    """
     return f"HTTP {response.status_code}"
 
 
@@ -121,11 +121,16 @@ def _build_error_envelope_from_exception(
         # would fall through envelope._classify's generic `status_code >= 500`
         # bucket and mislabel a deterministic bug as a retryable upstream
         # outage.
+        # SECURITY: never surface str(exc) or the exception class name — an
+        # unhandled internal error's text can carry local paths, upstream page
+        # content, or other detail. Return a fixed message; the request_id
+        # correlates it to server logs and recovery guidance is added by the
+        # envelope's error_code classification.
         return envelope.build_error_envelope(
             tool_name,
             status_code=500,
             detail={"code": "internal_error"},
-            fallback_message=f"{type(exc).__name__}: {exc}"[:300],
+            fallback_message="An internal error occurred.",
             request_id=request_id,
             elapsed_ms=elapsed_ms,
         )

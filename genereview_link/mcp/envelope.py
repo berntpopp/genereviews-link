@@ -31,6 +31,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from genereview_link.mcp.untrusted_content import sanitize_message
+
 # Bump when the tool surface or envelope shape changes in a way a warm client
 # should re-fetch metadata for. No capabilities-negotiation tool exists yet on
 # this server, so this is a static provenance stamp rather than a live value.
@@ -195,6 +197,23 @@ def build_success_envelope(
     return envelope
 
 
+def _sanitize_tree(value: Any) -> Any:
+    """Recursively code-point-strip every string leaf of a caller-visible tree.
+
+    Applied to ``field_errors`` and ``next_commands`` so a caller-supplied
+    identifier echoed into a ``field``/``reason`` or a ``next_commands[*]``
+    argument value cannot smuggle forbidden control/zero-width/bidi/NUL code
+    points into the error frame. Structure (dict keys, list order) is preserved.
+    """
+    if isinstance(value, str):
+        return sanitize_message(value)
+    if isinstance(value, dict):
+        return {key: _sanitize_tree(sub) for key, sub in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_tree(sub) for sub in value]
+    return value
+
+
 def build_error_envelope(
     tool_name: str,
     *,
@@ -213,10 +232,19 @@ def build_error_envelope(
     internal_code = detail.get("code") if detail else None
     error_code, retryable = _classify(internal_code, status_code)
 
-    message = (detail or {}).get("message") or fallback_message
-    recovery_action = (detail or {}).get("recovery_hint") or _GENERIC_RECOVERY_ACTION[error_code]
-    next_commands = (detail or {}).get("next_commands") or []
-    field_errors = (detail or {}).get("field_errors") or []
+    # SECURITY (defense in depth): strip forbidden control/zero-width/bidi/NUL
+    # code points from every caller-visible string. These messages are
+    # server-authored guidance (attacker-influenceable upstream bodies / str(exc)
+    # are severed to fixed messages at their source in error_passthrough and the
+    # API client), but a caller-supplied identifier may be echoed into a
+    # message/recovery/next_commands field, so sanitizing here is the backstop
+    # that guarantees no forbidden code point reaches the frame on ANY path.
+    message = sanitize_message((detail or {}).get("message") or fallback_message)
+    recovery_action = sanitize_message(
+        (detail or {}).get("recovery_hint") or _GENERIC_RECOVERY_ACTION[error_code]
+    )
+    next_commands = _sanitize_tree((detail or {}).get("next_commands") or [])
+    field_errors = _sanitize_tree((detail or {}).get("field_errors") or [])
 
     envelope: dict[str, Any] = {
         "success": False,

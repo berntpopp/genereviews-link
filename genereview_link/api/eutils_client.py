@@ -330,13 +330,9 @@ class EutilsClient:
                 return results
 
             except Exception as e:
-                scrape_logger.error(
-                    "Enhanced scraping failed",
-                    error_type=type(e).__name__,
-                    error_message=str(e),
-                    exc_info=True,
-                )
-                return {"error": str(e)}
+                # SECURITY: never log/return str(e) (page text / caller URL) — sever.
+                scrape_logger.error("Enhanced scraping failed", error_type=type(e).__name__)
+                return {"error": "Bookshelf scrape failed."}
 
     async def search_genereviews(self, gene_symbol: str, retmax: int = 20) -> dict[str, Any]:
         """Enhanced search for GeneReviews returning multiple results with metadata."""
@@ -635,8 +631,9 @@ class EutilsClient:
             return results
 
         except Exception as e:
-            logger.error(f"Error scraping comprehensive content from {book_url}: {e}")
-            return {"error": str(e)}
+            # SECURITY: never log/return str(e) (page text / caller URL) — sever.
+            logger.error("Comprehensive scraping failed", error_type=type(e).__name__)
+            return {"error": "Bookshelf scrape failed."}
 
     def _find_main_content(self, soup: BeautifulSoup) -> Tag | None:
         """Find the main content container using GeneReviews-specific strategies."""
