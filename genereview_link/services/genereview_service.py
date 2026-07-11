@@ -4,6 +4,9 @@ Service layer for GeneReview business logic.
 Orchestrates data retrieval and processing workflows.
 """
 
+import re
+from typing import Any
+
 from async_lru import alru_cache
 
 from genereview_link.api.eutils_client import EutilsClient
@@ -24,6 +27,8 @@ from genereview_link.retrieval.repository import ChapterRow
 
 logger = get_logger(__name__)
 
+_NBK_IN_URL = re.compile(r"/books/(NBK\d+)")
+
 
 def _book_urls_from_links(links_result: dict[str, object]) -> list[str]:
     urls = links_result.get("urls", [])
@@ -32,17 +37,20 @@ def _book_urls_from_links(links_result: dict[str, object]) -> list[str]:
     return [url for url in urls if isinstance(url, str) and "ncbi.nlm.nih.gov/books/" in url]
 
 
+def _doc_id(book_url: str | None, pubmed_id: str) -> str:
+    """Stable record-id root for get_genereview_summary's fenced sections."""
+    match = _NBK_IN_URL.search(book_url or "")
+    return match.group(1) if match else f"pmid:{pubmed_id}"
+
+
 def _fence_section_for_fulltext(
     section: GeneReviewSection, *, doc_id: str, record_path: str
 ) -> FencedGeneReviewSection:
     """Build the v1.1-fenced sibling of an internal ``GeneReviewSection``.
 
-    ``GeneReview.full_text_data`` (``FullTextData``) is a separate,
-    MCP-facing nested object from the plain ``GeneReview.summary`` /
-    ``.diagnosis`` / ``.management`` / ``.other_sections`` convenience
-    fields (which stay ``GeneReviewSection`` / ``str`` — out of this row's
-    fencing scope), so this builds the fenced copy without mutating the
-    internal model.
+    Fences ``content`` (and every nested subsection's content) as
+    ``untrusted_text`` without mutating the internal str-typed model.
+    ``record_id`` is ``{doc_id}#{record_path}``.
     """
     return FencedGeneReviewSection(
         title=section.title,
@@ -56,6 +64,38 @@ def _fence_section_for_fulltext(
             )
             for key, value in section.subsections.items()
         },
+    )
+
+
+def fence_fulltext_metadata(metadata_dict: dict[str, object], *, doc_id: str) -> FullTextMetadata:
+    """Fence live-scraped FullTextMetadata prose (authors/update/pub/refs).
+
+    Shared by get_fulltext and get_genereview_summary. ``last_updated`` (a date
+    token) stays a bare str; every other field is upstream free-text.
+    """
+
+    def _fence(value: object, field: str) -> object:
+        if value is None:
+            return None
+        return fence_untrusted_text(
+            str(value), source="genereviews", record_id=f"{doc_id}#metadata:{field}"
+        )
+
+    references = metadata_dict.get("references", []) or []
+    ref_list = references if isinstance(references, list) else []
+    return FullTextMetadata(
+        authors=_fence(metadata_dict.get("authors"), "authors"),  # type: ignore[arg-type]
+        update_info=_fence(metadata_dict.get("update_info"), "update_info"),  # type: ignore[arg-type]
+        publication_info=_fence(  # type: ignore[arg-type]
+            metadata_dict.get("publication_info"), "publication_info"
+        ),
+        last_updated=metadata_dict.get("last_updated"),  # type: ignore[arg-type]
+        references=[
+            fence_untrusted_text(
+                str(ref), source="genereviews", record_id=f"{doc_id}#metadata:ref:{i}"
+            )
+            for i, ref in enumerate(ref_list)
+        ],
     )
 
 
@@ -116,21 +156,34 @@ class GeneReviewService:
         if not scraped_data or "title" not in scraped_data:
             raise DataNotFoundError(f"Could not scrape content from URL: {book_url}")
 
-        # 4. Populate the Pydantic model
+        # 4. Populate the Pydantic model (sections v1.1-fenced at this boundary)
         title = scraped_data.pop("title")["content"]
         summary = scraped_data.pop("summary", None)
         diagnosis = scraped_data.pop("diagnosis", None)
         management = scraped_data.pop("management", None)
+        doc_id = _doc_id(book_url, pubmed_id)
+
+        def _fence(raw: dict[str, Any] | None, key: str) -> FencedGeneReviewSection | None:
+            if not raw:
+                return None
+            return _fence_section_for_fulltext(
+                GeneReviewSection(**raw), doc_id=doc_id, record_path=f"section:{key}"
+            )
 
         return GeneReview(
             gene_symbol=gene_symbol.upper(),
             pubmed_id=pubmed_id,
             book_url=book_url,
             title=title,
-            summary=GeneReviewSection(**summary) if summary else None,
-            diagnosis=GeneReviewSection(**diagnosis) if diagnosis else None,
-            management=GeneReviewSection(**management) if management else None,
-            other_sections={k: GeneReviewSection(**v) for k, v in scraped_data.items()},
+            summary=_fence(summary, "summary"),
+            diagnosis=_fence(diagnosis, "diagnosis"),
+            management=_fence(management, "management"),
+            other_sections={
+                k: _fence_section_for_fulltext(
+                    GeneReviewSection(**v), doc_id=doc_id, record_path=f"section:{k}"
+                )
+                for k, v in scraped_data.items()
+            },
         )
 
     async def _get_genereview_comprehensive_cached_impl(
@@ -246,26 +299,21 @@ class GeneReviewService:
                             content=section_data["content"],
                         )
 
-                    # Convert metadata
-                    metadata_dict = fulltext_result.get("metadata", {})
-                    metadata = FullTextMetadata(
-                        authors=metadata_dict.get("authors"),
-                        update_info=metadata_dict.get("update_info"),
-                    )
-
                     fulltext_nbk_id = _canonical_fulltext_nbk_id(fulltext_result.get("nbk_id"))
                     fulltext_doc_id = fulltext_nbk_id or f"pmid:{pubmed_id}"
+                    # full_text_data.sections is intentionally EMPTY here: the same
+                    # section prose is emitted (fenced) via summary/diagnosis/
+                    # management/other_sections below. Duplicating it in
+                    # full_text_data.sections would violate the v1.1 no-duplication
+                    # rule. full_text_data keeps its unique metadata + identifiers.
                     full_text_data = FullTextData(
                         nbk_id=fulltext_nbk_id,
                         url=fulltext_result.get("url", book_url),
                         title=fulltext_result.get("title", ""),
-                        sections={
-                            key: _fence_section_for_fulltext(
-                                sec, doc_id=fulltext_doc_id, record_path=key
-                            )
-                            for key, sec in sections_data.items()
-                        },
-                        metadata=metadata,
+                        sections={},
+                        metadata=fence_fulltext_metadata(
+                            fulltext_result.get("metadata", {}), doc_id=fulltext_doc_id
+                        ),
                     )
 
                     scraped_title = fulltext_result.get("title", "")
@@ -296,20 +344,30 @@ class GeneReviewService:
         if not title:
             title = f"GeneReview for {gene_symbol}"
 
-        # Extract specific sections for backward compatibility
+        # Extract specific sections for backward compatibility, fencing each
+        # section's scraped prose (v1.1) at this MCP serialization boundary.
         summary = sections.pop("summary", None)
         diagnosis = sections.pop("diagnosis", None)
         management = sections.pop("management", None)
+        doc_id = _doc_id(book_url, pubmed_id)
+
+        def _fence(sec: GeneReviewSection | None, key: str) -> FencedGeneReviewSection | None:
+            if sec is None:
+                return None
+            return _fence_section_for_fulltext(sec, doc_id=doc_id, record_path=f"section:{key}")
 
         return GeneReview(
             gene_symbol=gene_symbol.upper(),
             pubmed_id=pubmed_id,
             book_url=book_url,
             title=title,
-            summary=summary,
-            diagnosis=diagnosis,
-            management=management,
-            other_sections=sections,
+            summary=_fence(summary, "summary"),
+            diagnosis=_fence(diagnosis, "diagnosis"),
+            management=_fence(management, "management"),
+            other_sections={
+                k: _fence_section_for_fulltext(sec, doc_id=doc_id, record_path=f"section:{k}")
+                for k, sec in sections.items()
+            },
             abstract_data=abstract_data,
             all_links=all_links,
             full_text_data=full_text_data,

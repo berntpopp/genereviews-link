@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, cast
+from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, Path, Request
 
 from genereview_link.api.errors import FieldError, StructuredHTTPException
 from genereview_link.api.routes.passages import _get_corpus_version, get_repository
-from genereview_link.corpus.tables import render_table_markdown
+from genereview_link.api.routes.table_enrichment import fence_table_cells
+from genereview_link.api.untrusted_limits import collect_untrusted, guard_untrusted_limits
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
 from genereview_link.models.genereview_models import ResponseMeta, TableResponse
 from genereview_link.models.sections import SectionName, canonicalize_nbk_id
 from genereview_link.retrieval.repository import GeneReviewRepository
@@ -25,7 +27,8 @@ router = APIRouter(tags=["Chapters"])
     description=(
         "Fetch a known GeneReviews table_id as structured rows. Call "
         "get_chapter_metadata first to discover tables[] entries and avoid "
-        "guessing numeric table labels."
+        "guessing numeric table labels. caption and every header/row cell are "
+        "upstream table prose, emitted as v1.1 untrusted_text objects."
     ),
 )
 async def get_table(
@@ -43,17 +46,6 @@ async def get_table(
             description="Table identifier, e.g. 't5'. Discoverable via get_chapter_metadata.",
         ),
     ],
-    format: Annotated[
-        Literal["structured", "markdown_table"],
-        Query(
-            description=(
-                "Output format. 'structured' (default) returns header/rows only. "
-                "'markdown_table' additionally populates markdown_table with a "
-                "GitHub-flavored-markdown rendering of the table. "
-                "header and rows are always present in both modes."
-            ),
-        ),
-    ] = "structured",
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
 ) -> TableResponse:
@@ -63,10 +55,10 @@ async def get_table(
     specific table's data when you need row-level access (the table is
     also retrievable as a passage_type='table' passage via search_passages).
 
-    format=markdown_table adds a GitHub-flavored-markdown rendering in the
-    markdown_table field. header and rows are still returned in that mode so
-    the response remains self-describing and callers can switch formats without
-    losing structured access.
+    caption + every header/row cell is upstream table prose, so each is
+    emitted as a v1.1 untrusted_text object. The former ``markdown_table``
+    field and its ``format`` query parameter were dropped (they duplicated the
+    now-fenced cells); callers render markdown from the structured cells.
 
     Latency: ~1ms p50.
     """
@@ -94,23 +86,22 @@ async def get_table(
             next_commands=[{"tool": "get_chapter_metadata", "arguments": {"nbk_id": nbk_id}}],
         )
 
-    markdown_table: str | None = None
-    if format == "markdown_table":
-        markdown_table = render_table_markdown(
-            caption=table.caption,
-            header=table.header,
-            rows=table.rows,
-        )
+    base = f"{table.nbk_id}#table:{table.table_id}"
+    fenced_caption = fence_untrusted_text(table.caption, source="genereviews", record_id=base)
+    fenced_header, fenced_rows = fence_table_cells(
+        table.header, table.rows, nbk_id=table.nbk_id, table_id=table.table_id
+    )
 
-    return TableResponse(
+    response = TableResponse(
         nbk_id=table.nbk_id,
         table_id=table.table_id,
-        caption=table.caption,
+        caption=fenced_caption,
         heading_path=table.heading_path,
         section=cast(SectionName, table.section),
-        header=table.header,
-        rows=table.rows,
+        header=fenced_header,
+        rows=fenced_rows,
         passage_id=table.passage_id,
-        markdown_table=markdown_table,
         **{"_meta": ResponseMeta(corpus_version=_get_corpus_version(request))},
     )
+    guard_untrusted_limits(collect_untrusted(response))
+    return response

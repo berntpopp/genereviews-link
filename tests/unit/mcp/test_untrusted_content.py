@@ -33,3 +33,29 @@ def test_limits_reject_oversized_object() -> None:
     big = fence_untrusted_text("x" * 10, source="genereviews", record_id="NBK1116:0042")
     with pytest.raises(UntrustedTextLimitError):
         enforce_untrusted_text_limits([big], max_text_bytes=5)
+
+
+def test_guard_maps_limit_breach_to_typed_response_too_large() -> None:
+    """A limit breach surfaces as a typed 413 response_too_large, not internal_error."""
+    from genereview_link.api.errors import StructuredHTTPException
+    from genereview_link.api.untrusted_limits import guard_untrusted_limits
+    from genereview_link.mcp.envelope import _ERROR_CODE_MAP
+
+    obj = fence_untrusted_text("x" * 10, source="genereviews", record_id="NBK1116:0042")
+    with pytest.raises(StructuredHTTPException) as exc_info:
+        guard_untrusted_limits([obj, obj], max_objects=1)
+    assert exc_info.value.status_code == 413
+    assert exc_info.value.detail["code"] == "response_too_large"
+    # And the envelope classifies it as a typed invalid_input, never internal_error.
+    assert _ERROR_CODE_MAP["response_too_large"] == ("invalid_input", False)
+
+
+def test_guard_allows_large_but_bounded_object_count() -> None:
+    """The generous default ceiling does not trip on a legitimately wide result."""
+    from genereview_link.api.untrusted_limits import guard_untrusted_limits
+
+    objs = [
+        fence_untrusted_text("cell", source="genereviews", record_id=f"NBK1:table:t1#r{i}")
+        for i in range(500)
+    ]
+    guard_untrusted_limits(objs)  # must not raise (500 < 10000 ceiling)

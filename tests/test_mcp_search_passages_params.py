@@ -117,15 +117,22 @@ async def test_mcp_search_passages_conflicting_q_and_query_returns_structured_er
 
 @pytest.mark.asyncio
 async def test_mcp_search_passages_ids_only_schema_declares_envelope_frame() -> None:
-    """The declared outputSchema is the Response-Envelope frame (success/_meta),
-    not a deep per-record schema — see envelope.reshape_output_schema. Per-record
-    slim-row shape is verified behaviorally below, not via schema introspection."""
+    """The declared outputSchema is the Response-Envelope frame (success/_meta)
+    AND makes the fenced untrusted_text object (kind const) reachable inside the
+    ``results[*].text`` list-item schema — see envelope.reshape_output_schema."""
     mcp, _repo = await _build_mcp()
     tool = next(tool for tool in await mcp.list_tools() if tool.name == "search_passages")
 
-    assert tool.output_schema["type"] == "object"
-    assert set(tool.output_schema["required"]) == {"success", "_meta"}
-    assert tool.output_schema["additionalProperties"] is True
+    schema = tool.output_schema
+    assert schema["type"] == "object"
+    assert set(schema["required"]) == {"success", "_meta"}
+    assert schema["additionalProperties"] is True
+    # v1.1: the untrusted_text `kind` const literal must be declared inside the
+    # array items schema (a bare permissive array would hide it).
+    item = schema["properties"]["results"]["items"]
+    text_schema = item["properties"]["text"]["anyOf"][0]
+    assert text_schema["properties"]["kind"]["const"] == "untrusted_text"
+    assert set(text_schema["required"]) == {"kind", "text", "provenance", "raw_sha256"}
 
 
 @pytest.mark.asyncio

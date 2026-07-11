@@ -22,18 +22,15 @@ from genereview_link.api.orchestration_errors import (
     invalid_nbk_id_error,
     upstream_ncbi_unavailable_error,
 )
-from genereview_link.mcp.untrusted_content import (
-    UntrustedText,
-    enforce_untrusted_text_limits,
-    fence_untrusted_text,
-)
+from genereview_link.api.untrusted_limits import collect_untrusted, guard_untrusted_limits
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
 from genereview_link.models.genereview_models import (
     FencedGeneReviewSection,
     FullTextData,
-    FullTextMetadata,
     GeneReviewSection,
 )
 from genereview_link.models.sections import canonicalize_nbk_id
+from genereview_link.services.genereview_service import fence_fulltext_metadata
 
 router = APIRouter(prefix="/fulltext", tags=["Full Text"])
 
@@ -91,15 +88,6 @@ def _fence_section(
             for key, value in section.subsections.items()
         },
     )
-
-
-def _flatten_fenced_text(sections: dict[str, FencedGeneReviewSection]) -> list[UntrustedText]:
-    """Flatten every fenced ``content`` object across a section tree (for limits)."""
-    out: list[UntrustedText] = []
-    for section in sections.values():
-        out.append(section.content)
-        out.extend(_flatten_fenced_text(section.subsections))
-    return out
 
 
 def _canonical_fulltext_nbk_id(raw: object, fallback_digits: str) -> str:
@@ -209,24 +197,14 @@ async def get_fulltext(
         # Filter sections when the caller requested a specific subset
         filtered_sections = _filter_sections(all_sections, sections)
 
-        # Convert metadata
-        metadata_dict = result.get("metadata", {})
-        metadata = FullTextMetadata(
-            authors=metadata_dict.get("authors"),
-            update_info=metadata_dict.get("update_info"),
-            publication_info=metadata_dict.get("publication_info"),
-            last_updated=metadata_dict.get("last_updated"),
-            references=metadata_dict.get("references", []),
-        )
-
         canonical_nbk_id = _canonical_fulltext_nbk_id(result.get("nbk_id"), clean_id)
-        # v1.1: fence every section's scraped prose at the MCP serialization
-        # boundary (the internal GeneReviewSection model stays str-typed).
+        # v1.1: fence every section's scraped prose AND the scraped metadata prose
+        # at the MCP serialization boundary (internal GeneReviewSection stays str).
+        metadata = fence_fulltext_metadata(result.get("metadata", {}), doc_id=canonical_nbk_id)
         fenced_sections = {
             key: _fence_section(section, nbk_id=canonical_nbk_id, record_path=key)
             for key, section in filtered_sections.items()
         }
-        enforce_untrusted_text_limits(_flatten_fenced_text(fenced_sections))
 
         out = FullTextData(
             nbk_id=canonical_nbk_id,
@@ -235,6 +213,9 @@ async def get_fulltext(
             sections=fenced_sections,
             metadata=metadata,
         )
+        # Aggregate the WHOLE response (recursive section tree + metadata refs)
+        # into one limit check with the generous object ceiling.
+        guard_untrusted_limits(collect_untrusted(out))
         stamp_response_version(
             out,
             # get_fulltext ALWAYS performs a live NCBI Bookshelf scrape, so the version must

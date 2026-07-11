@@ -17,11 +17,8 @@ from fastapi.responses import JSONResponse
 from genereview_link.api.diagnostics import build_search_diagnostics
 from genereview_link.api.errors import FieldError, StructuredHTTPException
 from genereview_link.api.routes.table_enrichment import table_fields
-from genereview_link.mcp.untrusted_content import (
-    UntrustedText,
-    enforce_untrusted_text_limits,
-    fence_untrusted_text,
-)
+from genereview_link.api.untrusted_limits import collect_untrusted, guard_untrusted_limits
+from genereview_link.mcp.untrusted_content import UntrustedText, fence_untrusted_text
 from genereview_link.models.genereview_models import (
     IdsOnlyPassage,
     IdsOnlySearchResponse,
@@ -238,8 +235,8 @@ async def search_passages(
                 "(returns raw lexical/dense ranks and populates "
                 '_meta.dense_model_id + embedding_dim), "heading_path_array" '
                 "(returns heading_path split on ' > '), "
-                '"table_data" (for table passages: populates header, rows, '
-                "markdown_table; narrative passages remain unaffected)."
+                '"table_data" (for table passages: populates v1.1-fenced header '
+                "+ rows cells; narrative passages remain unaffected)."
             )
         ),
     ] = None,
@@ -521,7 +518,6 @@ async def search_passages(
     include_table_data = "table_data" in include_set
 
     out: list[RankedPassage] = []
-    fenced_objects: list[UntrustedText] = []
     for pos, r in enumerate(ranked, start=1):
         score_breakdown = (
             ScoreBreakdown(
@@ -556,12 +552,10 @@ async def search_passages(
             fenced_text = fence_untrusted_text(
                 r.passage.text, source="genereviews", record_id=r.passage.passage_id
             )
-            fenced_objects.append(fenced_text)
         elif mode == "brief" and r.snippet is not None:
             fenced_snippet = fence_untrusted_text(
                 r.snippet, source="genereviews", record_id=r.passage.passage_id
             )
-            fenced_objects.append(fenced_snippet)
         out.append(
             RankedPassage(
                 passage_id=r.passage.passage_id,
@@ -595,7 +589,10 @@ async def search_passages(
             )
         )
 
-    enforce_untrusted_text_limits(fenced_objects)
+    # Aggregate EVERY fenced object this response emits (text/snippet + fenced
+    # table-data cells) into one limit check. search limit maxes at 100, but a
+    # wide table-data passage can add many cells, so use the generous ceiling.
+    guard_untrusted_limits(collect_untrusted(out))
 
     if include_score_breakdown:
         meta = ResponseMeta(
@@ -615,7 +612,7 @@ async def search_passages(
     if not include_heading_array:
         excluded.add("heading_path_array")
     if not include_table_data:
-        excluded.update({"header", "rows", "markdown_table"})
+        excluded.update({"header", "rows"})
 
     if excluded:
         return JSONResponse(
@@ -679,7 +676,7 @@ async def get_passage(
         Query(
             description=(
                 "Opt into heading_path_array (heading_path split on ' > ') "
-                "and/or table_data (header, rows, markdown_table for table passages)."
+                "and/or table_data (v1.1-fenced header + rows cells for table passages)."
             ),
         ),
     ] = None,
@@ -729,11 +726,7 @@ async def get_passage(
         )
         for r in after
     ]
-    enforce_untrusted_text_limits(
-        [focal_detail.text, *(d.text for d in before_details), *(d.text for d in after_details)]
-    )
-
-    return PassageWindowResponse(  # type: ignore[call-arg]
+    response = PassageWindowResponse(  # type: ignore[call-arg]
         passage=focal_detail,
         neighbors_before=before_details,
         neighbors_after=after_details,
@@ -741,6 +734,8 @@ async def get_passage(
         has_more_after=has_more_after,
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )
+    guard_untrusted_limits(collect_untrusted(response))
+    return response
 
 
 def _passage_row_to_detail(
@@ -841,10 +836,10 @@ async def get_passages_batch(
                 )
             )
 
-    enforce_untrusted_text_limits([d.text for d in found])
-
-    return PassageBatchResponse(  # type: ignore[call-arg]
+    response = PassageBatchResponse(  # type: ignore[call-arg]
         passages=found,
         missing_ids=missing,
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )
+    guard_untrusted_limits(collect_untrusted(response))
+    return response

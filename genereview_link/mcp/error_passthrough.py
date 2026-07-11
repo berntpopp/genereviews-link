@@ -159,7 +159,9 @@ def wrap_structured_error_tools(route: Any, component: Any) -> None:
     # search_passages) and declare an envelope-shaped outputSchema. See
     # envelope.reshape_output_schema for why this must happen before any call.
     object.__setattr__(
-        component, "output_schema", envelope.reshape_output_schema(component.output_schema)
+        component,
+        "output_schema",
+        envelope.reshape_output_schema(component.output_schema, component.name),
     )
 
     original_run = component.run

@@ -129,15 +129,19 @@ class Reference(BaseModel):
 
 
 class FullTextMetadata(BaseModel):
-    """Metadata extracted from full text."""
+    """Metadata extracted from full text (v1.1 fenced: live-scraped Bookshelf prose)."""
 
-    authors: str | None = Field(default=None, description="Author information from the full text.")
-    update_info: str | None = Field(default=None, description="Update and posting information.")
-    publication_info: str | None = Field(
-        default=None, description="Publication and copyright information."
+    authors: UntrustedText | None = Field(default=None, description="Author info (v1.1 fenced).")
+    update_info: UntrustedText | None = Field(
+        default=None, description="Update info (v1.1 fenced)."
+    )
+    publication_info: UntrustedText | None = Field(
+        default=None, description="Publication/copyright info (v1.1 fenced)."
     )
     last_updated: str | None = Field(default=None, description="Last updated date.")
-    references: list[str] = Field(default_factory=list, description="List of reference strings.")
+    references: list[UntrustedText] = Field(
+        default_factory=list, description="Reference strings (v1.1 fenced)."
+    )
 
 
 class FullTextData(BaseModel):
@@ -167,17 +171,13 @@ class GeneReview(BaseModel):
     pubmed_id: str = Field(description="The PubMed ID of the GeneReview article.")
     book_url: str = Field(description="The URL to the full GeneReview on the NCBI Bookshelf.")
     title: str = Field(description="The main title of the GeneReview.")
-    summary: GeneReviewSection | None = Field(default=None, description="The 'Summary' section.")
-    diagnosis: GeneReviewSection | None = Field(
-        default=None, description="The 'Diagnosis' section."
+    summary: FencedGeneReviewSection | None = Field(default=None, description="Summary (v1.1).")
+    diagnosis: FencedGeneReviewSection | None = Field(default=None, description="Diagnosis (v1.1).")
+    management: FencedGeneReviewSection | None = Field(
+        default=None, description="Management (v1.1)."
     )
-    management: GeneReviewSection | None = Field(
-        default=None, description="The 'Management' section."
-    )
-    # This field will hold all other scraped sections dynamically
-    other_sections: dict[str, GeneReviewSection] = Field(
-        default_factory=dict,
-        description="A dictionary of all other scraped sections.",
+    other_sections: dict[str, FencedGeneReviewSection] = Field(
+        default_factory=dict, description="All other scraped sections (v1.1 fenced content)."
     )
     # Enhanced fields
     abstract_data: AbstractData | None = Field(
@@ -297,10 +297,11 @@ class RankedPassage(BaseModel):
     recommended_citation: str  # always populated; no default to prevent silent omission
     table_id: str | None = None  # populated only when passage_type='table'
     source_url: str  # always populated; chapter-level NCBI Bookshelf URL
-    # Structured table fields — opt-in via include=table_data (#44)
-    header: list[str] | None = None
-    rows: list[list[str]] | None = None
-    markdown_table: str | None = None
+    # Structured table fields — opt-in via include=table_data (#44). Cell text is
+    # upstream prose, so it is v1.1-fenced. markdown_table was dropped: it was an
+    # exact rendering of these now-fenced cells (v1.1 no-duplication).
+    header: list[UntrustedText] | None = None
+    rows: list[list[UntrustedText]] | None = None
 
 
 class PassageDetail(BaseModel):
@@ -322,10 +323,11 @@ class PassageDetail(BaseModel):
     heading_path_array: list[str] | None = None
     recommended_citation: str  # always populated; no default to prevent silent omission
     source_url: str  # always populated; chapter-level NCBI Bookshelf URL
-    # Structured table fields — opt-in via include=table_data (#44)
-    header: list[str] | None = None
-    rows: list[list[str]] | None = None
-    markdown_table: str | None = None
+    # Structured table fields — opt-in via include=table_data (#44). Cell text is
+    # upstream prose, so it is v1.1-fenced. markdown_table was dropped: it was an
+    # exact rendering of these now-fenced cells (v1.1 no-duplication).
+    header: list[UntrustedText] | None = None
+    rows: list[list[UntrustedText]] | None = None
 
 
 class SearchDiagnosticsModel(BaseModel):
@@ -469,7 +471,7 @@ class TableSummary(BaseModel):
     """One table on a chapter: canonical slug, caption, section + heading context."""
 
     table_id: str
-    caption: str
+    caption: UntrustedText  # upstream table caption prose, v1.1 fenced
     section: SectionName
     heading_path: str
     passage_id: str
@@ -500,24 +502,20 @@ class ChapterMetadataResponse(BaseModel):
 
 
 class TableResponse(BaseModel):
-    """Envelope returned by GET /chapters/{nbk_id}/tables/{table_id}."""
+    """GET /chapters/{nbk_id}/tables/{table_id}; caption + every cell v1.1-fenced.
+
+    The former ``markdown_table`` field + ``format`` query param were dropped:
+    markdown duplicated the now-fenced caption/header/rows (v1.1 no-duplication).
+    """
 
     nbk_id: str
     table_id: str
-    caption: str
+    caption: UntrustedText
     heading_path: str | None = None
     section: SectionName
-    header: list[str]
-    rows: list[list[str]]
+    header: list[UntrustedText]
+    rows: list[list[UntrustedText]]
     passage_id: str
-    markdown_table: str | None = Field(
-        default=None,
-        description=(
-            "GitHub-flavored markdown rendering of the table. "
-            "Populated only when the request includes format=markdown_table; "
-            "null otherwise. header and rows are always included in both modes."
-        ),
-    )
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
 
     model_config = {"populate_by_name": True}

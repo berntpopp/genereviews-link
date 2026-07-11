@@ -52,8 +52,15 @@ def _narrative_row() -> PassageRow:
 # ---------------------------------------------------------------------------
 
 
+_NULL = {"header": None, "rows": None}
+
+
+def _cell_texts(fenced: list) -> list[str]:
+    return [c.text for c in fenced]
+
+
 def test_table_fields_want_false_table_row() -> None:
-    """When want=False, all three fields are None even for table passages with data."""
+    """When want=False, both fields are None even for table passages with data."""
     row = _table_row(
         table_data={
             "header": ["Gene", "Phenotype"],
@@ -61,8 +68,7 @@ def test_table_fields_want_false_table_row() -> None:
             "caption": "Table 1",
         }
     )
-    result = table_fields(row, want=False)
-    assert result == {"header": None, "rows": None, "markdown_table": None}
+    assert table_fields(row, want=False) == _NULL
 
 
 # ---------------------------------------------------------------------------
@@ -71,18 +77,17 @@ def test_table_fields_want_false_table_row() -> None:
 
 
 def test_table_fields_narrative_passage_want_true() -> None:
-    """Narrative passages return all None even when want=True."""
-    result = table_fields(_narrative_row(), want=True)
-    assert result == {"header": None, "rows": None, "markdown_table": None}
+    """Narrative passages return None even when want=True."""
+    assert table_fields(_narrative_row(), want=True) == _NULL
 
 
 # ---------------------------------------------------------------------------
-# table passage, want=True, valid data
+# table passage, want=True, valid data → v1.1-fenced cells
 # ---------------------------------------------------------------------------
 
 
-def test_table_fields_valid_table_data_populates_all_three() -> None:
-    """Valid table_data with matching widths populates header, rows, markdown_table."""
+def test_table_fields_valid_table_data_populates_fenced_cells() -> None:
+    """Valid table_data populates header/rows as v1.1-fenced untrusted_text cells."""
     row = _table_row(
         table_data={
             "caption": "Gene-phenotype correlations",
@@ -92,28 +97,21 @@ def test_table_fields_valid_table_data_populates_all_three() -> None:
     )
     result = table_fields(row, want=True)
 
-    assert result["header"] == ["Gene", "Phenotype"]
-    assert result["rows"] == [["BRCA1", "HBOC"], ["BRCA2", "HBOC/PC"]]
-    assert result["markdown_table"] is not None
-    md = result["markdown_table"]
-    assert "Gene" in md
-    assert "Phenotype" in md
-    assert "BRCA1" in md
-    assert "---" in md
+    assert result["header"][0].kind == "untrusted_text"
+    assert _cell_texts(result["header"]) == ["Gene", "Phenotype"]
+    assert [_cell_texts(r) for r in result["rows"]] == [["BRCA1", "HBOC"], ["BRCA2", "HBOC/PC"]]
+    # record_id is rooted at {nbk_id}#table:{table_id}
+    assert result["header"][0].provenance.record_id.startswith("NBK1247#table:")
+    # markdown_table was dropped (duplicated the now-fenced cells)
+    assert "markdown_table" not in result
 
 
-def test_table_fields_markdown_includes_caption() -> None:
-    """The markdown_table begins with the caption text."""
-    row = _table_row(
-        table_data={
-            "caption": "My Caption",
-            "header": ["A", "B"],
-            "rows": [["x", "y"]],
-        }
-    )
+def test_table_fields_cell_record_ids_are_coordinate_precise() -> None:
+    """Each cell's record_id carries its header/row coordinate for audit precision."""
+    row = _table_row(table_data={"caption": "C", "header": ["A", "B"], "rows": [["x", "y"]]})
     result = table_fields(row, want=True)
-    assert result["markdown_table"] is not None
-    assert result["markdown_table"].startswith("My Caption")
+    assert result["header"][1].provenance.record_id.endswith("#h1")
+    assert result["rows"][0][1].provenance.record_id.endswith("#r0c1")
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +120,7 @@ def test_table_fields_markdown_includes_caption() -> None:
 
 
 def test_table_fields_mismatched_width_returns_all_null() -> None:
-    """If any row has a different cell count than the header, all three fields are None."""
+    """If any row has a different cell count than the header, both fields are None."""
     row = _table_row(
         table_data={
             "caption": "Bad table",
@@ -130,12 +128,11 @@ def test_table_fields_mismatched_width_returns_all_null() -> None:
             "rows": [["x", "y"]],  # 2 cells, header has 3
         }
     )
-    result = table_fields(row, want=True)
-    assert result == {"header": None, "rows": None, "markdown_table": None}
+    assert table_fields(row, want=True) == _NULL
 
 
 def test_table_fields_mixed_width_rows_all_null() -> None:
-    """If SOME rows are width-correct but one is not, all fields are None."""
+    """If SOME rows are width-correct but one is not, both fields are None."""
     row = _table_row(
         table_data={
             "caption": "Partial",
@@ -143,8 +140,7 @@ def test_table_fields_mixed_width_rows_all_null() -> None:
             "rows": [["x", "y"], ["z"]],  # second row too short
         }
     )
-    result = table_fields(row, want=True)
-    assert result == {"header": None, "rows": None, "markdown_table": None}
+    assert table_fields(row, want=True) == _NULL
 
 
 # ---------------------------------------------------------------------------
@@ -153,31 +149,25 @@ def test_table_fields_mixed_width_rows_all_null() -> None:
 
 
 def test_table_fields_no_table_data_returns_null() -> None:
-    """table_data=None on a table passage → all None."""
-    row = _table_row(table_data=None)
-    result = table_fields(row, want=True)
-    assert result == {"header": None, "rows": None, "markdown_table": None}
+    """table_data=None on a table passage → both None."""
+    assert table_fields(_table_row(table_data=None), want=True) == _NULL
 
 
 def test_table_fields_empty_table_data_returns_null() -> None:
-    """table_data={} on a table passage → all None."""
-    row = _table_row(table_data={})
-    result = table_fields(row, want=True)
-    assert result == {"header": None, "rows": None, "markdown_table": None}
+    """table_data={} on a table passage → both None."""
+    assert table_fields(_table_row(table_data={}), want=True) == _NULL
 
 
 def test_table_fields_missing_header_key_returns_null() -> None:
-    """table_data without 'header' key → all None."""
+    """table_data without 'header' key → both None."""
     row = _table_row(table_data={"rows": [["a", "b"]], "caption": "C"})
-    result = table_fields(row, want=True)
-    assert result == {"header": None, "rows": None, "markdown_table": None}
+    assert table_fields(row, want=True) == _NULL
 
 
 def test_table_fields_missing_rows_key_returns_null() -> None:
-    """table_data without 'rows' key → all None."""
+    """table_data without 'rows' key → both None."""
     row = _table_row(table_data={"header": ["A", "B"], "caption": "C"})
-    result = table_fields(row, want=True)
-    assert result == {"header": None, "rows": None, "markdown_table": None}
+    assert table_fields(row, want=True) == _NULL
 
 
 def test_table_fields_empty_rows_allowed() -> None:
@@ -190,6 +180,5 @@ def test_table_fields_empty_rows_allowed() -> None:
         }
     )
     result = table_fields(row, want=True)
-    assert result["header"] == ["A", "B"]
+    assert _cell_texts(result["header"]) == ["A", "B"]
     assert result["rows"] == []
-    assert result["markdown_table"] is not None

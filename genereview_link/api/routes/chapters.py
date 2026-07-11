@@ -9,10 +9,8 @@ from fastapi import APIRouter, Depends, Path, Query, Request
 
 from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.routes.passages import _get_corpus_version, get_repository
-from genereview_link.mcp.untrusted_content import (
-    enforce_untrusted_text_limits,
-    fence_untrusted_text,
-)
+from genereview_link.api.untrusted_limits import collect_untrusted, guard_untrusted_limits
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
 from genereview_link.models.genereview_models import (
     ChapterMetadataResponse,
     ChapterSectionResponse,
@@ -150,7 +148,7 @@ async def get_chapter_section(
             empty_content = fence_untrusted_text(
                 "", source="genereviews", record_id=f"{nbk_id}#{section}"
             )
-            enforce_untrusted_text_limits([empty_content])
+            guard_untrusted_limits([empty_content])
             return ChapterSectionResponse(  # type: ignore[call-arg]
                 nbk_id=nbk_id,
                 chapter_title=chapter.title,
@@ -193,7 +191,7 @@ async def get_chapter_section(
     fenced_content = fence_untrusted_text(
         concatenated, source="genereviews", record_id=f"{nbk_id}#{section}"
     )
-    enforce_untrusted_text_limits([fenced_content])
+    guard_untrusted_limits([fenced_content])
     passages_response = [
         PassageInSection(
             passage_id=p.passage_id,
@@ -268,7 +266,21 @@ async def get_chapter_metadata(
     ysu = _years_since(meta.chapter_last_updated, today)
     band = _staleness_band(ysu)
     total_chars = sum(s.total_char_count for s in sections_built)
-    return ChapterMetadataResponse(  # type: ignore[call-arg]
+    tables = [
+        TableSummary(
+            table_id=t.table_id,
+            caption=fence_untrusted_text(
+                t.caption,
+                source="genereviews",
+                record_id=f"{meta.nbk_id}#table:{t.table_id}",
+            ),
+            section=cast(SectionName, t.section),
+            heading_path=t.heading_path,
+            passage_id=t.passage_id,
+        )
+        for t in meta.tables
+    ]
+    response = ChapterMetadataResponse(  # type: ignore[call-arg]
         nbk_id=meta.nbk_id,
         title=meta.title,
         chapter_last_updated=meta.chapter_last_updated,
@@ -276,16 +288,7 @@ async def get_chapter_metadata(
         gene_symbols=list(meta.gene_symbols),
         sections=sections_built,
         table_count=meta.table_count,
-        tables=[
-            TableSummary(
-                table_id=t.table_id,
-                caption=t.caption,
-                section=cast(SectionName, t.section),
-                heading_path=t.heading_path,
-                passage_id=t.passage_id,
-            )
-            for t in meta.tables
-        ],
+        tables=tables,
         years_since_update=ysu,
         staleness_band=band,
         likely_stale_for_therapeutics=_likely_stale(band, sections_built),
@@ -293,3 +296,5 @@ async def get_chapter_metadata(
         total_tokens_estimate=total_chars // 4,
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )
+    guard_untrusted_limits(collect_untrusted(response))
+    return response

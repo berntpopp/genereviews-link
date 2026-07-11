@@ -651,7 +651,9 @@ class TestFulltextRoute:
             f"metadata.references in JSON response must be an array, got {type(refs).__name__!r}"
         )
         assert len(refs) == 2
-        assert all(isinstance(r, str) for r in refs)
+        # v1.1: each reference is a fenced untrusted_text object.
+        assert all(r["kind"] == "untrusted_text" for r in refs)
+        assert refs[0]["text"] == "Smith AB et al. J Genet. 2020;1:1-10."
 
 
 class TestGenereviewRoute:

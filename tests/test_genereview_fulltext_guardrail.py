@@ -17,18 +17,26 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from genereview_link.config import ServerConfig
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
 from genereview_link.models.genereview_models import (
+    FencedGeneReviewSection,
     FullTextData,
     FullTextMetadata,
     GeneReview,
-    GeneReviewSection,
 )
 from genereview_link.server_manager import UnifiedServerManager
 from genereview_link.services.service_manager import get_managed_service
 
 
-def _make_section(title: str, content: str) -> GeneReviewSection:
-    return GeneReviewSection(title=title, content=content, level=1, subsections={})
+def _make_section(title: str, content: str) -> FencedGeneReviewSection:
+    return FencedGeneReviewSection(
+        title=title,
+        content=fence_untrusted_text(
+            content, source="genereviews", record_id=f"NBK1247#section:{title.lower()}"
+        ),
+        level=1,
+        subsections={},
+    )
 
 
 def _make_genereview(
@@ -136,9 +144,9 @@ async def test_include_fulltext_below_default_cap_is_not_truncated() -> None:
         resp = await c.get("/genereview/BRCA1?include_fulltext=true&fresh=true")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert len(body["summary"]["content"]) == 1000
-    assert len(body["diagnosis"]["content"]) == 2000
-    assert len(body["management"]["content"]) == 3000
+    assert len(body["summary"]["content"]["text"]) == 1000
+    assert len(body["diagnosis"]["content"]["text"]) == 2000
+    assert len(body["management"]["content"]["text"]) == 3000
     assert body["_meta"].get("truncated", False) is False
     assert "next_commands" not in body["_meta"]
 
@@ -156,9 +164,9 @@ async def test_max_chars_zero_disables_cap() -> None:
         resp = await c.get("/genereview/BRCA1?include_fulltext=true&max_chars=0&fresh=true")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert len(body["summary"]["content"]) == 10000
-    assert len(body["diagnosis"]["content"]) == 20000
-    assert len(body["management"]["content"]) == 20000
+    assert len(body["summary"]["content"]["text"]) == 10000
+    assert len(body["diagnosis"]["content"]["text"]) == 20000
+    assert len(body["management"]["content"]["text"]) == 20000
     assert body["_meta"].get("truncated", False) is False
     assert "next_commands" not in body["_meta"]
 
@@ -178,16 +186,16 @@ async def test_small_max_chars_forces_truncation_and_stamps_meta() -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     # Greedy walk: summary (80) fits fully; diagnosis gets only 20 chars; remainder cleared.
-    assert len(body["summary"]["content"]) == 80
-    assert len(body["diagnosis"]["content"]) == 20
-    assert body["management"]["content"] == ""
-    assert body["other_sections"]["references"]["content"] == ""
+    assert len(body["summary"]["content"]["text"]) == 80
+    assert len(body["diagnosis"]["content"]["text"]) == 20
+    assert body["management"]["content"]["text"] == ""
+    assert body["other_sections"]["references"]["content"]["text"] == ""
     # Total kept content must not exceed the cap.
     total_kept = (
-        len(body["summary"]["content"])
-        + len(body["diagnosis"]["content"])
-        + len(body["management"]["content"])
-        + sum(s["content"].__len__() for s in body["other_sections"].values())
+        len(body["summary"]["content"]["text"])
+        + len(body["diagnosis"]["content"]["text"])
+        + len(body["management"]["content"]["text"])
+        + sum(len(s["content"]["text"]) for s in body["other_sections"].values())
     )
     assert total_kept <= 100
     # _meta.truncated + next_commands -> get_chapter_section with nbk_id only.
@@ -294,17 +302,17 @@ async def test_truncation_does_not_poison_shared_service_result_across_requests(
     )
     assert first.status_code == 200 and second.status_code == 200
     # First request truncates: summary kept at 100 chars, rest cleared.
-    assert len(first.json()["summary"]["content"]) == 100
+    assert len(first.json()["summary"]["content"]["text"]) == 100
     assert first.json()["_meta"]["truncated"] is True
     # Second request must return un-truncated content. If the cached instance
     # were mutated by the first call, the second would still be 100 chars.
-    assert len(second.json()["summary"]["content"]) == 1000
-    assert len(second.json()["diagnosis"]["content"]) == 2000
-    assert len(second.json()["management"]["content"]) == 3000
+    assert len(second.json()["summary"]["content"]["text"]) == 1000
+    assert len(second.json()["diagnosis"]["content"]["text"]) == 2000
+    assert len(second.json()["management"]["content"]["text"]) == 3000
     assert second.json()["_meta"].get("truncated", False) is False
     assert "next_commands" not in second.json()["_meta"]
     # The shared payload itself must not have been mutated.
-    assert payload.summary is not None and len(payload.summary.content) == 1000
+    assert payload.summary is not None and len(payload.summary.content.text) == 1000
 
 
 @pytest.mark.asyncio

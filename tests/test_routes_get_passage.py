@@ -371,7 +371,7 @@ async def test_get_passage_table_data_absent_by_default() -> None:
 
 @pytest.mark.asyncio
 async def test_get_passage_table_data_opt_in_populates_fields() -> None:
-    """include=table_data populates header, rows, markdown_table for table passage."""
+    """include=table_data populates v1.1-fenced header/rows for a table passage."""
     pr = _make_table_row(
         table_data={
             "caption": "Gene-phenotype correlations",
@@ -384,16 +384,19 @@ async def test_get_passage_table_data_opt_in_populates_fields() -> None:
         resp = await c.get("/passages/NBK1247:0099", params={"include": "table_data"})
     assert resp.status_code == 200
     passage = resp.json()["passage"]
-    assert passage["header"] == ["Gene", "Phenotype"]
-    assert passage["rows"] == [["BRCA1", "HBOC"], ["BRCA2", "HBOC/PC"]]
-    assert passage["markdown_table"] is not None
-    assert "Gene" in passage["markdown_table"]
-    assert "BRCA1" in passage["markdown_table"]
+    assert [c["text"] for c in passage["header"]] == ["Gene", "Phenotype"]
+    assert passage["header"][0]["kind"] == "untrusted_text"
+    assert [[c["text"] for c in r] for r in passage["rows"]] == [
+        ["BRCA1", "HBOC"],
+        ["BRCA2", "HBOC/PC"],
+    ]
+    # markdown_table was dropped (duplicated the now-fenced cells).
+    assert "markdown_table" not in passage
 
 
 @pytest.mark.asyncio
 async def test_get_passage_table_data_narrative_always_null() -> None:
-    """include=table_data on a narrative passage → header/rows/markdown_table all None."""
+    """include=table_data on a narrative passage → header/rows both None."""
     pr = _make_row(passage_id="NBK1247:0010", chunk_index=10)
     app = _build_app(focal=pr)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
@@ -402,4 +405,4 @@ async def test_get_passage_table_data_narrative_always_null() -> None:
     passage = resp.json()["passage"]
     assert passage.get("header") is None
     assert passage.get("rows") is None
-    assert passage.get("markdown_table") is None
+    assert "markdown_table" not in passage

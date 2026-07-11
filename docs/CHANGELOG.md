@@ -18,35 +18,56 @@ never instructions. Defense in depth; research use only.
 
 ### Breaking changes
 
-1. **All 7 upstream-prose surfaces are now the typed `untrusted_text` object**
+1. **Every upstream-prose surface is now the typed `untrusted_text` object**
 
-   - *What changed:* `search_passages` `results[*].text` / `results[*].snippet`,
-     `get_passage` `passage.text` (and `neighbors_before/after[*].text`),
-     `get_passages_batch` `passages[*].text`, `get_chapter_section` `content`
-     (new field — see below), `get_fulltext` `sections[*].content` (recursively,
-     including subsections), and `get_abstract` `abstract` are now objects shaped
-     `{"kind": "untrusted_text", "text": "...", "provenance": {"source", "record_id",
-     "retrieved_at"}, "raw_sha256": "..."}` instead of a bare string. `text` is
-     NFC-normalized with only the ratified control/zero-width/bidi code points
-     stripped (never NFKC; prose is never regex-rewritten). `raw_sha256` digests
-     the exact pre-normalization upstream UTF-8 bytes.
+   Fields shaped `{"kind": "untrusted_text", "text": "...", "provenance": {"source",
+   "record_id", "retrieved_at"}, "raw_sha256": "..."}` instead of a bare string.
+   `text` is NFC-normalized with only the ratified control/zero-width/bidi code
+   points stripped (never NFKC; prose is never regex-rewritten); `raw_sha256`
+   digests the exact pre-normalization upstream UTF-8 bytes. Surfaces:
+
+   - `search_passages` `results[*].text` / `results[*].snippet`
+   - `get_passage` `passage.text` (and `neighbors_before/after[*].text`)
+   - `get_passages_batch` `passages[*].text`
+   - `get_chapter_section` `content` (new field — see below)
+   - `get_chapter_metadata` `tables[*].caption`
+   - `get_table` `caption`, and every `header[*]` / `rows[*][*]` cell
+   - `get_fulltext` `sections[*].content` (recursive) **and** `metadata.authors`
+     / `metadata.update_info` / `metadata.publication_info` / `metadata.references[*]`
+   - `get_abstract` `abstract`
+   - `get_genereview_summary` `summary` / `diagnosis` / `management` /
+     `other_sections[*]` `.content`, `abstract_data.abstract`, and
+     `full_text_data.metadata.*`
+   - Opt-in passage `table_data`: `header[*]` / `rows[*][*]` cells (on
+     `search_passages` / `get_passage` / `get_passages_batch`)
+
+   The declared MCP `outputSchema` now makes the `untrusted_text` object (`kind`
+   const) reachable at every fenced position, including inside list `items`
+   (`results[*].text`, `header[*]`, `rows[*][*]`), not just at runtime.
+
    - **`get_chapter_section` reshape:** `passages[]` entries no longer carry a
      per-passage `text` field (structural ids only: `passage_id`, `heading_path`,
-     `section_level`, `chunk_index`). The section's full text is now emitted once,
+     `section_level`, `chunk_index`). The section's full text is emitted once,
      fenced, as the new always-present `content` field (replacing the opt-in
-     `concatenated_text`/`concatenated_char_count` fields and the `include` query
-     parameter) with a new `content_char_count`, to avoid duplicating the same
-     upstream prose across sibling fields.
-   - *Why:* `docs/RESPONSE-ENVELOPE-STANDARD-v1.1.md` (untrusted-content fencing);
-     the standard forbids duplicating raw/sanitized prose in a sibling field, so
-     this is a breaking reshape rather than an additive dual-field release.
+     `concatenated_text`/`concatenated_char_count` and the `include` query
+     parameter) with a new `content_char_count`.
+   - **`get_table` reshape:** the `markdown_table` field and its `format` query
+     parameter were dropped — markdown was an exact rendering of the now-fenced
+     caption/header/rows (v1.1 no-duplication). The opt-in passage `table_data`
+     likewise no longer emits `markdown_table`. Render markdown from the cells.
+   - **`get_genereview_summary` dedup:** section prose lives once (fenced) on the
+     top-level `summary`/`diagnosis`/`management`/`other_sections`; the embedded
+     `full_text_data.sections` is now empty to avoid duplicating it.
+   - *Why:* `docs/RESPONSE-ENVELOPE-STANDARD-v1.1.md` — the standard forbids
+     duplicating raw/sanitized prose in a sibling field, so these are breaking
+     reshapes rather than additive dual-field releases. A response that exceeds a
+     v1.1 size ceiling now returns a typed `response_too_large` (`invalid_input`)
+     envelope error, not a generic internal error.
    - *Migration:* Read prose from `<field>.text`; treat `<field>.raw_sha256` and
-     `<field>.provenance` as audit metadata. Callers reading `search_passages`
-     `snippet`, `get_passage`/`get_passages_batch` `text`, `get_fulltext`
-     `sections[*].content`, or `get_abstract.abstract` as bare strings must switch
-     to `<field>.text`. Callers reading `get_chapter_section`
-     `passages[*].text`/`concatenated_text` must switch to the response-level
-     `content.text`.
+     `<field>.provenance` as audit metadata. Callers reading any of the above as
+     bare strings must switch to `<field>.text`; `get_chapter_section`
+     `passages[*].text`/`concatenated_text` readers switch to `content.text`;
+     `get_table` markdown consumers render from `header`/`rows` cells.
 
 [GeneFoundry Response-Envelope Standard v1.1]: https://github.com/berntpopp/genefoundry-router/blob/main/docs/RESPONSE-ENVELOPE-STANDARD-v1.1.md
 

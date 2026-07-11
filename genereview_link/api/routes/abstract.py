@@ -21,10 +21,8 @@ from genereview_link.api.orchestration_errors import (
     invalid_pubmed_id_error,
     upstream_ncbi_unavailable_error,
 )
-from genereview_link.mcp.untrusted_content import (
-    enforce_untrusted_text_limits,
-    fence_untrusted_text,
-)
+from genereview_link.api.untrusted_limits import guard_untrusted_limits
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
 from genereview_link.models.genereview_models import AbstractData
 
 router = APIRouter(prefix="/abstract", tags=["Abstract"])
@@ -77,7 +75,7 @@ async def get_abstract(
         fenced_abstract = fence_untrusted_text(
             result.get("abstract", ""), source="genereviews", record_id=f"{pmid}#doc"
         )
-        enforce_untrusted_text_limits([fenced_abstract])
+        guard_untrusted_limits([fenced_abstract])
 
         # Ensure all required fields have default values
         out = AbstractData(

@@ -106,6 +106,7 @@ _ERROR_CODE_MAP: dict[str, tuple[ErrorCode, bool]] = {
     "table_not_found": ("not_found", False),
     "query_must_be_string": ("invalid_input", False),
     "not_yet_indexed": ("not_found", False),
+    "response_too_large": ("invalid_input", False),
 }
 
 # Fallback classification by HTTP status when no known `code` is present
@@ -244,49 +245,163 @@ def _classify(internal_code: str | None, status_code: int) -> tuple[ErrorCode, b
     return "internal_error", False
 
 
-def reshape_output_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
-    """Return a permissive envelope-shaped ``outputSchema`` for one tool.
+# --- Declared untrusted_text object shape (v1.1) -----------------------------
+# Inlined at every fenced position of every tool's outputSchema so the
+# `kind: const "untrusted_text"` literal is REACHABLE in the declared schema
+# (including inside list `items`), not only present at runtime. Inlined (no
+# `$defs`) so FastMCP's compress_schema(prune_defs=True) cannot prune it.
+
+
+def _ut() -> dict[str, Any]:
+    """A fresh inline ``untrusted_text`` object schema (kind const literal)."""
+    return {
+        "type": "object",
+        "properties": {
+            "kind": {"const": "untrusted_text"},
+            "text": {"type": "string"},
+            "provenance": {
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string"},
+                    "record_id": {"type": "string"},
+                    "retrieved_at": {"type": "string"},
+                },
+                "required": ["source", "record_id", "retrieved_at"],
+                "additionalProperties": True,
+            },
+            "raw_sha256": {"type": "string"},
+        },
+        "required": ["kind", "text", "provenance", "raw_sha256"],
+        "additionalProperties": True,
+    }
+
+
+def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+def _obj(props: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "object", "properties": props, "additionalProperties": True}
+
+
+def _arr(items: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "array", "items": items}
+
+
+def _passage_item() -> dict[str, Any]:
+    # RankedPassage / PassageDetail fenced fields (text/snippet + table cells).
+    return _obj(
+        {
+            "text": _nullable(_ut()),
+            "snippet": _nullable(_ut()),
+            "header": _nullable(_arr(_ut())),
+            "rows": _nullable(_arr(_arr(_ut()))),
+        }
+    )
+
+
+def _section() -> dict[str, Any]:
+    # FencedGeneReviewSection: content fenced; subsections declared permissively
+    # (the scraper bounds subsection depth; deeper content stays runtime-fenced).
+    return _obj({"content": _ut(), "subsections": {"type": "object"}})
+
+
+def _fulltext_metadata() -> dict[str, Any]:
+    return _obj(
+        {
+            "authors": _nullable(_ut()),
+            "update_info": _nullable(_ut()),
+            "publication_info": _nullable(_ut()),
+            "references": _arr(_ut()),
+        }
+    )
+
+
+def _fenced_positions(tool_name: str) -> dict[str, Any]:
+    """Declared fenced sub-schema(s) merged into a tool's envelope properties.
+
+    Returns ``{"result": <schema>}`` for single-item tools or
+    ``{"results": <schema>}`` for collection tools; ``{}`` for tools with no
+    upstream free-text surface (get_links, get_license, search_genereviews).
+    """
+    if tool_name == "search_passages":
+        return {"results": _arr(_passage_item())}
+    if tool_name == "search_passages_batch":
+        return {"results": _arr(_obj({"hits": _arr(_passage_item())}))}
+    if tool_name == "get_passages_batch":
+        return {"results": _arr(_passage_item())}
+    if tool_name == "get_passage":
+        return {
+            "result": _obj(
+                {
+                    "passage": _passage_item(),
+                    "neighbors_before": _arr(_passage_item()),
+                    "neighbors_after": _arr(_passage_item()),
+                }
+            )
+        }
+    if tool_name == "get_chapter_section":
+        return {"result": _obj({"content": _ut()})}
+    if tool_name == "get_chapter_metadata":
+        return {"result": _obj({"tables": _arr(_obj({"caption": _ut()}))})}
+    if tool_name == "get_abstract":
+        return {"result": _obj({"abstract": _ut()})}
+    if tool_name == "get_fulltext":
+        return {
+            "result": _obj(
+                {
+                    "sections": {"type": "object", "additionalProperties": _section()},
+                    "metadata": _fulltext_metadata(),
+                }
+            )
+        }
+    if tool_name == "get_genereview_summary":
+        return {
+            "result": _obj(
+                {
+                    "summary": _nullable(_section()),
+                    "diagnosis": _nullable(_section()),
+                    "management": _nullable(_section()),
+                    "other_sections": {"type": "object", "additionalProperties": _section()},
+                    "abstract_data": _nullable(_obj({"abstract": _ut()})),
+                    "full_text_data": _nullable(_obj({"metadata": _fulltext_metadata()})),
+                }
+            )
+        }
+    if tool_name == "get_table":
+        return {
+            "result": _obj({"caption": _ut(), "header": _arr(_ut()), "rows": _arr(_arr(_ut()))})
+        }
+    return {}
+
+
+def reshape_output_schema(
+    schema: dict[str, Any] | None, tool_name: str | None = None
+) -> dict[str, Any]:
+    """Return the envelope-shaped ``outputSchema`` for one tool.
 
     Two jobs:
 
-    1. Strip the FastMCP OpenAPI-provider ``x-fastmcp-wrap-result`` flag. That
-       flag is what makes ``OpenAPITool.run()`` wrap a non-"type: object"
-       schema's JSON body under ``{"result": ...}`` at the wire level (see
-       ``fastmcp.server.providers.openapi.components.OpenAPITool.run``). A
-       Union ``response_model`` (``PassageSearchResponse | IdsOnlySearchResponse``
-       on ``search_passages``) produces exactly this shape, which is the root
-       cause of genereviews' historical ``{"result": {"results": [...]}}``
-       double-wrap. ``OpenAPITool.run()`` re-reads ``self.output_schema`` at
-       call time, so overwriting the registered component's ``output_schema``
-       (done in ``error_passthrough.wrap_structured_error_tools``) neutralizes
-       the wrap before our own envelope reshaping ever runs.
-    2. Declare a schema that actually matches what we emit: an object with a
-       required ``success`` boolean and ``_meta`` object, permissive on
-       everything else so it validates both the success frame (`results`/
-       `result` + domain siblings) and the error frame (`error_code`/
-       `message`/`retryable`/`recovery_action`) that share one MCP
-       ``outputSchema`` slot. The low-level MCP SDK validates
-       ``structuredContent`` against this schema on every call
-       (``mcp.server.lowlevel.server.Server.call_tool``), so it must accept
-       both branches.
+    1. Strip the FastMCP OpenAPI-provider ``x-fastmcp-wrap-result`` flag by
+       replacing the schema entirely. That flag makes ``OpenAPITool.run()``
+       wrap a non-"type: object" JSON body under ``{"result": ...}`` at the
+       wire level — the root cause of genereviews' historical
+       ``{"result": {"results": [...]}}`` double-wrap on ``search_passages``
+       (a ``PassageSearchResponse | IdsOnlySearchResponse`` union). Overwriting
+       the registered component's ``output_schema`` neutralizes it.
+    2. Declare a schema that matches what we emit AND makes the fenced
+       ``untrusted_text`` object (``kind`` const) REACHABLE at every fenced
+       position — including inside list ``items`` (``results[*].text``,
+       ``header[*]``, ``rows[*][*]``) — so the literal is present in the
+       served ``outputSchema``, not only in runtime data. The object stays
+       permissive (``additionalProperties: true``, only ``success``/``_meta``
+       required) so it validates BOTH the success frame and the flat error
+       frame that share one ``outputSchema`` slot; the low-level MCP SDK
+       validates ``structuredContent`` against it on every call.
 
-    Any ``$defs``/``definitions`` from the original FastAPI-derived schema are
-    copied across on a best-effort basis. FastMCP's own downstream
-    ``compress_schema(..., prune_defs=True)`` pass (run when the tool's
-    ``outputSchema`` is finally served) removes any def not referenced by a
-    ``$ref`` reachable from ``properties`` — since this envelope schema is
-    intentionally shallow (``success``/``_meta`` only, `additionalProperties:
-    true` for the rest), per-record definitions do not survive that pass. Deep
-    per-record shape is exercised behaviorally (actual tool-call
-    ``structured_content``), not via declared-schema introspection.
+    The ``untrusted_text`` sub-schema is inlined (no ``$defs``) so FastMCP's
+    downstream ``compress_schema(prune_defs=True)`` cannot prune it.
     """
-    preserved_defs: dict[str, Any] = {}
-    if schema:
-        for key in ("$defs", "definitions"):
-            value = schema.get(key)
-            if isinstance(value, dict):
-                preserved_defs[key] = value
-
     envelope_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
@@ -296,5 +411,6 @@ def reshape_output_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
         "required": ["success", "_meta"],
         "additionalProperties": True,
     }
-    envelope_schema.update(preserved_defs)
+    if tool_name is not None:
+        envelope_schema["properties"].update(_fenced_positions(tool_name))
     return envelope_schema

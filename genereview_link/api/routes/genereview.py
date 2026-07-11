@@ -20,7 +20,9 @@ from genereview_link.api.orchestration_errors import (
     gene_not_found_error,
     internal_orchestration_error,
 )
-from genereview_link.models.genereview_models import GeneReview, GeneReviewSection
+from genereview_link.api.untrusted_limits import collect_untrusted, guard_untrusted_limits
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
+from genereview_link.models.genereview_models import FencedGeneReviewSection, GeneReview
 from genereview_link.services.genereview_service import (
     DataNotFoundError,
     GeneReviewService,
@@ -72,31 +74,44 @@ def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
     Subsection content is not counted; only top-level ``section.content``
     strings contribute to the budget.
 
+    ``section.content`` is a v1.1 ``untrusted_text`` object, so truncation reads
+    ``.content.text``, and when it shortens the text it RE-FENCES the truncated
+    string (preserving the original ``provenance.record_id``) so ``raw_sha256``
+    matches the truncated bytes actually emitted.
+
     Mutates ``result`` in place. Callers MUST pass a fresh instance (e.g. via
     ``model_copy(deep=True)``) when the upstream source caches the object —
     see ``get_genereview`` for the cache-isolation pattern.
     """
-    ordered_sections: list[tuple[str, GeneReviewSection | None]] = [
+    ordered_sections: list[tuple[str, FencedGeneReviewSection | None]] = [
         ("summary", result.summary),
         ("diagnosis", result.diagnosis),
         ("management", result.management),
     ]
     for key in sorted(result.other_sections.keys()):
         ordered_sections.append((key, result.other_sections[key]))
+
+    def _retruncate(section: FencedGeneReviewSection, new_text: str) -> None:
+        section.content = fence_untrusted_text(
+            new_text,
+            source=section.content.provenance.source,
+            record_id=section.content.provenance.record_id,
+        )
+
     total = 0
     truncated = False
     for _key, section in ordered_sections:
         if section is None:
             continue
-        content = section.content or ""
+        content = section.content.text or ""
         if total >= max_chars:
             if content:
-                section.content = ""
+                _retruncate(section, "")
                 truncated = True
             continue
         remaining = max_chars - total
         if len(content) > remaining:
-            section.content = content[:remaining]
+            _retruncate(section, content[:remaining])
             total += remaining
             truncated = True
         else:
@@ -213,6 +228,9 @@ async def get_genereview(
         )
         if include_fulltext and max_chars > 0:
             _truncate_genereview_fulltext(result, max_chars)
+        # Aggregate every fenced object (sections + abstract + fulltext metadata)
+        # into one response-wide limit check after truncation.
+        guard_untrusted_limits(collect_untrusted(result))
         return result
     except StructuredHTTPException:
         raise
