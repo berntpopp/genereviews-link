@@ -100,3 +100,25 @@ def enforce_untrusted_text_limits(
         raise UntrustedTextLimitError(
             f"untrusted total {total} bytes exceeds ceiling {max_total_text_bytes}"
         )
+
+
+#: Length cap for caller-visible free-text message/error/diagnostics strings.
+MAX_MESSAGE_CHARS = 280
+
+
+def sanitize_message(text: str) -> str:
+    """Strip the fence's forbidden control/zero-width/bidi/NUL code points + length-cap.
+
+    Applied to EVERY caller-visible message/error/diagnostics string as a defensive
+    backstop so a hostile upstream (or a caller-influenced 4xx/5xx body) can never
+    smuggle control, zero-width, bidirectional, or NUL code points into an error
+    frame. Reuses the same ``FORBIDDEN_CODEPOINTS`` the untrusted-text fence removes.
+
+    This is a code-point strip only -- it does NOT neutralize injection *prose*.
+    Caller-visible messages are therefore kept to server-authored guidance strings;
+    any string that could carry an upstream response body or the ``str(exc)`` of an
+    upstream/API error is severed to a fixed, body-free message at its source
+    (never merely sanitized here).
+    """
+    clean = "".join(char for char in text if ord(char) not in FORBIDDEN_CODEPOINTS)
+    return clean[:MAX_MESSAGE_CHARS]
