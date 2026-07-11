@@ -101,5 +101,5 @@ async def get_abstract(
     except StructuredHTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error fetching abstract for PMID {pmid}: {e}", exc_info=True)
+        logging.error("Error fetching abstract for PMID %s (%s)", pmid, type(e).__name__)
         raise upstream_ncbi_unavailable_error("fetch abstract") from e

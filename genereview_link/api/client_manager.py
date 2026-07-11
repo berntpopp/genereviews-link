@@ -268,14 +268,13 @@ class ClientManager:
             return base_health
 
         except Exception as e:
-            logger.warning(
-                "Health check failed",
-                error_type=type(e).__name__,
-                error=str(e),
-            )
+            # SECURITY: /health returns this under HTTP 200; never surface or log
+            # str(e) (it can carry control/zero-width/bidi/NUL or upstream detail).
+            # Keep the ``error`` field for schema stability with FIXED text only.
+            logger.warning("Health check failed", error_type=type(e).__name__)
             return {
                 "status": "degraded",
-                "error": str(e),
+                "error": "Upstream health check failed.",
                 "connection_tested": test_connection,
             }
 

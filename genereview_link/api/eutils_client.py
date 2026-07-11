@@ -88,7 +88,7 @@ class EutilsClient:
                 "Connection failed to NCBI E-utils",
                 endpoint=endpoint,
                 base_url=self.base_url,
-                error=str(e),
+                exc_type=type(e).__name__,
             )
             raise ConnectionError(
                 "Unable to connect to NCBI E-utilities. Please check your internet connection."
@@ -98,7 +98,7 @@ class EutilsClient:
                 "Request timeout to NCBI E-utils",
                 endpoint=endpoint,
                 base_url=self.base_url,
-                error=str(e),
+                exc_type=type(e).__name__,
             )
             raise TimeoutError("Request to NCBI E-utilities timed out. Please try again.") from e
         except httpx.HTTPStatusError as e:
@@ -123,7 +123,6 @@ class EutilsClient:
                 "Request failed to NCBI E-utils",
                 endpoint=endpoint,
                 error_type=type(e).__name__,
-                error=str(e),
             )
             raise
 
@@ -151,18 +150,19 @@ class EutilsClient:
                     )
                     await asyncio.sleep(wait_time)
                     continue
-                logger.error(f"HTTP error for {url}: {e}")
+                # SECURITY: never log str(e) or the URL (caller-supplied term/id).
+                logger.error("Web request HTTP error", status_code=e.response.status_code)
                 raise
             except Exception as e:
                 if attempt < max_retries - 1:
                     wait_time = (2**attempt) * self.rate_limit_delay * 2
                     logger.warning(
-                        f"Request failed on attempt {attempt + 1}, "
-                        f"retrying in {wait_time:.2f}s: {e}"
+                        f"Request failed on attempt {attempt + 1}, retrying in {wait_time:.2f}s",
+                        exc_type=type(e).__name__,
                     )
                     await asyncio.sleep(wait_time)
                     continue
-                logger.error(f"Request failed after {max_retries} attempts: {e}")
+                logger.error("Web request failed after retries", exc_type=type(e).__name__)
                 raise
 
         # Should be unreachable: every loop iteration either returns or raises.
@@ -190,7 +190,7 @@ class EutilsClient:
                 "Connection failed to NCBI E-utils XML endpoint",
                 endpoint=endpoint,
                 base_url=self.base_url,
-                error=str(e),
+                exc_type=type(e).__name__,
             )
             raise ConnectionError(
                 "Unable to connect to NCBI E-utilities. Please check your internet connection."
@@ -200,7 +200,7 @@ class EutilsClient:
                 "Request timeout to NCBI E-utils XML endpoint",
                 endpoint=endpoint,
                 base_url=self.base_url,
-                error=str(e),
+                exc_type=type(e).__name__,
             )
             raise TimeoutError("Request to NCBI E-utilities timed out. Please try again.") from e
         except httpx.HTTPStatusError as e:
@@ -225,7 +225,6 @@ class EutilsClient:
                 "Request failed to NCBI E-utils XML endpoint",
                 endpoint=endpoint,
                 error_type=type(e).__name__,
-                error=str(e),
             )
             raise
 
@@ -379,7 +378,7 @@ class EutilsClient:
                     article_data = self._parse_book_article(book_article, pubmed_id)
 
         except Exception as e:
-            logger.error(f"Error parsing abstract for PMID {pubmed_id}: {e}")
+            logger.error("Error parsing abstract", pmid=pubmed_id, exc_type=type(e).__name__)
 
         return article_data
 

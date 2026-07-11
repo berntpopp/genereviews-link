@@ -165,7 +165,9 @@ async def get_fulltext(
         result = await client.scrape_genereview_comprehensive(book_url)
 
         if result.get("error"):
-            raise fulltext_scrape_failed_error(nbk_id, str(result["error"]))
+            # Do NOT forward result["error"] -- it is upstream-influenceable; the
+            # error text is severed at the client and here (fixed message only).
+            raise fulltext_scrape_failed_error(nbk_id)
 
         # Convert sections to GeneReviewSection objects (propagating level/subsections)
         all_sections: dict[str, GeneReviewSection] = {
@@ -208,5 +210,5 @@ async def get_fulltext(
     except StructuredHTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error scraping NBK{nbk_id}: {e}", exc_info=True)
+        logging.error("Error scraping NBK%s (%s)", nbk_id, type(e).__name__)
         raise upstream_ncbi_unavailable_error("fetch full text") from e

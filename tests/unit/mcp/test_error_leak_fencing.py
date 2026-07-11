@@ -30,8 +30,10 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastmcp import Client
 
+from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.routes import chapters as chapters_routes
+from genereview_link.api.routes import fulltext as fulltext_routes
 from genereview_link.config import ServerConfig
 from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
 from genereview_link.server_manager import UnifiedServerManager
@@ -115,6 +117,44 @@ async def test_fallback_body_severs_unstructured_body() -> None:
         assert payload["success"] is False
         assert payload["error_code"] == "upstream_unavailable"
         msg = payload["message"]
+        _assert_no_injection_prose(msg)
+        _assert_no_forbidden(msg)
+
+
+# ---------------------------------------------------------------------------
+# Surface A (Critical) — get_fulltext must not forward the scrape result["error"]
+# ---------------------------------------------------------------------------
+
+
+class _HostileErrorClient:
+    """Client whose scrape returns a hostile error string (simulates any producer)."""
+
+    async def scrape_genereview_comprehensive(self, book_url: str) -> dict[str, Any]:
+        return {"error": HOSTILE}
+
+
+@pytest.mark.asyncio
+async def test_get_fulltext_does_not_forward_scrape_error_body() -> None:
+    app = FastAPI()
+    app.include_router(fulltext_routes.router)
+    app.state.repository = MagicMock()
+    app.state.embedder = FakeEmbeddingProvider(dim=384)
+
+    async def _client() -> Any:
+        yield _HostileErrorClient()
+
+    app.dependency_overrides[get_managed_client] = _client
+    mcp = await UnifiedServerManager().create_mcp_server(app, ServerConfig())
+
+    async with Client(mcp) as client:
+        result = await client.call_tool("get_fulltext", {"nbk_id": "NBK1116"}, raise_on_error=False)
+    sc = result.structured_content
+    assert sc is not None
+    for payload in (sc, _mirror(result)):
+        assert payload["success"] is False
+        assert payload["error_code"] == "not_found"
+        msg = payload["message"]
+        # the fixed server-authored message is used; the scrape body is severed
         _assert_no_injection_prose(msg)
         _assert_no_forbidden(msg)
 

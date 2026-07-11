@@ -85,11 +85,15 @@ def invalid_nbk_id_error(nbk_id: str) -> StructuredHTTPException:
     )
 
 
-def fulltext_scrape_failed_error(nbk_id: str, reason: str) -> StructuredHTTPException:
+def fulltext_scrape_failed_error(nbk_id: str) -> StructuredHTTPException:
+    # SECURITY: never interpolate the scrape's ``result["error"]`` (or any
+    # upstream/str(exc) text) into the message -- it is caller-influenceable and
+    # would reach the MCP error frame verbatim. Emit a FIXED server-authored
+    # message keyed only on the (validated NBK\d+) identifier.
     return StructuredHTTPException(
         status_code=404,
         code="fulltext_scrape_failed",
-        message=f"Could not scrape content for {nbk_id}: {reason}.",
+        message=f"Could not scrape GeneReviews content for {nbk_id}.",
         recovery_hint=(
             "Verify the NBK ID in NCBI Bookshelf, or use search_passages for indexed "
             "GeneReviews passage retrieval."

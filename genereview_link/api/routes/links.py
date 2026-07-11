@@ -92,5 +92,5 @@ async def get_links(
     except StructuredHTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error fetching links for PMID {pmid}: {e}", exc_info=True)
+        logging.error("Error fetching links for PMID %s (%s)", pmid, type(e).__name__)
         raise upstream_ncbi_unavailable_error("fetch links") from e

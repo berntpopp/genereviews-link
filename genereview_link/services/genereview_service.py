@@ -250,7 +250,9 @@ class GeneReviewService:
                         publication_date=abstract_result.get("publication_date", ""),
                     )
             except Exception as e:
-                logger.warning(f"Could not fetch abstract for PMID {pubmed_id}: {e}")
+                logger.warning(
+                    "Could not fetch abstract", pmid=pubmed_id, exc_type=type(e).__name__
+                )
 
         # 3. Get all links if requested
         all_links = None
@@ -267,7 +269,7 @@ class GeneReviewService:
                         if "ncbi.nlm.nih.gov/books/" in url
                     ]
             except Exception as e:
-                logger.warning(f"Could not fetch links for PMID {pubmed_id}: {e}")
+                logger.warning("Could not fetch links", pmid=pubmed_id, exc_type=type(e).__name__)
 
         # Fallback to original method if no book URLs found
         if not book_urls:
@@ -281,7 +283,7 @@ class GeneReviewService:
                 book_urls = _book_urls_from_links(links_result)
             except Exception as e:
                 logger.warning(
-                    f"Could not resolve Bookshelf link via PubMed links for {pubmed_id}: {e}"
+                    "Could not resolve Bookshelf link", pmid=pubmed_id, exc_type=type(e).__name__
                 )
 
         if not book_urls:
@@ -330,7 +332,7 @@ class GeneReviewService:
                         title = scraped_title
                     sections = sections_data
             except Exception as e:
-                logger.warning(f"Could not scrape full text from {book_url}: {e}")
+                logger.warning("Could not scrape full text", exc_type=type(e).__name__)
 
         # Fallback: use basic scraping if comprehensive failed
         if include_fulltext and not sections:
@@ -344,7 +346,7 @@ class GeneReviewService:
                     for key, section_data in scraped_data.items():
                         sections[key] = GeneReviewSection(**section_data)
             except Exception as e:
-                logger.warning(f"Basic scraping also failed for {book_url}: {e}")
+                logger.warning("Basic scraping also failed", exc_type=type(e).__name__)
 
         # NB: no abstract-title fallback for the chapter title. The article title
         # already lives (fenced, once) on abstract_data.title; borrowing it into
