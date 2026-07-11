@@ -8,6 +8,50 @@ as phase tags where a semver release has not yet been cut.
 
 ---
 
+## 5.0.0 — Response-Envelope Standard v1.1 untrusted-content fencing
+
+Adopts the fleet-wide [GeneFoundry Response-Envelope Standard v1.1] untrusted-content
+fencing: every field carrying upstream GeneReviews free text is now a typed
+`untrusted_text` object (`kind`/`text`/`provenance`/`raw_sha256`) instead of a bare
+string, so hosts and the `genefoundry-router` gateway treat retrieved prose as data,
+never instructions. Defense in depth; research use only.
+
+### Breaking changes
+
+1. **All 7 upstream-prose surfaces are now the typed `untrusted_text` object**
+
+   - *What changed:* `search_passages` `results[*].text` / `results[*].snippet`,
+     `get_passage` `passage.text` (and `neighbors_before/after[*].text`),
+     `get_passages_batch` `passages[*].text`, `get_chapter_section` `content`
+     (new field — see below), `get_fulltext` `sections[*].content` (recursively,
+     including subsections), and `get_abstract` `abstract` are now objects shaped
+     `{"kind": "untrusted_text", "text": "...", "provenance": {"source", "record_id",
+     "retrieved_at"}, "raw_sha256": "..."}` instead of a bare string. `text` is
+     NFC-normalized with only the ratified control/zero-width/bidi code points
+     stripped (never NFKC; prose is never regex-rewritten). `raw_sha256` digests
+     the exact pre-normalization upstream UTF-8 bytes.
+   - **`get_chapter_section` reshape:** `passages[]` entries no longer carry a
+     per-passage `text` field (structural ids only: `passage_id`, `heading_path`,
+     `section_level`, `chunk_index`). The section's full text is now emitted once,
+     fenced, as the new always-present `content` field (replacing the opt-in
+     `concatenated_text`/`concatenated_char_count` fields and the `include` query
+     parameter) with a new `content_char_count`, to avoid duplicating the same
+     upstream prose across sibling fields.
+   - *Why:* `docs/RESPONSE-ENVELOPE-STANDARD-v1.1.md` (untrusted-content fencing);
+     the standard forbids duplicating raw/sanitized prose in a sibling field, so
+     this is a breaking reshape rather than an additive dual-field release.
+   - *Migration:* Read prose from `<field>.text`; treat `<field>.raw_sha256` and
+     `<field>.provenance` as audit metadata. Callers reading `search_passages`
+     `snippet`, `get_passage`/`get_passages_batch` `text`, `get_fulltext`
+     `sections[*].content`, or `get_abstract.abstract` as bare strings must switch
+     to `<field>.text`. Callers reading `get_chapter_section`
+     `passages[*].text`/`concatenated_text` must switch to the response-level
+     `content.text`.
+
+[GeneFoundry Response-Envelope Standard v1.1]: https://github.com/berntpopp/genefoundry-router/blob/main/docs/RESPONSE-ENVELOPE-STANDARD-v1.1.md
+
+---
+
 ## 3.0.0 — GeneFoundry Tool-Naming Standard v1
 
 Adopts the fleet-wide [GeneFoundry Tool-Naming & Normalization Standard v1]
