@@ -8,6 +8,45 @@ as phase tags where a semver release has not yet been cut.
 
 ---
 
+## 5.0.1 — Error-message sanitation (upstream error-path text leak)
+
+Security (defense in depth): the MCP error path no longer echoes upstream
+GeneReviews/eutils error-body text or exception detail into caller-visible
+messages (fixed server-authored messages), caller-visible messages are
+sanitized of control/zero-width/bidi/NUL code points, and upstream-path logs
+no longer render raw exception text. Research use only.
+
+### Security
+
+- **Upstream error bodies / `str(exc)` are severed at the source.** The Bookshelf
+  scrapers (`scrape_genereview_book` / `scrape_genereview_comprehensive`) return a
+  fixed `Bookshelf scrape failed.` string instead of `{"error": str(e)}`;
+  `get_fulltext` no longer forwards that scrape error into
+  `fulltext_scrape_failed_error` (fixed, identifier-keyed message only); the MCP
+  error boundary's `_fallback_message` returns a fixed `HTTP <status>` message
+  instead of echoing the response body's `hint`/`message`/`error`/`detail`/text
+  fields; and an unhandled internal error returns a fixed message instead of
+  `f"{type(exc).__name__}: {exc}"`.
+- **Every caller-visible error string is sanitized.** `build_error_envelope` runs
+  the `message`, `recovery_action`, `field_errors`, and `next_commands` through a
+  new `sanitize_message` (reusing the fence's `FORBIDDEN_CODEPOINTS`), so no
+  control/zero-width/bidi/NUL code point can reach the error frame on any path, in
+  either `structured_content` or the `TextContent` JSON mirror. `sanitize_message`
+  strips code points only — prose-carrying paths are severed to fixed messages, not
+  merely sanitized.
+- **`/health` no longer leaks exception text.** `health_check` keeps its `error`
+  field for schema stability but populates it with fixed text (never `str(e)`).
+- **Log hygiene.** Upstream-path log sinks (eutils client connect/timeout/http/
+  retry/xml/abstract-parse, the `abstract`/`links`/`fulltext` route error logs, and
+  the `genereview_service` scrape/link warnings) no longer render raw `str(exc)` or
+  `exc_info`; they log a fixed event plus `exc_type` (and a bounded identifier where
+  useful), preserving the no-PII-in-logs invariant.
+
+This is a defense-in-depth patch to error paths only; success payloads, output
+schemas, and the primary `untrusted_text` fence are unchanged.
+
+---
+
 ## 5.0.0 — Response-Envelope Standard v1.1 untrusted-content fencing
 
 Adopts the fleet-wide [GeneFoundry Response-Envelope Standard v1.1] untrusted-content
