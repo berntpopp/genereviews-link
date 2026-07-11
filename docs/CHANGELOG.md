@@ -50,6 +50,7 @@ never instructions. Defense in depth; research use only.
    - `get_abstract` / `get_genereview_summary.abstract_data`: `title`, `journal`,
      `authors[*]`
    - `get_fulltext` document `title`; `get_genereview_summary` `title`
+   - `get_links` `link_entries[*].provider` (upstream NCBI Provider/Name or Category)
 
    The declared MCP `outputSchema` now makes the `untrusted_text` object (`kind`
    const) reachable at every fenced position, including inside list `items`
@@ -65,11 +66,24 @@ never instructions. Defense in depth; research use only.
      parameter were dropped — markdown was an exact rendering of the now-fenced
      caption/header/rows (v1.1 no-duplication). The opt-in passage `table_data`
      likewise no longer emits `markdown_table`. Render markdown from the cells.
+   - **Table passage body vs `table_data` (no-duplication):** when a passage's
+     structured `table_data` cells (`header`/`rows`) are requested, the passage
+     `text`/`snippet` no longer also carries the rendered table markdown (the same
+     cell prose). In that mode the structured cells are the single canonical
+     carrier and the body is a server pointer note. Default (no `table_data`)
+     is unchanged: the body carries the table markdown.
    - **`recommended_citation` reshape:** no longer embeds the chapter title
      (which is now fenced on `chapter_title`); it holds identifiers/date only
      (`"{nbk_id}. Updated {date}. Passage {passage_id}."`). The opt-in
      `heading_path_array` field was dropped (it duplicated the fenced
      `heading_path`); split the `heading_path.text` client-side if needed.
+   - **Chapter-title fallback removed (no-duplication + digest):**
+     `get_genereview_summary`'s `title` no longer falls back to the article title
+     when no chapter title is scraped (that value lives once, fenced, on
+     `abstract_data.title`); it uses a server placeholder instead. This also
+     removed a digest bug where the borrowed title's `raw_sha256` was computed
+     over already-normalized text. `get_genereview_summary` truncation likewise
+     fences the RAW pre-normalization slice (see `_raw_content`).
    - **`get_genereview_summary` dedup:** section prose + the chapter title live
      once (fenced) on the top-level `summary`/`diagnosis`/`management`/
      `other_sections` and `title`; the embedded `full_text_data.sections` is now

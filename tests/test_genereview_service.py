@@ -301,8 +301,12 @@ class TestGetGenereviewComprehensive:
         )
 
         result = await service.get_genereview_comprehensive("BRCA1")
-        # Title should fall back to abstract.title since both scrapes produced nothing.
-        assert result.title.text == "Abstract Used As Title"
+        # v1.1 no-duplication: the chapter title does NOT borrow the article title
+        # (that lives once, fenced, on abstract_data.title). With no scraped chapter
+        # title, GeneReview.title is the server-synthesized placeholder.
+        assert result.title.text == "GeneReview for BRCA1"
+        assert result.abstract_data is not None
+        assert result.abstract_data.title.text == "Abstract Used As Title"
         assert result.full_text_data is None
 
     @pytest.mark.asyncio

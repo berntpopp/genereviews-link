@@ -346,10 +346,11 @@ class GeneReviewService:
             except Exception as e:
                 logger.warning(f"Basic scraping also failed for {book_url}: {e}")
 
-        # Use abstract title as fallback (abstract_data.title is fenced -> .text)
-        if not title and abstract_data and abstract_data.title.text:
-            title = abstract_data.title.text
-
+        # NB: no abstract-title fallback for the chapter title. The article title
+        # already lives (fenced, once) on abstract_data.title; borrowing it into
+        # GeneReview.title would duplicate the sanitized prose AND compute
+        # raw_sha256 over the already-normalized text instead of the raw title.
+        # When no chapter title is available, use a server-synthesized placeholder.
         if not title:
             title = f"GeneReview for {gene_symbol}"
 

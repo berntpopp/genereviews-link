@@ -379,6 +379,11 @@ async def test_get_passage_table_data_opt_in_populates_fields() -> None:
     ]
     # markdown_table was dropped (duplicated the now-fenced cells).
     assert "markdown_table" not in passage
+    # v1.1 no-duplication: with structured cells emitted, the body text is a
+    # server pointer note — it must NOT re-carry the rendered table cell prose.
+    assert passage["text"]["kind"] == "untrusted_text"
+    assert "header and rows" in passage["text"]["text"]
+    assert "BRCA1" not in passage["text"]["text"]
 
 
 @pytest.mark.asyncio

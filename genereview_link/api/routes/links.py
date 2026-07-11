@@ -16,7 +16,9 @@ from genereview_link.api.orchestration import (
     stamp_response_version,
 )
 from genereview_link.api.orchestration_errors import upstream_ncbi_unavailable_error
-from genereview_link.models.genereview_models import LinkData
+from genereview_link.api.untrusted_limits import collect_untrusted, guard_untrusted_limits
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
+from genereview_link.models.genereview_models import LinkData, LinkEntry
 
 router = APIRouter(prefix="/links", tags=["Links"])
 
@@ -56,8 +58,30 @@ async def get_links(
     Pass ``?fresh=true`` to label the response version as live.
     """
     try:
-        payload = await client.get_all_links(pmid)
-        out = LinkData(**payload)
+        payload = dict(await client.get_all_links(pmid))
+        # v1.1: link_entries[*].provider is upstream NCBI Provider/Name (or
+        # Category) prose — fence it before it leaves the MCP boundary.
+        raw_entries = payload.pop("link_entries", None)
+        fenced_entries: list[LinkEntry] | None = None
+        if raw_entries:
+            fenced_entries = [
+                LinkEntry(
+                    url=entry["url"],
+                    link_type=entry["link_type"],
+                    provider=(
+                        fence_untrusted_text(
+                            entry["provider"],
+                            source="genereviews",
+                            record_id=f"{pmid}#link:{i}",
+                        )
+                        if entry.get("provider")
+                        else None
+                    ),
+                )
+                for i, entry in enumerate(raw_entries)
+            ]
+        out = LinkData(link_entries=fenced_entries, **payload)
+        guard_untrusted_limits(collect_untrusted(out))
         stamp_response_version(
             out,
             # get_links ALWAYS calls live NCBI E-utils, so the version reflects live

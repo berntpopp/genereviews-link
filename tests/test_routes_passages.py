@@ -1165,6 +1165,7 @@ def _fake_lex_row(
     chapter_last_updated: Any = None,
     passage_type: str = "narrative",
     table_id: str | None = None,
+    table_data: dict | None = None,
 ) -> LexicalPassageRow:
     """Build a LexicalPassageRow with controllable text for snippet_chars tests."""
     from datetime import date as _date
@@ -1191,6 +1192,7 @@ def _fake_lex_row(
             gene_symbols=("BRCA1",),
             passage_type=passage_type,
             table_id=table_id,
+            table_data=table_data,
         ),
         phrase_rank=1.0,
         strict_rank=0.5,
@@ -1490,6 +1492,43 @@ async def test_search_recommended_citation_handles_null_date() -> None:
     citation = resp.json()["results"][0]["recommended_citation"]
     assert "Updated date n/a" in citation
     assert "Passage NBK9999:0001" in citation
+
+
+@pytest.mark.asyncio
+async def test_search_table_data_text_is_placeholder_not_cell_prose() -> None:
+    """v1.1 no-duplication: with include=table_data, the body text is a pointer
+    note, not the rendered table markdown (cell prose lives once in header/rows)."""
+    rows = [
+        _fake_lex_row(
+            "NBK1247:0030",
+            section="management",
+            lexical_rank=0.9,
+            passage_type="table",
+            table_id="mgmt.T1",
+            text="| Gene | Class |\n| --- | --- |\n| BRCA1 | Pathogenic |",
+            table_data={
+                "caption": "Variant classes",
+                "header": ["Gene", "Class"],
+                "rows": [["BRCA1", "Pathogenic"]],
+            },
+        )
+    ]
+    app = _build_app_with_fake_repo(rows)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1", "mode": "full", "limit": 1, "include": "table_data"},
+        )
+    assert resp.status_code == 200
+    row = resp.json()["results"][0]
+    # structured cells carry the prose once...
+    assert [c["text"] for c in row["header"]] == ["Gene", "Class"]
+    assert row["rows"][0][0]["text"] == "BRCA1"
+    # ...and the body text is the placeholder note, NOT the rendered markdown.
+    assert row["text"]["kind"] == "untrusted_text"
+    assert "header and rows" in row["text"]["text"]
+    assert "Pathogenic" not in row["text"]["text"]
 
 
 @pytest.mark.asyncio

@@ -186,7 +186,10 @@ def test_link_data_keeps_flat_urls_and_adds_categorized_links() -> None:
             LinkEntry(
                 url="https://www.ncbi.nlm.nih.gov/books/NBK1247/",
                 link_type="books",
-                provider="NCBI Bookshelf",
+                # provider is upstream NCBI prose -> v1.1 fenced untrusted_text.
+                provider=fence_untrusted_text(
+                    "NCBI Bookshelf", source="genereviews", record_id="1#link:0"
+                ),
             )
         ],
         by_type={"books": ["https://www.ncbi.nlm.nih.gov/books/NBK1247/"]},
@@ -195,5 +198,7 @@ def test_link_data_keeps_flat_urls_and_adds_categorized_links() -> None:
     dumped = data.model_dump(mode="json", by_alias=True)
     assert dumped["urls"] == ["https://www.ncbi.nlm.nih.gov/books/NBK1247/"]
     assert dumped["link_entries"][0]["link_type"] == "books"
+    assert dumped["link_entries"][0]["provider"]["kind"] == "untrusted_text"
+    assert dumped["link_entries"][0]["provider"]["text"] == "NCBI Bookshelf"
     assert dumped["by_type"]["books"]
     assert "_meta" in dumped

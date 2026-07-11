@@ -367,6 +367,10 @@ def _fenced_positions(tool_name: str) -> dict[str, Any]:
                 }
             )
         }
+    if tool_name == "get_links":
+        return {
+            "result": _obj({"link_entries": _nullable(_arr(_obj({"provider": _nullable(_ut())})))})
+        }
     if tool_name == "get_abstract":
         return {
             "result": _obj(
@@ -405,6 +409,11 @@ def _fenced_positions(tool_name: str) -> dict[str, Any]:
                                 "journal": _ut(),
                                 "authors": _arr(_ut()),
                             }
+                        )
+                    ),
+                    "all_links": _nullable(
+                        _obj(
+                            {"link_entries": _nullable(_arr(_obj({"provider": _nullable(_ut())})))}
                         )
                     ),
                     "full_text_data": _nullable(

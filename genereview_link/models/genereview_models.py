@@ -107,7 +107,8 @@ class LinkEntry(BaseModel):
 
     url: str
     link_type: Literal["prlinks", "llinks", "books", "pmc"]
-    provider: str | None = None
+    # provider is upstream NCBI Provider/Name (or Category) prose -> v1.1 fenced.
+    provider: UntrustedText | None = None
 
 
 class LinkData(BaseModel):

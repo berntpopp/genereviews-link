@@ -74,6 +74,21 @@ def _fence_heading_path(heading_path: str | None, passage_id: str) -> UntrustedT
     )
 
 
+# When include=table_data emits the structured header/rows cells, the passage
+# body text must NOT also carry the rendered table markdown (the SAME cell prose)
+# — v1.1 no-duplication. In that mode the structured cells are the single
+# canonical carrier and the body text is this server-synthesized pointer note.
+_TABLE_BODY_PLACEHOLDER = (
+    "[Table content is emitted as structured cells in the header and rows fields.]"
+)
+
+
+def _table_body_placeholder(passage_id: str) -> UntrustedText:
+    return fence_untrusted_text(
+        _TABLE_BODY_PLACEHOLDER, source="genereviews", record_id=f"{passage_id}#table_cells_ref"
+    )
+
+
 def _format_source_url(nbk_id: str) -> str:
     """Chapter-level NCBI Bookshelf URL for a passage's containing chapter.
 
@@ -550,16 +565,24 @@ async def search_passages(
         )
         tdata = table_fields(r.passage, want=include_table_data)
         # v1.1: RankedPassage populates EITHER text OR snippet, never both.
-        # Fence whichever is populated at this MCP serialization boundary.
+        # Fence whichever is populated at this MCP serialization boundary. When
+        # structured table cells are emitted, the body is a pointer note instead
+        # of the rendered table markdown (no-duplication).
+        table_cells_emitted = tdata.get("header") is not None
+        pid = r.passage.passage_id
         fenced_text: UntrustedText | None = None
         fenced_snippet: UntrustedText | None = None
         if mode == "full":
-            fenced_text = fence_untrusted_text(
-                r.passage.text, source="genereviews", record_id=r.passage.passage_id
+            fenced_text = (
+                _table_body_placeholder(pid)
+                if table_cells_emitted
+                else fence_untrusted_text(r.passage.text, source="genereviews", record_id=pid)
             )
         elif mode == "brief" and r.snippet is not None:
-            fenced_snippet = fence_untrusted_text(
-                r.snippet, source="genereviews", record_id=r.passage.passage_id
+            fenced_snippet = (
+                _table_body_placeholder(pid)
+                if table_cells_emitted
+                else fence_untrusted_text(r.snippet, source="genereviews", record_id=pid)
             )
         out.append(
             RankedPassage(
@@ -734,7 +757,12 @@ def _passage_row_to_detail(
 ) -> PassageDetail:
     """Convert a PassageRow to a PassageDetail response model (v1.1-fenced)."""
     tdata = table_fields(row, want=include_table_data)
-    fenced_text = fence_untrusted_text(row.text, source="genereviews", record_id=row.passage_id)
+    # When structured table cells are emitted, the body text is a pointer note
+    # (not the rendered table markdown) so the cell prose lives once (no-dup).
+    if tdata.get("header") is not None:
+        fenced_text = _table_body_placeholder(row.passage_id)
+    else:
+        fenced_text = fence_untrusted_text(row.text, source="genereviews", record_id=row.passage_id)
     return PassageDetail(
         nbk_id=row.nbk_id,
         passage_id=row.passage_id,
@@ -749,7 +777,7 @@ def _passage_row_to_detail(
         section_level=row.section_level,
         chunk_index=row.chunk_index,
         text=fenced_text,
-        char_count=len(fenced_text.text),
+        char_count=len(row.text),
         gene_symbols=list(row.gene_symbols),
         passage_type=row.passage_type,
         passage_role=_passage_role(row.passage_role),
