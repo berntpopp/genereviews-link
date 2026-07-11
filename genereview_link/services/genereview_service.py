@@ -12,7 +12,7 @@ from async_lru import alru_cache
 from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.config import settings
 from genereview_link.logging_config import get_logger
-from genereview_link.mcp.untrusted_content import fence_untrusted_text
+from genereview_link.mcp.untrusted_content import UntrustedText, fence_untrusted_text
 from genereview_link.models.genereview_models import (
     AbstractData,
     FencedGeneReviewSection,
@@ -43,28 +43,29 @@ def _doc_id(book_url: str | None, pubmed_id: str) -> str:
     return match.group(1) if match else f"pmid:{pubmed_id}"
 
 
-def _fence_section_for_fulltext(
+def fence_section_prose(
     section: GeneReviewSection, *, doc_id: str, record_path: str
 ) -> FencedGeneReviewSection:
     """Build the v1.1-fenced sibling of an internal ``GeneReviewSection``.
 
-    Fences ``content`` (and every nested subsection's content) as
+    Fences ``title`` and ``content`` (recursively, every nested subsection) as
     ``untrusted_text`` without mutating the internal str-typed model.
-    ``record_id`` is ``{doc_id}#{record_path}``.
+    ``record_id`` is ``{doc_id}#{record_path}`` for content, ``…#title`` for the
+    heading. Stashes the ORIGINAL raw content in the private ``_raw_content`` so
+    get_genereview_summary truncation can slice the RAW bytes.
     """
-    return FencedGeneReviewSection(
-        title=section.title,
-        content=fence_untrusted_text(
-            section.content, source="genereviews", record_id=f"{doc_id}#{record_path}"
-        ),
+    base = f"{doc_id}#{record_path}"
+    fenced = FencedGeneReviewSection(
+        title=fence_untrusted_text(section.title, source="genereviews", record_id=f"{base}#title"),
+        content=fence_untrusted_text(section.content, source="genereviews", record_id=base),
         level=section.level,
         subsections={
-            key: _fence_section_for_fulltext(
-                value, doc_id=doc_id, record_path=f"{record_path}/{key}"
-            )
+            key: fence_section_prose(value, doc_id=doc_id, record_path=f"{record_path}/{key}")
             for key, value in section.subsections.items()
         },
     )
+    fenced._raw_content = section.content
+    return fenced
 
 
 def fence_fulltext_metadata(metadata_dict: dict[str, object], *, doc_id: str) -> FullTextMetadata:
@@ -166,7 +167,7 @@ class GeneReviewService:
         def _fence(raw: dict[str, Any] | None, key: str) -> FencedGeneReviewSection | None:
             if not raw:
                 return None
-            return _fence_section_for_fulltext(
+            return fence_section_prose(
                 GeneReviewSection(**raw), doc_id=doc_id, record_path=f"section:{key}"
             )
 
@@ -174,12 +175,12 @@ class GeneReviewService:
             gene_symbol=gene_symbol.upper(),
             pubmed_id=pubmed_id,
             book_url=book_url,
-            title=title,
+            title=fence_untrusted_text(title, source="genereviews", record_id=f"{doc_id}#title"),
             summary=_fence(summary, "summary"),
             diagnosis=_fence(diagnosis, "diagnosis"),
             management=_fence(management, "management"),
             other_sections={
-                k: _fence_section_for_fulltext(
+                k: fence_section_prose(
                     GeneReviewSection(**v), doc_id=doc_id, record_path=f"section:{k}"
                 )
                 for k, v in scraped_data.items()
@@ -224,22 +225,28 @@ class GeneReviewService:
             book_url = None
             title = ""
 
-        # 2. Get abstract data if requested
+        # 2. Get abstract data if requested (title/abstract/journal/authors fenced)
         abstract_data = None
         if include_abstract:
             try:
                 abstract_result = await self.client.fetch_abstract(pubmed_id)
                 if abstract_result:
+                    apmid = abstract_result.get("pmid", pubmed_id)
+
+                    def _af(value: object, field: str, rid: str = apmid) -> UntrustedText:
+                        return fence_untrusted_text(
+                            str(value or ""), source="genereviews", record_id=f"{rid}#{field}"
+                        )
+
                     abstract_data = AbstractData(
-                        pmid=abstract_result.get("pmid", pubmed_id),
-                        title=abstract_result.get("title", ""),
-                        abstract=fence_untrusted_text(
-                            abstract_result.get("abstract", ""),
-                            source="genereviews",
-                            record_id=f"{pubmed_id}#doc",
-                        ),
-                        authors=abstract_result.get("authors", []),
-                        journal=abstract_result.get("journal", ""),
+                        pmid=apmid,
+                        title=_af(abstract_result.get("title", ""), "title"),
+                        abstract=_af(abstract_result.get("abstract", ""), "doc"),
+                        authors=[
+                            _af(author, f"author:{i}")
+                            for i, author in enumerate(abstract_result.get("authors", []) or [])
+                        ],
+                        journal=_af(abstract_result.get("journal", ""), "journal"),
                         publication_date=abstract_result.get("publication_date", ""),
                     )
             except Exception as e:
@@ -306,10 +313,12 @@ class GeneReviewService:
                     # management/other_sections below. Duplicating it in
                     # full_text_data.sections would violate the v1.1 no-duplication
                     # rule. full_text_data keeps its unique metadata + identifiers.
+                    # title=None here (dedup): the chapter title is emitted once,
+                    # fenced, on the top-level GeneReview.title below.
                     full_text_data = FullTextData(
                         nbk_id=fulltext_nbk_id,
                         url=fulltext_result.get("url", book_url),
-                        title=fulltext_result.get("title", ""),
+                        title=None,
                         sections={},
                         metadata=fence_fulltext_metadata(
                             fulltext_result.get("metadata", {}), doc_id=fulltext_doc_id
@@ -337,9 +346,9 @@ class GeneReviewService:
             except Exception as e:
                 logger.warning(f"Basic scraping also failed for {book_url}: {e}")
 
-        # Use abstract title as fallback
-        if not title and abstract_data and abstract_data.title:
-            title = abstract_data.title
+        # Use abstract title as fallback (abstract_data.title is fenced -> .text)
+        if not title and abstract_data and abstract_data.title.text:
+            title = abstract_data.title.text
 
         if not title:
             title = f"GeneReview for {gene_symbol}"
@@ -354,18 +363,18 @@ class GeneReviewService:
         def _fence(sec: GeneReviewSection | None, key: str) -> FencedGeneReviewSection | None:
             if sec is None:
                 return None
-            return _fence_section_for_fulltext(sec, doc_id=doc_id, record_path=f"section:{key}")
+            return fence_section_prose(sec, doc_id=doc_id, record_path=f"section:{key}")
 
         return GeneReview(
             gene_symbol=gene_symbol.upper(),
             pubmed_id=pubmed_id,
             book_url=book_url,
-            title=title,
+            title=fence_untrusted_text(title, source="genereviews", record_id=f"{doc_id}#title"),
             summary=_fence(summary, "summary"),
             diagnosis=_fence(diagnosis, "diagnosis"),
             management=_fence(management, "management"),
             other_sections={
-                k: _fence_section_for_fulltext(sec, doc_id=doc_id, record_path=f"section:{k}")
+                k: fence_section_prose(sec, doc_id=doc_id, record_path=f"section:{k}")
                 for k, sec in sections.items()
             },
             abstract_data=abstract_data,

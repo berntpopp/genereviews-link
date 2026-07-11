@@ -235,16 +235,16 @@ async def test_batch_heading_path_array_absent_by_default() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_heading_path_array_opt_in() -> None:
-    """include=['heading_path_array'] splits heading_path on ' > ' for each passage."""
+async def test_batch_heading_path_is_v1_1_fenced() -> None:
+    """heading_path is a v1.1-fenced untrusted_text object (heading_path_array dropped)."""
     row = _make_row(passage_id="NBK1247:0001", chunk_index=1, heading_path="A > B > C")
     app = _build_app({"NBK1247:0001": row})
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.post(
-            "/passages/batch",
-            json={"ids": ["NBK1247:0001"], "include": ["heading_path_array"]},
-        )
+        resp = await c.post("/passages/batch", json={"ids": ["NBK1247:0001"]})
 
     assert resp.status_code == 200
-    assert resp.json()["passages"][0]["heading_path_array"] == ["A", "B", "C"]
+    passage = resp.json()["passages"][0]
+    assert passage["heading_path"]["kind"] == "untrusted_text"
+    assert passage["heading_path"]["text"] == "A > B > C"
+    assert "heading_path_array" not in passage

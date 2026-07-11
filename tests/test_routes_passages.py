@@ -297,7 +297,7 @@ async def test_search_default_mode_is_brief_and_limit_is_5() -> None:
     assert len(results) == 5
     assert results[0]["snippet"] is not None
     assert results[0]["text"] is None
-    assert results[0]["chapter_title"] == "Chapter"
+    assert results[0]["chapter_title"]["text"] == "Chapter"
     assert "passage_role" in results[0]
     assert results[0]["passage_role"] is None
 
@@ -1398,8 +1398,8 @@ async def test_search_heading_path_array_absent_by_default() -> None:
 
 
 @pytest.mark.asyncio
-async def test_search_heading_path_array_opt_in() -> None:
-    """include=heading_path_array splits heading_path on ' > ' and returns the array."""
+async def test_search_heading_path_is_v1_1_fenced() -> None:
+    """heading_path is a v1.1-fenced untrusted_text object (heading_path_array dropped)."""
     rows = [
         _fake_lex_row(
             "NBK1247:0010",
@@ -1411,18 +1411,17 @@ async def test_search_heading_path_array_opt_in() -> None:
     app = _build_app_with_fake_repo(rows)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get(
-            "/passages/search",
-            params={"q": "BRCA1", "limit": 1, "include": "heading_path_array"},
-        )
+        resp = await c.get("/passages/search", params={"q": "BRCA1", "limit": 1})
     assert resp.status_code == 200
-    arr = resp.json()["results"][0]["heading_path_array"]
-    assert arr == ["Management", "Treatment", "Targeted Therapies"]
+    row = resp.json()["results"][0]
+    assert row["heading_path"]["kind"] == "untrusted_text"
+    assert row["heading_path"]["text"] == "Management > Treatment > Targeted Therapies"
+    assert "heading_path_array" not in row
 
 
 @pytest.mark.asyncio
-async def test_search_ids_only_mode_never_includes_heading_path_array() -> None:
-    """ids_only mode early-return is not affected by include=heading_path_array."""
+async def test_search_ids_only_mode_omits_heading_path() -> None:
+    """ids_only slim rows never carry heading_path/heading_path_array."""
     rows = [
         _fake_lex_row(
             "NBK1247:0010",
@@ -1436,11 +1435,12 @@ async def test_search_ids_only_mode_never_includes_heading_path_array() -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get(
             "/passages/search",
-            params={"q": "BRCA1", "mode": "ids_only", "include": "heading_path_array"},
+            params={"q": "BRCA1", "mode": "ids_only"},
         )
     assert resp.status_code == 200
     first = resp.json()["results"][0]
     assert "heading_path_array" not in first
+    assert "heading_path" not in first
 
 
 # ---------------------------------------------------------------------------
@@ -1450,7 +1450,7 @@ async def test_search_ids_only_mode_never_includes_heading_path_array() -> None:
 
 @pytest.mark.asyncio
 async def test_search_recommended_citation_format() -> None:
-    """recommended_citation is always present and uses the canonical format."""
+    """recommended_citation is identifiers/date only; the title is fenced separately."""
     rows = [
         _fake_lex_row(
             "NBK1247:0020",
@@ -1465,10 +1465,9 @@ async def test_search_recommended_citation_format() -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get("/passages/search", params={"q": "BRCA1", "limit": 1})
     assert resp.status_code == 200
-    citation = resp.json()["results"][0]["recommended_citation"]
-    assert citation == (
-        "BRCA1- and BRCA2-Associated HBOC. NBK1247. Updated 2026-03-25. Passage NBK1247:0020."
-    )
+    row = resp.json()["results"][0]
+    assert row["recommended_citation"] == "NBK1247. Updated 2026-03-25. Passage NBK1247:0020."
+    assert row["chapter_title"]["text"] == "BRCA1- and BRCA2-Associated HBOC"
 
 
 @pytest.mark.asyncio

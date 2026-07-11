@@ -26,20 +26,30 @@ never instructions. Defense in depth; research use only.
    points stripped (never NFKC; prose is never regex-rewritten); `raw_sha256`
    digests the exact pre-normalization upstream UTF-8 bytes. Surfaces:
 
+   Free-text bodies:
    - `search_passages` `results[*].text` / `results[*].snippet`
    - `get_passage` `passage.text` (and `neighbors_before/after[*].text`)
-   - `get_passages_batch` `passages[*].text`
+   - `get_passages_batch` `passages[*].text`; `search_passages_batch`
+     `results[*].hits[*].{text,snippet}`
    - `get_chapter_section` `content` (new field — see below)
-   - `get_chapter_metadata` `tables[*].caption`
    - `get_table` `caption`, and every `header[*]` / `rows[*][*]` cell
    - `get_fulltext` `sections[*].content` (recursive) **and** `metadata.authors`
      / `metadata.update_info` / `metadata.publication_info` / `metadata.references[*]`
    - `get_abstract` `abstract`
    - `get_genereview_summary` `summary` / `diagnosis` / `management` /
-     `other_sections[*]` `.content`, `abstract_data.abstract`, and
-     `full_text_data.metadata.*`
-   - Opt-in passage `table_data`: `header[*]` / `rows[*][*]` cells (on
-     `search_passages` / `get_passage` / `get_passages_batch`)
+     `other_sections[*]` `.content`, and `full_text_data.metadata.*`
+   - Opt-in passage `table_data`: `header[*]` / `rows[*][*]` cells
+
+   Titles / headings / authors / journals (all upstream free-text):
+   - passage `chapter_title` + `heading_path` (`search_passages`, `get_passage`,
+     `get_passages_batch`); `get_chapter_section` `chapter_title` +
+     `passages[*].heading_path`
+   - `get_chapter_metadata` `title` + `tables[*].caption` + `tables[*].heading_path`
+   - `get_table` `heading_path`
+   - every fenced section's `title` (`get_fulltext`, `get_genereview_summary`)
+   - `get_abstract` / `get_genereview_summary.abstract_data`: `title`, `journal`,
+     `authors[*]`
+   - `get_fulltext` document `title`; `get_genereview_summary` `title`
 
    The declared MCP `outputSchema` now makes the `untrusted_text` object (`kind`
    const) reachable at every fenced position, including inside list `items`
@@ -55,9 +65,15 @@ never instructions. Defense in depth; research use only.
      parameter were dropped — markdown was an exact rendering of the now-fenced
      caption/header/rows (v1.1 no-duplication). The opt-in passage `table_data`
      likewise no longer emits `markdown_table`. Render markdown from the cells.
-   - **`get_genereview_summary` dedup:** section prose lives once (fenced) on the
-     top-level `summary`/`diagnosis`/`management`/`other_sections`; the embedded
-     `full_text_data.sections` is now empty to avoid duplicating it.
+   - **`recommended_citation` reshape:** no longer embeds the chapter title
+     (which is now fenced on `chapter_title`); it holds identifiers/date only
+     (`"{nbk_id}. Updated {date}. Passage {passage_id}."`). The opt-in
+     `heading_path_array` field was dropped (it duplicated the fenced
+     `heading_path`); split the `heading_path.text` client-side if needed.
+   - **`get_genereview_summary` dedup:** section prose + the chapter title live
+     once (fenced) on the top-level `summary`/`diagnosis`/`management`/
+     `other_sections` and `title`; the embedded `full_text_data.sections` is now
+     empty and `full_text_data.title` is `null` to avoid duplication.
    - *Why:* `docs/RESPONSE-ENVELOPE-STANDARD-v1.1.md` — the standard forbids
      duplicating raw/sanitized prose in a sibling field, so these are breaking
      reshapes rather than additive dual-field releases. A response that exceeds a

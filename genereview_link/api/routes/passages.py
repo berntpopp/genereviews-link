@@ -51,15 +51,27 @@ PASSAGE_ROLE_VALUES: frozenset[str] = frozenset(str(role) for role in get_args(P
 
 def _format_recommended_citation(
     *,
-    chapter_title: str | None,
     nbk_id: str,
     last_updated: date | None,
     passage_id: str,
 ) -> str:
-    """Return the canonical recommended_citation string for a passage."""
-    title = chapter_title or "(untitled)"
+    """Return the recommended_citation string (identifiers/date only).
+
+    The chapter title is NOT embedded here (v1.1 no-duplication): it is emitted
+    once, fenced, on the ``chapter_title`` field. This keeps the citation a
+    prose-free, pasteable anchor of stable identifiers + freshness date.
+    """
     date_str = last_updated.isoformat() if isinstance(last_updated, date) else "date n/a"
-    return f"{title}. {nbk_id}. Updated {date_str}. Passage {passage_id}."
+    return f"{nbk_id}. Updated {date_str}. Passage {passage_id}."
+
+
+def _fence_heading_path(heading_path: str | None, passage_id: str) -> UntrustedText | None:
+    """Fence a passage's upstream heading path (v1.1); None stays None."""
+    if heading_path is None:
+        return None
+    return fence_untrusted_text(
+        heading_path, source="genereviews", record_id=f"{passage_id}#heading_path"
+    )
 
 
 def _format_source_url(nbk_id: str) -> str:
@@ -228,13 +240,12 @@ async def search_passages(
         ),
     ] = None,
     include: Annotated[
-        list[Literal["score_breakdown", "heading_path_array", "table_data"]] | None,
+        list[Literal["score_breakdown", "table_data"]] | None,
         Query(
             description=(
                 'Opt into default-off response fields. Values: "score_breakdown" '
                 "(returns raw lexical/dense ranks and populates "
-                '_meta.dense_model_id + embedding_dim), "heading_path_array" '
-                "(returns heading_path split on ' > '), "
+                "_meta.dense_model_id + embedding_dim), "
                 '"table_data" (for table passages: populates v1.1-fenced header '
                 "+ rows cells; narrative passages remain unaffected)."
             )
@@ -514,7 +525,6 @@ async def search_passages(
 
     include_set = set(include or [])
     include_score_breakdown = "score_breakdown" in include_set
-    include_heading_array = "heading_path_array" in include_set
     include_table_data = "table_data" in include_set
 
     out: list[RankedPassage] = []
@@ -538,11 +548,6 @@ async def search_passages(
             if include_score_breakdown
             else None
         )
-        heading_path_array = (
-            r.passage.heading_path.split(" > ")
-            if include_heading_array and r.passage.heading_path
-            else None
-        )
         tdata = table_fields(r.passage, want=include_table_data)
         # v1.1: RankedPassage populates EITHER text OR snippet, never both.
         # Fence whichever is populated at this MCP serialization boundary.
@@ -561,11 +566,15 @@ async def search_passages(
                 passage_id=r.passage.passage_id,
                 nbk_id=r.passage.nbk_id,
                 gene_symbols=list(r.passage.gene_symbols),
-                chapter_title=r.passage.chapter_title or "",
+                chapter_title=fence_untrusted_text(
+                    r.passage.chapter_title or "",
+                    source="genereviews",
+                    record_id=f"{r.passage.passage_id}#chapter_title",
+                ),
                 chapter_last_updated=r.passage.chapter_last_updated,
                 chapter_ingested_at=r.passage.chapter_ingested_at,
                 chapter_section=cast(SectionName, r.passage.chapter_section),
-                heading_path=r.passage.heading_path,
+                heading_path=_fence_heading_path(r.passage.heading_path, r.passage.passage_id),
                 passage_type=r.passage.passage_type,
                 passage_role=_passage_role(r.passage.passage_role),
                 text=fenced_text,
@@ -576,9 +585,7 @@ async def search_passages(
                 lexical_rank_position=r.lexical_rank_position,
                 dense_rank_position=r.dense_rank,
                 score_breakdown=score_breakdown,
-                heading_path_array=heading_path_array,
                 recommended_citation=_format_recommended_citation(
-                    chapter_title=r.passage.chapter_title,
                     nbk_id=r.passage.nbk_id,
                     last_updated=r.passage.chapter_last_updated,
                     passage_id=r.passage.passage_id,
@@ -604,13 +611,11 @@ async def search_passages(
     else:
         meta = ResponseMeta(corpus_version=corpus, diagnostics=diagnostics_model)
 
-    # score_breakdown, heading_path_array, and table_data fields are opt-in.
+    # score_breakdown and table_data fields are opt-in.
     # Always exclude them from model_dump, then re-inject only when requested.
     excluded: set[str] = {str(field) for field in (exclude or [])}
     if not include_score_breakdown:
         excluded.add("score_breakdown")
-    if not include_heading_array:
-        excluded.add("heading_path_array")
     if not include_table_data:
         excluded.update({"header", "rows"})
 
@@ -672,11 +677,10 @@ async def get_passage(
         ),
     ] = False,
     include: Annotated[
-        list[Literal["heading_path_array", "table_data"]] | None,
+        list[Literal["table_data"]] | None,
         Query(
             description=(
-                "Opt into heading_path_array (heading_path split on ' > ') "
-                "and/or table_data (v1.1-fenced header + rows cells for table passages)."
+                "Opt into table_data (v1.1-fenced header + rows cells for table passages)."
             ),
         ),
     ] = None,
@@ -702,29 +706,14 @@ async def get_passage(
         )
 
     include_set = set(include or [])
-    include_heading_array = "heading_path_array" in include_set
     include_table_data = "table_data" in include_set
 
-    focal_detail = _passage_row_to_detail(
-        focal,
-        include_heading_array=include_heading_array,
-        include_table_data=include_table_data,
-    )
+    focal_detail = _passage_row_to_detail(focal, include_table_data=include_table_data)
     before_details = [
-        _passage_row_to_detail(
-            r,
-            include_heading_array=include_heading_array,
-            include_table_data=include_table_data,
-        )
-        for r in before
+        _passage_row_to_detail(r, include_table_data=include_table_data) for r in before
     ]
     after_details = [
-        _passage_row_to_detail(
-            r,
-            include_heading_array=include_heading_array,
-            include_table_data=include_table_data,
-        )
-        for r in after
+        _passage_row_to_detail(r, include_table_data=include_table_data) for r in after
     ]
     response = PassageWindowResponse(  # type: ignore[call-arg]
         passage=focal_detail,
@@ -741,22 +730,22 @@ async def get_passage(
 def _passage_row_to_detail(
     row: PassageRow,
     *,
-    include_heading_array: bool = False,
     include_table_data: bool = False,
 ) -> PassageDetail:
-    """Convert a PassageRow to a PassageDetail response model."""
-    heading_path_array = (
-        row.heading_path.split(" > ") if include_heading_array and row.heading_path else None
-    )
+    """Convert a PassageRow to a PassageDetail response model (v1.1-fenced)."""
     tdata = table_fields(row, want=include_table_data)
     fenced_text = fence_untrusted_text(row.text, source="genereviews", record_id=row.passage_id)
     return PassageDetail(
         nbk_id=row.nbk_id,
         passage_id=row.passage_id,
-        chapter_title=row.chapter_title or "",
+        chapter_title=fence_untrusted_text(
+            row.chapter_title or "",
+            source="genereviews",
+            record_id=f"{row.passage_id}#chapter_title",
+        ),
         chapter_last_updated=row.chapter_last_updated,
         chapter_section=cast(SectionName, row.chapter_section),
-        heading_path=row.heading_path,
+        heading_path=_fence_heading_path(row.heading_path, row.passage_id),
         section_level=row.section_level,
         chunk_index=row.chunk_index,
         text=fenced_text,
@@ -764,9 +753,7 @@ def _passage_row_to_detail(
         gene_symbols=list(row.gene_symbols),
         passage_type=row.passage_type,
         passage_role=_passage_role(row.passage_role),
-        heading_path_array=heading_path_array,
         recommended_citation=_format_recommended_citation(
-            chapter_title=row.chapter_title,
             nbk_id=row.nbk_id,
             last_updated=row.chapter_last_updated,
             passage_id=row.passage_id,
@@ -815,7 +802,6 @@ async def get_passages_batch(
         )
 
     include_set = set(body.include or [])
-    include_heading_array = "heading_path_array" in include_set
     include_table_data = "table_data" in include_set
 
     found: list[PassageDetail] = []
@@ -828,13 +814,7 @@ async def get_passages_batch(
             if row is None:
                 missing.append(pid)
                 continue
-            found.append(
-                _passage_row_to_detail(
-                    row,
-                    include_heading_array=include_heading_array,
-                    include_table_data=include_table_data,
-                )
-            )
+            found.append(_passage_row_to_detail(row, include_table_data=include_table_data))
 
     response = PassageBatchResponse(  # type: ignore[call-arg]
         passages=found,

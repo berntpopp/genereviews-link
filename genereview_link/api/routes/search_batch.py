@@ -23,6 +23,7 @@ from genereview_link.api.routes.passages import (
     get_repository,
     search_passages,
 )
+from genereview_link.api.untrusted_limits import collect_untrusted_json, guard_untrusted_limits
 from genereview_link.models.genereview_models import (
     IdsOnlySearchResponse,
     PassageSearchResponse,
@@ -192,6 +193,12 @@ async def search_passages_batch(
         )
         for i in range(len(body.specs))
     ]
+
+    # Each constituent search already guards its own hits, but the ASSEMBLED
+    # batch can carry many more fenced objects than any single search — enforce
+    # the v1.1 ceilings over the whole batch response (hits are already-dumped
+    # dicts, so use the JSON collector).
+    guard_untrusted_limits(collect_untrusted_json(annotated_hits))
 
     return SearchBatchResponse(  # type: ignore[call-arg]
         results=results,

@@ -72,7 +72,7 @@ async def test_get_chapter_metadata_returns_200_for_known_nbk() -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["nbk_id"] == "NBK1247"
-    assert body["title"] == "BRCA1- and BRCA2-Associated HBOC"
+    assert body["title"]["text"] == "BRCA1- and BRCA2-Associated HBOC"
 
 
 @pytest.mark.asyncio
@@ -252,7 +252,7 @@ async def test_chapter_metadata_returns_tables_list() -> None:
     assert len(data["tables"]) == 2
     assert data["tables"][0]["table_id"] == "mgmt.T.first"
     assert data["tables"][0]["section"] == "management"
-    assert data["tables"][0]["heading_path"].startswith("Management")
+    assert data["tables"][0]["heading_path"]["text"].startswith("Management")
     assert data["tables"][0]["passage_id"].startswith("NBKTBL:")
     assert data["tables"][1]["table_id"] == "mgmt.T.second"
 

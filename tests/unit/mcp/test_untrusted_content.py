@@ -59,3 +59,18 @@ def test_guard_allows_large_but_bounded_object_count() -> None:
         for i in range(500)
     ]
     guard_untrusted_limits(objs)  # must not raise (500 < 10000 ceiling)
+
+
+def test_collect_untrusted_json_reconstructs_fenced_dicts() -> None:
+    """The batch collector finds already-serialized fenced dict nodes (search_passages_batch)."""
+    from genereview_link.api.untrusted_limits import collect_untrusted_json
+
+    fenced = fence_untrusted_text(
+        "hostile", source="genereviews", record_id="NBK1:0001"
+    ).model_dump(mode="json")
+    # Shape mirrors search_passages_batch: list[list[hit-dict]] with nested fenced fields.
+    payload = [[{"passage_id": "NBK1:0001", "text": fenced, "snippet": None}]]
+    found = collect_untrusted_json(payload)
+    assert len(found) == 1
+    assert found[0].text == "hostile"
+    assert found[0].kind == "untrusted_text"

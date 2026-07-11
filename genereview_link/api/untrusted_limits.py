@@ -54,6 +54,32 @@ def _walk(value: Any, out: list[UntrustedText]) -> None:
             _walk(sub, out)
 
 
+def collect_untrusted_json(value: Any) -> list[UntrustedText]:
+    """Collect fenced objects from an ALREADY-SERIALIZED JSON-like structure.
+
+    ``search_passages_batch`` assembles hits that are already ``model_dump``ed
+    plain dicts, so ``collect_untrusted`` (which matches live ``UntrustedText``
+    instances) would miss them. This reconstructs each ``{"kind":
+    "untrusted_text", ...}`` dict node so the whole batch response can be limit-
+    enforced in one call.
+    """
+    found: list[UntrustedText] = []
+    _walk_json(value, found)
+    return found
+
+
+def _walk_json(value: Any, out: list[UntrustedText]) -> None:
+    if isinstance(value, dict):
+        if value.get("kind") == "untrusted_text" and "text" in value and "raw_sha256" in value:
+            out.append(UntrustedText.model_validate(value))
+            return
+        for sub in value.values():
+            _walk_json(sub, out)
+    elif isinstance(value, (list, tuple)):
+        for sub in value:
+            _walk_json(sub, out)
+
+
 def guard_untrusted_limits(
     objects: list[UntrustedText], *, max_objects: int = GENEROUS_MAX_OBJECTS
 ) -> None:

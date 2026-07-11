@@ -182,7 +182,7 @@ async def test_returns_passages_with_chapter_title_envelope() -> None:
     body = resp.json()
     assert body["nbk_id"] == "NBK1"
     assert body["chapter_section"] == "management"
-    assert body["chapter_title"] == "Test Chapter Title"
+    assert body["chapter_title"]["text"] == "Test Chapter Title"
     assert body["chapter_last_updated"] == "2025-12-01"
     assert body["passages"][0]["passage_id"] == "NBK1:0001"
     assert body["content"]["text"] == "sample text"

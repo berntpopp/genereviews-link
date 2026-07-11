@@ -289,9 +289,12 @@ def _arr(items: dict[str, Any]) -> dict[str, Any]:
 
 
 def _passage_item() -> dict[str, Any]:
-    # RankedPassage / PassageDetail fenced fields (text/snippet + table cells).
+    # RankedPassage / PassageDetail fenced fields (title/heading + text/snippet
+    # + table cells).
     return _obj(
         {
+            "chapter_title": _ut(),
+            "heading_path": _nullable(_ut()),
             "text": _nullable(_ut()),
             "snippet": _nullable(_ut()),
             "header": _nullable(_arr(_ut())),
@@ -300,10 +303,15 @@ def _passage_item() -> dict[str, Any]:
     )
 
 
-def _section() -> dict[str, Any]:
-    # FencedGeneReviewSection: content fenced; subsections declared permissively
-    # (the scraper bounds subsection depth; deeper content stays runtime-fenced).
-    return _obj({"content": _ut(), "subsections": {"type": "object"}})
+def _section(depth: int = 3) -> dict[str, Any]:
+    # FencedGeneReviewSection: title + content fenced; subsections declare the
+    # fenced content recursively (bounded depth; the scraper bounds nesting).
+    subsections: dict[str, Any] = (
+        {"type": "object", "additionalProperties": _section(depth - 1)}
+        if depth > 0
+        else {"type": "object"}
+    )
+    return _obj({"title": _ut(), "content": _ut(), "subsections": subsections})
 
 
 def _fulltext_metadata() -> dict[str, Any]:
@@ -341,15 +349,40 @@ def _fenced_positions(tool_name: str) -> dict[str, Any]:
             )
         }
     if tool_name == "get_chapter_section":
-        return {"result": _obj({"content": _ut()})}
+        return {
+            "result": _obj(
+                {
+                    "chapter_title": _ut(),
+                    "content": _ut(),
+                    "passages": _arr(_obj({"heading_path": _nullable(_ut())})),
+                }
+            )
+        }
     if tool_name == "get_chapter_metadata":
-        return {"result": _obj({"tables": _arr(_obj({"caption": _ut()}))})}
+        return {
+            "result": _obj(
+                {
+                    "title": _ut(),
+                    "tables": _arr(_obj({"caption": _ut(), "heading_path": _ut()})),
+                }
+            )
+        }
     if tool_name == "get_abstract":
-        return {"result": _obj({"abstract": _ut()})}
+        return {
+            "result": _obj(
+                {
+                    "title": _ut(),
+                    "abstract": _ut(),
+                    "journal": _ut(),
+                    "authors": _arr(_ut()),
+                }
+            )
+        }
     if tool_name == "get_fulltext":
         return {
             "result": _obj(
                 {
+                    "title": _nullable(_ut()),
                     "sections": {"type": "object", "additionalProperties": _section()},
                     "metadata": _fulltext_metadata(),
                 }
@@ -359,18 +392,37 @@ def _fenced_positions(tool_name: str) -> dict[str, Any]:
         return {
             "result": _obj(
                 {
+                    "title": _ut(),
                     "summary": _nullable(_section()),
                     "diagnosis": _nullable(_section()),
                     "management": _nullable(_section()),
                     "other_sections": {"type": "object", "additionalProperties": _section()},
-                    "abstract_data": _nullable(_obj({"abstract": _ut()})),
-                    "full_text_data": _nullable(_obj({"metadata": _fulltext_metadata()})),
+                    "abstract_data": _nullable(
+                        _obj(
+                            {
+                                "title": _ut(),
+                                "abstract": _ut(),
+                                "journal": _ut(),
+                                "authors": _arr(_ut()),
+                            }
+                        )
+                    ),
+                    "full_text_data": _nullable(
+                        _obj({"title": _nullable(_ut()), "metadata": _fulltext_metadata()})
+                    ),
                 }
             )
         }
     if tool_name == "get_table":
         return {
-            "result": _obj({"caption": _ut(), "header": _arr(_ut()), "rows": _arr(_arr(_ut()))})
+            "result": _obj(
+                {
+                    "caption": _ut(),
+                    "heading_path": _nullable(_ut()),
+                    "header": _arr(_ut()),
+                    "rows": _arr(_arr(_ut())),
+                }
+            )
         }
     return {}
 

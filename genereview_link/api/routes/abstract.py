@@ -21,8 +21,8 @@ from genereview_link.api.orchestration_errors import (
     invalid_pubmed_id_error,
     upstream_ncbi_unavailable_error,
 )
-from genereview_link.api.untrusted_limits import guard_untrusted_limits
-from genereview_link.mcp.untrusted_content import fence_untrusted_text
+from genereview_link.api.untrusted_limits import collect_untrusted, guard_untrusted_limits
+from genereview_link.mcp.untrusted_content import UntrustedText, fence_untrusted_text
 from genereview_link.models.genereview_models import AbstractData
 
 router = APIRouter(prefix="/abstract", tags=["Abstract"])
@@ -71,21 +71,26 @@ async def get_abstract(
         if not result:
             raise abstract_not_found_error(pmid)
 
-        # v1.1: fence the upstream PubMed abstract prose at the MCP boundary.
-        fenced_abstract = fence_untrusted_text(
-            result.get("abstract", ""), source="genereviews", record_id=f"{pmid}#doc"
-        )
-        guard_untrusted_limits([fenced_abstract])
+        # v1.1: fence the upstream PubMed prose (abstract + title + journal + authors).
+        rid = result.get("pmid", pmid)
 
-        # Ensure all required fields have default values
+        def _f(value: object, field: str) -> UntrustedText:
+            return fence_untrusted_text(
+                str(value or ""), source="genereviews", record_id=f"{rid}#{field}"
+            )
+
         out = AbstractData(
-            pmid=result.get("pmid", pmid),
-            title=result.get("title", ""),
-            abstract=fenced_abstract,
-            authors=result.get("authors", []),
-            journal=result.get("journal", ""),
+            pmid=rid,
+            title=_f(result.get("title", ""), "title"),
+            abstract=_f(result.get("abstract", ""), "doc"),
+            authors=[
+                _f(author, f"author:{i}")
+                for i, author in enumerate(result.get("authors", []) or [])
+            ],
+            journal=_f(result.get("journal", ""), "journal"),
             publication_date=result.get("publication_date", ""),
         )
+        guard_untrusted_limits(collect_untrusted(out))
         stamp_response_version(
             out,
             # get_abstract ALWAYS fetches live from PubMed E-utils, so the version reflects

@@ -111,7 +111,8 @@ async def test_get_table_response_shape() -> None:
     assert body["caption"]["text"] == "Variant classes"
     assert body["caption"]["provenance"]["record_id"] == "NBK1247#table:t5"
     assert body["section"] == "diagnosis"
-    assert body["heading_path"] == "Diagnosis > Table 5"
+    assert body["heading_path"]["kind"] == "untrusted_text"
+    assert body["heading_path"]["text"] == "Diagnosis > Table 5"
     assert [c["text"] for c in body["header"]] == ["Variant", "Class"]
     assert body["header"][0]["kind"] == "untrusted_text"
     assert [[c["text"] for c in r] for r in body["rows"]] == [["c.1A>G", "Pathogenic"]]

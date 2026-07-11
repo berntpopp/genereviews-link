@@ -133,6 +133,8 @@ async def test_mcp_search_passages_ids_only_schema_declares_envelope_frame() -> 
     text_schema = item["properties"]["text"]["anyOf"][0]
     assert text_schema["properties"]["kind"]["const"] == "untrusted_text"
     assert set(text_schema["required"]) == {"kind", "text", "provenance", "raw_sha256"}
+    # chapter_title (always fenced) is declared as the untrusted_text object too.
+    assert item["properties"]["chapter_title"]["properties"]["kind"]["const"] == "untrusted_text"
 
 
 @pytest.mark.asyncio

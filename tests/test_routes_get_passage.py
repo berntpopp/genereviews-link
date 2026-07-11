@@ -73,7 +73,7 @@ async def test_get_passage_returns_200_with_chapter_title() -> None:
     assert "passage" in body
     passage = body["passage"]
     assert passage["passage_id"] == "NBK1247:0022"
-    assert passage["chapter_title"] == "BRCA1- and BRCA2-Associated HBOC"
+    assert passage["chapter_title"]["text"] == "BRCA1- and BRCA2-Associated HBOC"
     assert passage["chapter_last_updated"] == "2025-12-01"
     assert passage["gene_symbols"] == ["BRCA1", "BRCA2"]
     assert passage["char_count"] == len("risk-reducing surgery text")
@@ -250,33 +250,17 @@ async def test_get_passage_heading_path_array_absent_by_default() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_passage_heading_path_array_opt_in() -> None:
-    """include=heading_path_array splits heading_path on ' > ' for the focal passage."""
+async def test_get_passage_heading_path_is_v1_1_fenced() -> None:
+    """heading_path is a v1.1-fenced untrusted_text object (heading_path_array dropped)."""
     pr = _make_row(passage_id="NBK1247:0010", chunk_index=10, heading_path="A > B > C")
     app = _build_app(focal=pr)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get("/passages/NBK1247:0010", params={"include": "heading_path_array"})
+        resp = await c.get("/passages/NBK1247:0010")
     assert resp.status_code == 200
-    assert resp.json()["passage"]["heading_path_array"] == ["A", "B", "C"]
-
-
-@pytest.mark.asyncio
-async def test_get_passage_heading_path_array_opt_in_neighbors() -> None:
-    """include=heading_path_array also populates heading_path_array on neighbor passages."""
-    focal = _make_row(passage_id="NBK1247:0010", chunk_index=10, heading_path="A > B")
-    before_row = _make_row(passage_id="NBK1247:0009", chunk_index=9, heading_path="X > Y")
-    after_row = _make_row(passage_id="NBK1247:0011", chunk_index=11, heading_path="P > Q > R")
-    app = _build_app(focal=focal, before=[before_row], after=[after_row])
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get(
-            "/passages/NBK1247:0010",
-            params={"neighbors": 1, "include": "heading_path_array"},
-        )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["passage"]["heading_path_array"] == ["A", "B"]
-    assert data["neighbors_before"][0]["heading_path_array"] == ["X", "Y"]
-    assert data["neighbors_after"][0]["heading_path_array"] == ["P", "Q", "R"]
+    passage = resp.json()["passage"]
+    assert passage["heading_path"]["kind"] == "untrusted_text"
+    assert passage["heading_path"]["text"] == "A > B > C"
+    assert "heading_path_array" not in passage
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +270,7 @@ async def test_get_passage_heading_path_array_opt_in_neighbors() -> None:
 
 @pytest.mark.asyncio
 async def test_get_passage_recommended_citation_present() -> None:
-    """PassageDetail includes recommended_citation in the canonical format."""
+    """recommended_citation is identifiers/date only (title lives fenced on chapter_title)."""
     pr = _make_row(
         passage_id="NBK1247:0020",
         chunk_index=20,
@@ -297,8 +281,11 @@ async def test_get_passage_recommended_citation_present() -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get("/passages/NBK1247:0020")
     assert resp.status_code == 200
-    citation = resp.json()["passage"]["recommended_citation"]
-    assert "HBOC. NBK1247. Updated 2026-03-25. Passage NBK1247:0020." in citation
+    passage = resp.json()["passage"]
+    assert passage["recommended_citation"] == "NBK1247. Updated 2026-03-25. Passage NBK1247:0020."
+    # The title is NOT in the citation (no prose duplication); it is fenced.
+    assert "HBOC" not in passage["recommended_citation"]
+    assert passage["chapter_title"]["text"] == "HBOC"
 
 
 # ---------------------------------------------------------------------------

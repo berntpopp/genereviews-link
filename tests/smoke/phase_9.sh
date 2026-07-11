@@ -83,11 +83,11 @@ out=$(curl -sf "$BASE/passages/search?q=targeted+therapies&limit=5")
 echo "$out" | jq -e '[.results[] | select(.passage_type == "table") | .table_id] | length > 0' >/dev/null \
   || { echo "WARN: no table-type hits in this query (may be fine; check manually)"; }
 
-# 13. include=heading_path_array opts in
-out=$(curl -sf "$BASE/passages/search?q=BRCA1&include=heading_path_array&limit=1")
-echo "$out" | jq -e '.results[0].heading_path_array | type == "array"' >/dev/null \
-  || { echo "FAIL: heading_path_array opt-in didn't take"; exit 1; }
-echo "OK: include=heading_path_array opt-in"
+# 13. heading_path is a v1.1-fenced untrusted_text object (heading_path_array dropped)
+out=$(curl -sf "$BASE/passages/search?q=BRCA1&limit=1")
+echo "$out" | jq -e '.results[0].heading_path.kind == "untrusted_text"' >/dev/null \
+  || { echo "FAIL: heading_path is not a fenced untrusted_text object"; exit 1; }
+echo "OK: heading_path is v1.1-fenced"
 
 # 14. include=score_breakdown surfaces dense_model_id + embedding_dim under _meta
 out=$(curl -sf "$BASE/passages/search?q=BRCA1&include=score_breakdown&limit=1")

@@ -23,19 +23,20 @@ from genereview_link.models.genereview_models import (
     FullTextData,
     FullTextMetadata,
     GeneReview,
+    GeneReviewSection,
 )
 from genereview_link.server_manager import UnifiedServerManager
+from genereview_link.services.genereview_service import fence_section_prose
 from genereview_link.services.service_manager import get_managed_service
 
 
 def _make_section(title: str, content: str) -> FencedGeneReviewSection:
-    return FencedGeneReviewSection(
-        title=title,
-        content=fence_untrusted_text(
-            content, source="genereviews", record_id=f"NBK1247#section:{title.lower()}"
-        ),
-        level=1,
-        subsections={},
+    # Build via the production helper so _raw_content is populated (truncation
+    # slices the RAW content), and title/content are fenced consistently.
+    return fence_section_prose(
+        GeneReviewSection(title=title, content=content),
+        doc_id="NBK1247",
+        record_path=f"section:{title.lower()}",
     )
 
 
@@ -58,7 +59,7 @@ def _make_genereview(
     full_text_data = FullTextData(
         nbk_id="NBK1247",
         url=book_url,
-        title="Test Chapter",
+        title=None,
         sections={},
         metadata=FullTextMetadata(),
     )
@@ -66,7 +67,7 @@ def _make_genereview(
         gene_symbol="BRCA1",
         pubmed_id="20301425",
         book_url=book_url,
-        title="Test Chapter",
+        title=fence_untrusted_text("Test Chapter", source="genereviews", record_id="NBK1247#title"),
         summary=summary,
         diagnosis=diagnosis,
         management=management,
@@ -115,7 +116,7 @@ async def test_default_response_is_lean() -> None:
         gene_symbol="BRCA1",
         pubmed_id="20301425",
         book_url="https://www.ncbi.nlm.nih.gov/books/NBK1247/",
-        title="Test Chapter",
+        title=fence_untrusted_text("Test Chapter", source="genereviews", record_id="NBK1247#title"),
     )
     app = _build_app_with_service({"indexed": lean, "uncached": lean})
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
@@ -207,6 +208,42 @@ async def test_small_max_chars_forces_truncation_and_stamps_meta() -> None:
     assert args.get("nbk_id") == "NBK1247"
     # Risk Notes: do NOT hardcode a section. Only nbk_id is surfaced.
     assert "section" not in args
+
+
+@pytest.mark.asyncio
+async def test_truncation_digest_hashes_raw_pre_normalization_bytes() -> None:
+    """Regression: truncation must fence the RAW upstream slice, so raw_sha256 is
+    over the pre-normalization bytes — not the already-NFC-normalized .text."""
+    import hashlib
+    import unicodedata
+
+    # Decomposed é (e + U+0301 combining acute) — NFC normalization changes bytes.
+    raw = "e\u0301" + "X" * 60
+    section = fence_section_prose(
+        GeneReviewSection(title="Summary", content=raw),
+        doc_id="NBK1247",
+        record_path="section:summary",
+    )
+    payload = GeneReview(
+        gene_symbol="BRCA1",
+        pubmed_id="20301425",
+        book_url="https://www.ncbi.nlm.nih.gov/books/NBK1247/",
+        title=fence_untrusted_text("T", source="genereviews", record_id="NBK1247#title"),
+        summary=section,
+    )
+    app = _build_app_with_service({"indexed": payload, "uncached": payload})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get("/genereview/BRCA1?include_fulltext=true&max_chars=10&fresh=true")
+    assert resp.status_code == 200, resp.text
+    fenced = resp.json()["summary"]["content"]
+    raw_slice = raw[:10]
+    # raw_sha256 hashes the RAW slice's bytes...
+    assert fenced["raw_sha256"] == hashlib.sha256(raw_slice.encode("utf-8")).hexdigest()
+    # ...NOT the normalized text's bytes (the bug the review caught).
+    norm_slice = unicodedata.normalize("NFC", raw)[:10]
+    assert fenced["raw_sha256"] != hashlib.sha256(norm_slice.encode("utf-8")).hexdigest()
+    # The emitted text is still NFC-normalized.
+    assert fenced["text"] == unicodedata.normalize("NFC", raw_slice)
 
 
 def _build_app_with_shared_service(

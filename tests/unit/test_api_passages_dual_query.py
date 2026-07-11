@@ -53,24 +53,24 @@ def _app() -> FastAPI:
     return app
 
 
-def _drop_fence_timestamps(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Null out ``retrieved_at`` on any fenced field so independent fence calls compare equal.
+def _drop_fence_timestamps(value: Any) -> Any:
+    """Recursively null ``retrieved_at`` on every fenced node so two independent
+    fence calls (chapter_title/heading_path/text/snippet/...) compare byte-equal.
 
-    ``fence_untrusted_text`` stamps ``provenance.retrieved_at = datetime.now(UTC)`` at
-    serialization, so two logically-identical requests made moments apart otherwise
-    never compare byte-equal.
+    ``fence_untrusted_text`` stamps ``provenance.retrieved_at = datetime.now(UTC)``
+    at serialization, so logically-identical requests moments apart otherwise
+    never compare equal.
     """
-    normalized: list[dict[str, Any]] = []
-    for row in results:
-        row = dict(row)
-        for field in ("text", "snippet"):
-            fenced = row.get(field)
-            if isinstance(fenced, dict):
-                fenced = dict(fenced)
-                fenced["provenance"] = {**fenced["provenance"], "retrieved_at": None}
-                row[field] = fenced
-        normalized.append(row)
-    return normalized
+    if isinstance(value, dict):
+        if value.get("kind") == "untrusted_text" and isinstance(value.get("provenance"), dict):
+            return {
+                **{k: _drop_fence_timestamps(v) for k, v in value.items()},
+                "provenance": {**value["provenance"], "retrieved_at": None},
+            }
+        return {k: _drop_fence_timestamps(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_drop_fence_timestamps(v) for v in value]
+    return value
 
 
 @pytest.mark.asyncio

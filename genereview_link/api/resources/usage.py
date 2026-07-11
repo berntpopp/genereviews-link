@@ -198,8 +198,6 @@ retrying with looser parameters.
   future pass.
 - `include=score_breakdown` on `search_passages`: raw lexical + dense ranks;
   also surfaces `_meta.dense_model_id` and `_meta.embedding_dim`.
-- `include=heading_path_array` on `search_passages`, `get_passage`, and
-  `get_passages_batch`: returns `heading_path` split into a `list[str]`.
 - `heading_path_contains` on `search_passages`: filters hits by a substring in
   `heading_path`.
 - `heading_path_contains` also applies to `get_chapter_section`: filters

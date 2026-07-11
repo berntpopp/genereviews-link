@@ -88,5 +88,7 @@ async def test_heading_path_contains_restricts_search_results_and_diagnostics() 
     assert resp.status_code == 200
     body = resp.json()
     assert [row["passage_id"] for row in body["results"]] == ["NBK1247:0001"]
-    assert body["results"][0]["heading_path"] == ("Management > Prevention > Risk-Reducing Surgery")
+    assert body["results"][0]["heading_path"]["text"] == (
+        "Management > Prevention > Risk-Reducing Surgery"
+    )
     assert body["_meta"]["diagnostics"]["applied_filters"] == ["heading_path_contains=Prevention"]

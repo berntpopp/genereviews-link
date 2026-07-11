@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal
 from pydantic import (
     BaseModel,
     Field,
+    PrivateAttr,
     SerializerFunctionWrapHandler,
     StringConstraints,
     model_serializer,
@@ -35,14 +36,20 @@ GeneReviewSection.model_rebuild()  # enable forward refs for the recursive model
 
 
 class FencedGeneReviewSection(BaseModel):
-    """MCP-facing sibling of GeneReviewSection: content is v1.1-fenced."""
+    """MCP-facing sibling of GeneReviewSection: title + content v1.1-fenced.
 
-    title: str = Field(description="The original title of the section.")
+    ``_raw_content`` (private, never serialized) carries the ORIGINAL
+    pre-normalization upstream text so get_genereview_summary truncation slices
+    the RAW bytes and fences THAT (raw_sha256 stays over true raw bytes).
+    """
+
+    title: UntrustedText = Field(description="The section's v1.1-fenced heading text.")
     content: UntrustedText = Field(description="The section's v1.1-fenced full text content.")
     level: int = Field(default=1, description="Heading level (1-6) indicating hierarchy.")
     subsections: dict[str, FencedGeneReviewSection] = Field(
         default_factory=dict, description="Nested subsections."
     )
+    _raw_content: str = PrivateAttr(default="")
 
 
 FencedGeneReviewSection.model_rebuild()
@@ -79,12 +86,14 @@ class AbstractData(BaseModel):
     """Represents abstract and metadata from PubMed efetch."""
 
     pmid: str = Field(description="PubMed ID.")
-    title: str = Field(description="Article title.")
+    title: UntrustedText = Field(description="Article title (v1.1 fenced).")
     abstract: UntrustedText = Field(
         description="Article abstract, v1.1-fenced: upstream prose typed as structural data."
     )
-    authors: list[str] = Field(default_factory=list, description="List of author names.")
-    journal: str = Field(description="Journal name.")
+    authors: list[UntrustedText] = Field(
+        default_factory=list, description="Author names (v1.1 fenced)."
+    )
+    journal: UntrustedText = Field(description="Journal name (v1.1 fenced).")
     publication_date: str = Field(description="Publication date.")
     corpus_version: str | None = None
     meta: ResponseMeta = Field(
@@ -149,7 +158,8 @@ class FullTextData(BaseModel):
 
     nbk_id: str | None = Field(default=None, description="NCBI Book ID.")
     url: str = Field(description="URL of the scraped page.")
-    title: str = Field(description="Title of the document.")
+    # v1.1 fenced; None in get_genereview_summary (title deduped to GeneReview.title).
+    title: UntrustedText | None = Field(default=None, description="Document title.")
     sections: dict[str, FencedGeneReviewSection] = Field(
         default_factory=dict, description="All scraped sections (v1.1 fenced)."
     )
@@ -170,7 +180,7 @@ class GeneReview(BaseModel):
     gene_symbol: str = Field(description="The gene symbol that was searched.")
     pubmed_id: str = Field(description="The PubMed ID of the GeneReview article.")
     book_url: str = Field(description="The URL to the full GeneReview on the NCBI Bookshelf.")
-    title: str = Field(description="The main title of the GeneReview.")
+    title: UntrustedText = Field(description="The main title of the GeneReview (v1.1 fenced).")
     summary: FencedGeneReviewSection | None = Field(default=None, description="Summary (v1.1).")
     diagnosis: FencedGeneReviewSection | None = Field(default=None, description="Diagnosis (v1.1).")
     management: FencedGeneReviewSection | None = Field(
@@ -278,11 +288,11 @@ class RankedPassage(BaseModel):
     passage_id: str
     nbk_id: str
     gene_symbols: list[str] = Field(default_factory=list)
-    chapter_title: str
+    chapter_title: UntrustedText  # upstream chapter title prose, v1.1 fenced
     chapter_last_updated: date | None = None
     chapter_ingested_at: datetime | None = None
     chapter_section: SectionName
-    heading_path: str | None = None
+    heading_path: UntrustedText | None = None  # upstream heading text, v1.1 fenced
     passage_type: str = "narrative"
     passage_role: PassageRole | None = None
     text: UntrustedText | None = None
@@ -293,13 +303,11 @@ class RankedPassage(BaseModel):
     lexical_rank_position: int | None = None
     dense_rank_position: int | None = None
     score_breakdown: ScoreBreakdown | None = None
-    heading_path_array: list[str] | None = None
+    # identifiers/date only (no prose); the title is fenced on chapter_title.
     recommended_citation: str  # always populated; no default to prevent silent omission
     table_id: str | None = None  # populated only when passage_type='table'
     source_url: str  # always populated; chapter-level NCBI Bookshelf URL
-    # Structured table fields — opt-in via include=table_data (#44). Cell text is
-    # upstream prose, so it is v1.1-fenced. markdown_table was dropped: it was an
-    # exact rendering of these now-fenced cells (v1.1 no-duplication).
+    # Opt-in table cells (include=table_data), v1.1-fenced; markdown_table dropped.
     header: list[UntrustedText] | None = None
     rows: list[list[UntrustedText]] | None = None
 
@@ -309,10 +317,10 @@ class PassageDetail(BaseModel):
 
     passage_id: str
     nbk_id: str
-    chapter_title: str
+    chapter_title: UntrustedText  # upstream chapter title prose, v1.1 fenced
     chapter_last_updated: date | None = None
     chapter_section: SectionName
-    heading_path: str | None = None
+    heading_path: UntrustedText | None = None  # upstream heading text, v1.1 fenced
     passage_type: str = "narrative"
     passage_role: PassageRole | None = None
     section_level: int
@@ -320,12 +328,10 @@ class PassageDetail(BaseModel):
     text: UntrustedText
     char_count: int
     gene_symbols: list[str] = Field(default_factory=list)
-    heading_path_array: list[str] | None = None
+    # identifiers/date only (no prose); the title is fenced on chapter_title.
     recommended_citation: str  # always populated; no default to prevent silent omission
     source_url: str  # always populated; chapter-level NCBI Bookshelf URL
-    # Structured table fields — opt-in via include=table_data (#44). Cell text is
-    # upstream prose, so it is v1.1-fenced. markdown_table was dropped: it was an
-    # exact rendering of these now-fenced cells (v1.1 no-duplication).
+    # Opt-in table cells (include=table_data), v1.1-fenced; markdown_table dropped.
     header: list[UntrustedText] | None = None
     rows: list[list[UntrustedText]] | None = None
 
@@ -437,7 +443,7 @@ class PassageInSection(BaseModel):
     """
 
     passage_id: str
-    heading_path: str | None = None
+    heading_path: UntrustedText | None = None  # upstream heading text, v1.1 fenced
     section_level: int
     chunk_index: int
 
@@ -446,7 +452,7 @@ class ChapterSectionResponse(BaseModel):
     """Envelope for GET /chapters/{nbk_id}/sections/{section}; content is v1.1-fenced."""
 
     nbk_id: str
-    chapter_title: str
+    chapter_title: UntrustedText  # upstream chapter title prose, v1.1 fenced
     chapter_section: SectionName
     chapter_last_updated: date | None = None
     passages: list[PassageInSection]
@@ -473,7 +479,7 @@ class TableSummary(BaseModel):
     table_id: str
     caption: UntrustedText  # upstream table caption prose, v1.1 fenced
     section: SectionName
-    heading_path: str
+    heading_path: UntrustedText  # upstream heading text, v1.1 fenced
     passage_id: str
 
     model_config = {"populate_by_name": True}
@@ -483,7 +489,7 @@ class ChapterMetadataResponse(BaseModel):
     """Envelope returned by GET /chapters/{nbk_id}/metadata."""
 
     nbk_id: str
-    title: str
+    title: UntrustedText  # upstream chapter title prose, v1.1 fenced
     chapter_last_updated: date | None = None
     chapter_ingested_at: datetime | None = None
     gene_symbols: list[str] = Field(default_factory=list)
@@ -511,7 +517,7 @@ class TableResponse(BaseModel):
     nbk_id: str
     table_id: str
     caption: UntrustedText
-    heading_path: str | None = None
+    heading_path: UntrustedText | None = None  # upstream heading text, v1.1 fenced
     section: SectionName
     header: list[UntrustedText]
     rows: list[list[UntrustedText]]
@@ -533,7 +539,7 @@ class PassageBatchRequest(BaseModel):
         list[Annotated[str, StringConstraints(pattern=r"^NBK\d+:\d{4}$")]],
         Field(min_length=1),
     ]
-    include: list[Literal["heading_path_array", "table_data"]] | None = None
+    include: list[Literal["table_data"]] | None = None
 
 
 class PassageBatchResponse(BaseModel):

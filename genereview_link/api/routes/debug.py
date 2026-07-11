@@ -11,6 +11,7 @@ from typing import Annotated, cast
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from genereview_link.api.routes.passages import (
+    _fence_heading_path,
     _format_recommended_citation,
     _format_source_url,
     get_embedding_provider,
@@ -62,10 +63,14 @@ async def debug_ranking(
                 passage_id=r.passage.passage_id,
                 nbk_id=r.passage.nbk_id,
                 gene_symbols=list(r.passage.gene_symbols),
-                chapter_title=r.passage.chapter_title or "",
+                chapter_title=fence_untrusted_text(
+                    r.passage.chapter_title or "",
+                    source="genereviews",
+                    record_id=f"{r.passage.passage_id}#chapter_title",
+                ),
                 chapter_last_updated=r.passage.chapter_last_updated,
                 chapter_section=cast(SectionName, r.passage.chapter_section),
-                heading_path=r.passage.heading_path,
+                heading_path=_fence_heading_path(r.passage.heading_path, r.passage.passage_id),
                 passage_type=r.passage.passage_type,
                 text=fence_untrusted_text(
                     r.passage.text, source="genereviews", record_id=r.passage.passage_id
@@ -83,7 +88,6 @@ async def debug_ranking(
                     final_position=pos,
                 ),
                 recommended_citation=_format_recommended_citation(
-                    chapter_title=r.passage.chapter_title,
                     nbk_id=r.passage.nbk_id,
                     last_updated=r.passage.chapter_last_updated,
                     passage_id=r.passage.passage_id,

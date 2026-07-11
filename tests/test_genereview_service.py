@@ -175,7 +175,7 @@ class TestGetGenereviewComprehensive:
 
         assert result.gene_symbol == "BRCA1"
         assert result.pubmed_id == "12345"
-        assert result.title == "BRCA1 GeneReview"
+        assert result.title.text == "BRCA1 GeneReview"
         assert result.summary is not None
         assert result.diagnosis is not None
         assert result.management is not None
@@ -264,7 +264,7 @@ class TestGetGenereviewComprehensive:
         result = await service.get_genereview_comprehensive("BRCA1")
         assert result.abstract_data is None
         # Title comes from the comprehensive scrape.
-        assert result.title == "T"
+        assert result.title.text == "T"
 
     @pytest.mark.asyncio
     async def test_continues_when_links_fetch_fails(self) -> None:
@@ -281,7 +281,7 @@ class TestGetGenereviewComprehensive:
         result = await service.get_genereview_comprehensive("BRCA1")
         assert result.all_links is None
         assert result.book_url == "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
-        assert result.title == "Fallback Title"
+        assert result.title.text == "Fallback Title"
 
     @pytest.mark.asyncio
     async def test_continues_when_comprehensive_scrape_fails(self) -> None:
@@ -302,7 +302,7 @@ class TestGetGenereviewComprehensive:
 
         result = await service.get_genereview_comprehensive("BRCA1")
         # Title should fall back to abstract.title since both scrapes produced nothing.
-        assert result.title == "Abstract Used As Title"
+        assert result.title.text == "Abstract Used As Title"
         assert result.full_text_data is None
 
     @pytest.mark.asyncio
@@ -313,7 +313,7 @@ class TestGetGenereviewComprehensive:
             abstract=None,
         )
         result = await service.get_genereview_comprehensive("BRCA1")
-        assert result.title == "GeneReview for BRCA1"
+        assert result.title.text == "GeneReview for BRCA1"
 
     @pytest.mark.asyncio
     async def test_repository_chapter_title_survives_empty_scrape_title(self) -> None:
@@ -347,7 +347,7 @@ class TestGetGenereviewComprehensive:
 
         result = await service.get_genereview_comprehensive_uncached("BRCA1", chapter=chapter)
 
-        assert result.title == "Repository Chapter Title"
+        assert result.title.text == "Repository Chapter Title"
 
     @pytest.mark.asyncio
     async def test_indexed_comprehensive_method_caches_by_chapter(self) -> None:
@@ -374,7 +374,7 @@ class TestGetGenereviewComprehensive:
         first = await service.get_genereview_comprehensive_indexed("BRCA1", chapter=chapter)
         second = await service.get_genereview_comprehensive_indexed("BRCA1", chapter=chapter)
 
-        assert first.title == second.title == "Indexed Title"
+        assert first.title.text == second.title.text == "Indexed Title"
         assert [call[0] for call in fake.calls].count("scrape_genereview_comprehensive") == 1
 
     @pytest.mark.asyncio

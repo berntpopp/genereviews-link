@@ -127,7 +127,7 @@ def test_search_passages_projection_descriptions_list_values_inline() -> None:
     assert '"score_breakdown"' in exclude_desc
     assert '"heading_path"' in exclude_desc
     assert '"score_breakdown"' in include_desc
-    assert '"heading_path_array"' in include_desc
+    assert '"table_data"' in include_desc
 
 
 def test_get_chapter_section_description_lists_section_values_inline() -> None:

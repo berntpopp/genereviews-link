@@ -88,6 +88,13 @@ async def get_table(
 
     base = f"{table.nbk_id}#table:{table.table_id}"
     fenced_caption = fence_untrusted_text(table.caption, source="genereviews", record_id=base)
+    fenced_heading = (
+        fence_untrusted_text(
+            table.heading_path, source="genereviews", record_id=f"{base}#heading_path"
+        )
+        if table.heading_path is not None
+        else None
+    )
     fenced_header, fenced_rows = fence_table_cells(
         table.header, table.rows, nbk_id=table.nbk_id, table_id=table.table_id
     )
@@ -96,7 +103,7 @@ async def get_table(
         nbk_id=table.nbk_id,
         table_id=table.table_id,
         caption=fenced_caption,
-        heading_path=table.heading_path,
+        heading_path=fenced_heading,
         section=cast(SectionName, table.section),
         header=fenced_header,
         rows=fenced_rows,

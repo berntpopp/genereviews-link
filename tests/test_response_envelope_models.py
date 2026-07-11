@@ -75,7 +75,9 @@ def test_ids_only_response_model_uses_slim_rows() -> None:
 def test_chapter_section_response_meta_alias_is_underscore_meta() -> None:
     r = ChapterSectionResponse(
         nbk_id="NBK1",
-        chapter_title="Test",
+        chapter_title=fence_untrusted_text(
+            "Test", source="genereviews", record_id="NBK1#chapter_title"
+        ),
         chapter_section="management",
         chapter_last_updated=None,
         passages=[],
@@ -91,7 +93,11 @@ def test_chapter_section_response_meta_alias_is_underscore_meta() -> None:
 def test_chapter_section_response_has_note_field() -> None:
     response = ChapterSectionResponse(
         nbk_id="NBK1247",
-        chapter_title="BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+        chapter_title=fence_untrusted_text(
+            "BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+            source="genereviews",
+            record_id="NBK1247#chapter_title",
+        ),
         chapter_section="summary",
         passages=[],
         passage_count=0,
@@ -107,7 +113,9 @@ def test_passage_window_response_meta_alias_is_underscore_meta() -> None:
     detail = PassageDetail(
         passage_id="p1",
         nbk_id="NBK1",
-        chapter_title="Test",
+        chapter_title=fence_untrusted_text(
+            "Test", source="genereviews", record_id="p1#chapter_title"
+        ),
         chapter_last_updated=date(2024, 1, 1),
         chapter_section="management",
         heading_path=None,
@@ -115,7 +123,7 @@ def test_passage_window_response_meta_alias_is_underscore_meta() -> None:
         chunk_index=0,
         text=fence_untrusted_text("hello", source="genereviews", record_id="p1"),
         char_count=5,
-        recommended_citation="Test. NBK1. Updated 2024-01-01. Passage p1.",
+        recommended_citation="NBK1. Updated 2024-01-01. Passage p1.",
         source_url="https://www.ncbi.nlm.nih.gov/books/NBK1/",
     )
     r = PassageWindowResponse(passage=detail)
@@ -138,18 +146,28 @@ def test_license_notice_and_attribution_share_copyright_year():
 def test_live_passthrough_meta_uses_underscore_alias() -> None:
     abstract = AbstractData(
         pmid="20301425",
-        title="BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+        title=fence_untrusted_text(
+            "BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+            source="genereviews",
+            record_id="20301425#title",
+        ),
         abstract=fence_untrusted_text(
             "GeneReviews abstract", source="genereviews", record_id="20301425#doc"
         ),
-        journal="GeneReviews",
+        journal=fence_untrusted_text(
+            "GeneReviews", source="genereviews", record_id="20301425#journal"
+        ),
         publication_date="1998",
     )
     link_data = LinkData(urls=["https://www.ncbi.nlm.nih.gov/books/NBK1247/"])
     fulltext = FullTextData(
         nbk_id="NBK1247",
         url="https://www.ncbi.nlm.nih.gov/books/NBK1247/",
-        title="BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+        title=fence_untrusted_text(
+            "BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
+            source="genereviews",
+            record_id="NBK1247#title",
+        ),
     )
 
     for model in (abstract, link_data, fulltext):

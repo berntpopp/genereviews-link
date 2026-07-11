@@ -603,7 +603,7 @@ class TestFulltextRoute:
         assert "clinical_features" in diagnosis["subsections"]
         sub = diagnosis["subsections"]["clinical_features"]
         assert sub["level"] == 3
-        assert sub["title"] == "Clinical Features"
+        assert sub["title"]["text"] == "Clinical Features"
         assert sub["content"]["kind"] == "untrusted_text"
         assert sub["content"]["text"] == "cf"
         assert sub["subsections"] == {}
@@ -730,7 +730,7 @@ class TestGenereviewRoute:
         assert body["gene_symbol"] == "GRIN2B"
         assert body["pubmed_id"] == "29851452"
         assert body["book_url"] == "https://www.ncbi.nlm.nih.gov/books/NBK501979/"
-        assert body["title"] == "GRIN2B-Related Neurodevelopmental Disorder"
+        assert body["title"]["text"] == "GRIN2B-Related Neurodevelopmental Disorder"
         assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
 
     @pytest.mark.asyncio
@@ -848,7 +848,9 @@ class TestGenereviewRoute:
                     gene_symbol="BRCA1",
                     pubmed_id="1",
                     book_url="https://www.ncbi.nlm.nih.gov/books/NBK1247/",
-                    title="T",
+                    title=fence_untrusted_text(
+                        "T", source="genereviews", record_id="NBK1247#title"
+                    ),
                 )
 
         async def _get_service() -> Any:
@@ -970,10 +972,10 @@ class TestOrchestrationHelpers:
     def test_stamp_response_version_updates_top_level_and_meta(self) -> None:
         response = AbstractData(
             pmid="1",
-            title="T",
+            title=fence_untrusted_text("T", source="genereviews", record_id="1#title"),
             abstract=fence_untrusted_text("A", source="genereviews", record_id="1#doc"),
             authors=[],
-            journal="J",
+            journal=fence_untrusted_text("J", source="genereviews", record_id="1#journal"),
             publication_date="2024",
         )
 

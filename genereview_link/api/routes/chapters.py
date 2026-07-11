@@ -148,10 +148,13 @@ async def get_chapter_section(
             empty_content = fence_untrusted_text(
                 "", source="genereviews", record_id=f"{nbk_id}#{section}"
             )
-            guard_untrusted_limits([empty_content])
+            empty_title = fence_untrusted_text(
+                chapter.title, source="genereviews", record_id=f"{nbk_id}#chapter_title"
+            )
+            guard_untrusted_limits([empty_content, empty_title])
             return ChapterSectionResponse(  # type: ignore[call-arg]
                 nbk_id=nbk_id,
-                chapter_title=chapter.title,
+                chapter_title=empty_title,
                 chapter_section=section,
                 chapter_last_updated=chapter.last_updated_date,
                 passages=[],
@@ -191,19 +194,29 @@ async def get_chapter_section(
     fenced_content = fence_untrusted_text(
         concatenated, source="genereviews", record_id=f"{nbk_id}#{section}"
     )
-    guard_untrusted_limits([fenced_content])
+    fenced_chapter_title = fence_untrusted_text(
+        head.chapter_title or "", source="genereviews", record_id=f"{nbk_id}#chapter_title"
+    )
     passages_response = [
         PassageInSection(
             passage_id=p.passage_id,
-            heading_path=p.heading_path,
+            heading_path=(
+                fence_untrusted_text(
+                    p.heading_path,
+                    source="genereviews",
+                    record_id=f"{p.passage_id}#heading_path",
+                )
+                if p.heading_path is not None
+                else None
+            ),
             section_level=p.section_level,
             chunk_index=p.chunk_index,
         )
         for p in passages
     ]
-    return ChapterSectionResponse(  # type: ignore[call-arg]
+    response = ChapterSectionResponse(  # type: ignore[call-arg]
         nbk_id=nbk_id,
-        chapter_title=head.chapter_title or "",
+        chapter_title=fenced_chapter_title,
         chapter_section=section,
         chapter_last_updated=head.chapter_last_updated,
         passages=passages_response,
@@ -212,6 +225,8 @@ async def get_chapter_section(
         content_char_count=len(fenced_content.text),
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
     )
+    guard_untrusted_limits(collect_untrusted(response))
+    return response
 
 
 @router.get(
@@ -275,14 +290,20 @@ async def get_chapter_metadata(
                 record_id=f"{meta.nbk_id}#table:{t.table_id}",
             ),
             section=cast(SectionName, t.section),
-            heading_path=t.heading_path,
+            heading_path=fence_untrusted_text(
+                t.heading_path,
+                source="genereviews",
+                record_id=f"{meta.nbk_id}#table:{t.table_id}#heading_path",
+            ),
             passage_id=t.passage_id,
         )
         for t in meta.tables
     ]
     response = ChapterMetadataResponse(  # type: ignore[call-arg]
         nbk_id=meta.nbk_id,
-        title=meta.title,
+        title=fence_untrusted_text(
+            meta.title, source="genereviews", record_id=f"{meta.nbk_id}#title"
+        ),
         chapter_last_updated=meta.chapter_last_updated,
         chapter_ingested_at=meta.chapter_ingested_at,
         gene_symbols=list(meta.gene_symbols),

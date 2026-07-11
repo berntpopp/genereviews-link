@@ -35,6 +35,7 @@ from genereview_link.api.routes import chapters as chapters_routes
 from genereview_link.api.routes import fulltext as fulltext_routes
 from genereview_link.api.routes import genereview as genereview_routes
 from genereview_link.api.routes import passages as passages_routes
+from genereview_link.api.routes import search_batch as search_batch_routes
 from genereview_link.api.routes import tables as tables_routes
 from genereview_link.config import ServerConfig
 from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
@@ -89,11 +90,11 @@ def _hostile_passage(snippet: str | None = None) -> LexicalPassageRow:
             nbk_id="NBK1116",
             passage_id="NBK1116:0042",
             chapter_section="summary",
-            heading_path="Summary",
+            heading_path=HOSTILE,
             section_level=1,
             chunk_index=42,
             text=HOSTILE,
-            chapter_title="Hostile Chapter",
+            chapter_title=HOSTILE,
             chapter_last_updated=date(2025, 12, 1),
             gene_symbols=("BRCA1",),
         ),
@@ -111,11 +112,11 @@ def _hostile_passage_row() -> PassageRow:
         nbk_id="NBK1116",
         passage_id="NBK1116:0042",
         chapter_section="management",
-        heading_path="Management",
+        heading_path=HOSTILE,
         section_level=2,
         chunk_index=42,
         text=HOSTILE,
-        chapter_title="Hostile Chapter",
+        chapter_title=HOSTILE,
         chapter_last_updated=date(2025, 12, 1),
         gene_symbols=("BRCA1",),
     )
@@ -137,10 +138,10 @@ class _HostileClient:
     async def fetch_abstract(self, pmid: str) -> dict[str, Any]:
         return {
             "pmid": pmid,
-            "title": "Hostile Title",
+            "title": HOSTILE,
             "abstract": HOSTILE,
-            "authors": [],
-            "journal": "J",
+            "authors": [HOSTILE],
+            "journal": HOSTILE,
             "publication_date": "2024",
         }
 
@@ -154,11 +155,36 @@ class _HostileClient:
         return {
             "nbk_id": "1116",
             "url": book_url,
-            "title": "Hostile Chapter",
+            "title": HOSTILE,
             "sections": {
-                "summary": {"title": "Summary", "content": HOSTILE, "level": 1, "subsections": {}}
+                "summary": {
+                    "title": HOSTILE,
+                    "content": HOSTILE,
+                    "level": 1,
+                    "subsections": {
+                        "clinical": {
+                            "title": HOSTILE,
+                            "content": HOSTILE,
+                            "level": 2,
+                            "subsections": {},
+                        }
+                    },
+                },
+                "diagnosis": {"title": HOSTILE, "content": HOSTILE, "level": 1, "subsections": {}},
+                "management": {"title": HOSTILE, "content": HOSTILE, "level": 1, "subsections": {}},
+                "genetic_counseling": {
+                    "title": HOSTILE,
+                    "content": HOSTILE,
+                    "level": 1,
+                    "subsections": {},
+                },
             },
-            "metadata": {"authors": HOSTILE, "references": [HOSTILE]},
+            "metadata": {
+                "authors": HOSTILE,
+                "update_info": HOSTILE,
+                "publication_info": HOSTILE,
+                "references": [HOSTILE],
+            },
         }
 
     async def scrape_genereview_book(self, book_url: str) -> dict[str, Any]:
@@ -184,7 +210,7 @@ def _hostile_repo(**overrides: Any) -> MagicMock:
             nbk_id="NBK1116",
             passage_id="NBK1116:0042",
             section="management",
-            heading_path="Management",
+            heading_path=HOSTILE,
             table_id="t1",
             caption=HOSTILE,
             header=[HOSTILE],
@@ -195,7 +221,7 @@ def _hostile_repo(**overrides: Any) -> MagicMock:
     repo.get_chapter_metadata = AsyncMock(
         return_value=ChapterMetadataRow(
             nbk_id="NBK1116",
-            title="Hostile Chapter",
+            title=HOSTILE,
             chapter_last_updated=None,
             gene_symbols=("BRCA1",),
             sections=(
@@ -207,7 +233,7 @@ def _hostile_repo(**overrides: Any) -> MagicMock:
                     table_id="t1",
                     caption=HOSTILE,
                     section="management",
-                    heading_path="Management",
+                    heading_path=HOSTILE,
                     passage_id="NBK1116:0042",
                 ),
             ),
@@ -222,6 +248,7 @@ async def _build_mcp(repo: MagicMock | None = None) -> Any:
     app = FastAPI()
     for module in (
         passages_routes,
+        search_batch_routes,
         chapters_routes,
         tables_routes,
         abstract_routes,
@@ -262,7 +289,24 @@ async def test_search_passages_text_fenced_via_mcp() -> None:
     row = sc["results"][0]
     _assert_fenced(row["text"], sibling=row)
     _assert_fenced(mirror["results"][0]["text"])
+    # title + heading text are fenced too; recommended_citation carries no prose.
+    _assert_fenced(row["chapter_title"])
+    _assert_fenced(row["heading_path"])
+    assert "delete_everything" not in row["recommended_citation"]
     assert row["snippet"] is None
+
+
+@pytest.mark.asyncio
+async def test_search_passages_batch_hits_fenced_via_mcp() -> None:
+    sc, mirror = await _call(
+        await _build_mcp(),
+        "search_passages_batch",
+        {"specs": [{"q": "BRCA1", "mode": "full"}]},
+    )
+    hit = sc["results"][0]["hits"][0]
+    _assert_fenced(hit["text"], sibling=hit)
+    _assert_fenced(hit["chapter_title"])
+    _assert_fenced(mirror["results"][0]["hits"][0]["text"])
 
 
 @pytest.mark.asyncio
@@ -282,7 +326,10 @@ async def test_search_passages_snippet_fenced_via_mcp() -> None:
 @pytest.mark.asyncio
 async def test_get_passage_text_fenced_via_mcp() -> None:
     sc, mirror = await _call(await _build_mcp(), "get_passage", {"passage_id": "NBK1116:0042"})
-    _assert_fenced(sc["result"]["passage"]["text"], sibling=sc["result"]["passage"])
+    passage = sc["result"]["passage"]
+    _assert_fenced(passage["text"], sibling=passage)
+    _assert_fenced(passage["chapter_title"])
+    _assert_fenced(passage["heading_path"])
     _assert_fenced(mirror["result"]["passage"]["text"])
 
 
@@ -317,17 +364,21 @@ async def test_get_chapter_section_content_fenced_via_mcp() -> None:
         await _build_mcp(), "get_chapter_section", {"nbk_id": "NBK1116", "section": "management"}
     )
     _assert_fenced(sc["result"]["content"], sibling=sc["result"])
+    _assert_fenced(sc["result"]["chapter_title"])
+    _assert_fenced(sc["result"]["passages"][0]["heading_path"])
     _assert_fenced(mirror["result"]["content"])
     # v1.1: prose is not duplicated onto structural per-passage entries.
     assert "text" not in sc["result"]["passages"][0]
 
 
 @pytest.mark.asyncio
-async def test_get_chapter_metadata_table_caption_fenced_via_mcp() -> None:
+async def test_get_chapter_metadata_title_and_table_fenced_via_mcp() -> None:
     sc, mirror = await _call(await _build_mcp(), "get_chapter_metadata", {"nbk_id": "NBK1116"})
+    _assert_fenced(sc["result"]["title"], sibling=sc["result"])
     table = sc["result"]["tables"][0]
     _assert_fenced(table["caption"], sibling=table)
-    _assert_fenced(mirror["result"]["tables"][0]["caption"])
+    _assert_fenced(table["heading_path"])
+    _assert_fenced(mirror["result"]["title"])
 
 
 @pytest.mark.asyncio
@@ -337,6 +388,7 @@ async def test_get_table_caption_and_cells_fenced_via_mcp() -> None:
     )
     result = sc["result"]
     _assert_fenced(result["caption"], sibling=result)
+    _assert_fenced(result["heading_path"])
     _assert_fenced(result["header"][0])
     _assert_fenced(result["rows"][0][0])
     _assert_fenced(mirror["result"]["caption"])
@@ -344,35 +396,61 @@ async def test_get_table_caption_and_cells_fenced_via_mcp() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_abstract_text_fenced_via_mcp() -> None:
+async def test_get_abstract_text_title_journal_authors_fenced_via_mcp() -> None:
     sc, mirror = await _call(await _build_mcp(), "get_abstract", {"pmid": "20301425"})
-    _assert_fenced(sc["result"]["abstract"], sibling=sc["result"])
+    result = sc["result"]
+    _assert_fenced(result["abstract"], sibling=result)
+    _assert_fenced(result["title"])
+    _assert_fenced(result["journal"])
     _assert_fenced(mirror["result"]["abstract"])
 
 
 @pytest.mark.asyncio
-async def test_get_fulltext_section_and_metadata_fenced_via_mcp() -> None:
+async def test_get_fulltext_section_subsection_title_and_metadata_fenced_via_mcp() -> None:
     sc, mirror = await _call(await _build_mcp(), "get_fulltext", {"nbk_id": "NBK1116"})
-    section = sc["result"]["sections"]["summary"]
+    result = sc["result"]
+    _assert_fenced(result["title"])
+    section = result["sections"]["summary"]
     _assert_fenced(section["content"], sibling=section)
+    _assert_fenced(section["title"])
+    # nested subsection content + title are fenced too
+    sub = section["subsections"]["clinical"]
+    _assert_fenced(sub["content"])
+    _assert_fenced(sub["title"])
     _assert_fenced(mirror["result"]["sections"]["summary"]["content"])
-    # metadata prose (authors + each reference) is fenced too
-    _assert_fenced(sc["result"]["metadata"]["authors"])
-    _assert_fenced(sc["result"]["metadata"]["references"][0])
+    # every metadata prose surface is fenced
+    _assert_fenced(result["metadata"]["authors"])
+    _assert_fenced(result["metadata"]["update_info"])
+    _assert_fenced(result["metadata"]["publication_info"])
+    _assert_fenced(result["metadata"]["references"][0])
 
 
 @pytest.mark.asyncio
-async def test_get_genereview_summary_sections_fenced_and_deduped_via_mcp() -> None:
-    sc, _mirror_body = await _call(
+async def test_get_genereview_summary_all_sections_fenced_and_deduped_via_mcp() -> None:
+    sc, mirror = await _call(
         await _build_mcp(),
         "get_genereview_summary",
         {"gene_symbol": "BRCA1", "include_fulltext": True, "fresh": True},
     )
     result = sc["result"]
-    _assert_fenced(result["summary"]["content"], sibling=result["summary"])
+    _assert_fenced(result["title"])
+    # every section (summary/diagnosis/management + other) — content AND title
+    for key in ("summary", "diagnosis", "management"):
+        _assert_fenced(result[key]["content"], sibling=result[key])
+        _assert_fenced(result[key]["title"])
+    other = result["other_sections"]["genetic_counseling"]
+    _assert_fenced(other["content"])
+    _assert_fenced(other["title"])
+    # abstract prose surfaces (abstract + title + journal)
     _assert_fenced(result["abstract_data"]["abstract"])
-    # Dedup: the same section prose is NOT also carried in full_text_data.sections.
+    _assert_fenced(result["abstract_data"]["title"])
+    _assert_fenced(result["abstract_data"]["journal"])
+    # the TextContent mirror carries the fenced summary content too
+    _assert_fenced(mirror["result"]["summary"]["content"])
+    # Dedup: section prose is NOT re-carried in full_text_data.sections, and the
+    # chapter title is NOT re-carried in full_text_data.title.
     assert result["full_text_data"]["sections"] == {}
+    assert result["full_text_data"]["title"] is None
 
 
 @pytest.mark.asyncio

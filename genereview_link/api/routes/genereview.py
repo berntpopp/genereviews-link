@@ -53,7 +53,9 @@ def _minimal_gene_review_from_indexed_chapter(
         gene_symbol=gene_symbol.upper(),
         pubmed_id=str(chapter.pubmed_id),
         book_url=f"https://www.ncbi.nlm.nih.gov/books/{nbk_id}/",
-        title=chapter.title,
+        title=fence_untrusted_text(
+            chapter.title, source="genereviews", record_id=f"{nbk_id}#title"
+        ),
     )
 
 
@@ -71,13 +73,13 @@ def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
     the next_commands hint is omitted (truncated is still set) rather than
     emitting a get_chapter_section call without ``nbk_id``.
 
-    Subsection content is not counted; only top-level ``section.content``
-    strings contribute to the budget.
+    Subsection content is not counted; only top-level section content
+    contributes to the budget.
 
-    ``section.content`` is a v1.1 ``untrusted_text`` object, so truncation reads
-    ``.content.text``, and when it shortens the text it RE-FENCES the truncated
-    string (preserving the original ``provenance.record_id``) so ``raw_sha256``
-    matches the truncated bytes actually emitted.
+    Truncation slices the ORIGINAL RAW upstream text (``section._raw_content``,
+    stashed by ``fence_section_prose``) and re-fences THAT slice, so
+    ``raw_sha256`` hashes the true pre-normalization bytes of the emitted
+    (truncated) text — never the already-normalized ``.content.text``.
 
     Mutates ``result`` in place. Callers MUST pass a fresh instance (e.g. via
     ``model_copy(deep=True)``) when the upstream source caches the object —
@@ -91,31 +93,34 @@ def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
     for key in sorted(result.other_sections.keys()):
         ordered_sections.append((key, result.other_sections[key]))
 
-    def _retruncate(section: FencedGeneReviewSection, new_text: str) -> None:
+    def _retruncate(section: FencedGeneReviewSection, raw_slice: str) -> None:
+        # Fence the RAW upstream slice (record_id preserved) so raw_sha256 is
+        # over the raw pre-normalization bytes of the emitted text.
         section.content = fence_untrusted_text(
-            new_text,
+            raw_slice,
             source=section.content.provenance.source,
             record_id=section.content.provenance.record_id,
         )
+        section._raw_content = raw_slice
 
     total = 0
     truncated = False
     for _key, section in ordered_sections:
         if section is None:
             continue
-        content = section.content.text or ""
+        raw = section._raw_content
         if total >= max_chars:
-            if content:
+            if raw:
                 _retruncate(section, "")
                 truncated = True
             continue
         remaining = max_chars - total
-        if len(content) > remaining:
-            _retruncate(section, content[:remaining])
+        if len(raw) > remaining:
+            _retruncate(section, raw[:remaining])
             total += remaining
             truncated = True
         else:
-            total += len(content)
+            total += len(raw)
     if not truncated:
         return
     result.meta.truncated = True

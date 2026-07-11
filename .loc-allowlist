@@ -8,6 +8,7 @@
 # Decomposition backlog: .planning/2026-05-25-senior-engineering-review.md
 # (findings #16 EutilsClient split, #23 passages.py split).
 
+genereview_link/models/genereview_models.py:615  # v1.1 untrusted-text fencing added ~12 fenced title/heading/author/journal fields (str -> UntrustedText multi-line Field()); decomposition into per-domain model modules tracked in #23 backlog
 genereview_link/api/eutils_client.py:1327
 genereview_link/retrieval/repository.py:950  # raised for #43 primary_gene_symbols; see #23 decomposition backlog
 genereview_link/api/routes/passages.py:850  # raised for #43 gene_role param; +25 for v1.1 untrusted-text fencing (text/snippet/PassageDetail.text); see #23 decomposition backlog

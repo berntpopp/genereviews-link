@@ -25,12 +25,14 @@ from genereview_link.api.orchestration_errors import (
 from genereview_link.api.untrusted_limits import collect_untrusted, guard_untrusted_limits
 from genereview_link.mcp.untrusted_content import fence_untrusted_text
 from genereview_link.models.genereview_models import (
-    FencedGeneReviewSection,
     FullTextData,
     GeneReviewSection,
 )
 from genereview_link.models.sections import canonicalize_nbk_id
-from genereview_link.services.genereview_service import fence_fulltext_metadata
+from genereview_link.services.genereview_service import (
+    fence_fulltext_metadata,
+    fence_section_prose,
+)
 
 router = APIRouter(prefix="/fulltext", tags=["Full Text"])
 
@@ -64,29 +66,6 @@ def _build_section(section_data: dict[str, Any]) -> GeneReviewSection:
         content=section_data["content"],
         level=section_data.get("level", 1),
         subsections=subsections,
-    )
-
-
-def _fence_section(
-    section: GeneReviewSection, *, nbk_id: str, record_path: str
-) -> FencedGeneReviewSection:
-    """Recursively rebuild a scraped section with its ``content`` fenced.
-
-    ``record_id`` is ``{nbk_id}#{record_path}``, where ``record_path`` walks
-    the section/subsection key chain (e.g. ``summary``, then
-    ``summary/clinical-description`` for a nested subsection) — precise
-    enough to re-retrieve or audit the exact node the prose came from.
-    """
-    return FencedGeneReviewSection(
-        title=section.title,
-        content=fence_untrusted_text(
-            section.content, source="genereviews", record_id=f"{nbk_id}#{record_path}"
-        ),
-        level=section.level,
-        subsections={
-            key: _fence_section(value, nbk_id=nbk_id, record_path=f"{record_path}/{key}")
-            for key, value in section.subsections.items()
-        },
     )
 
 
@@ -198,18 +177,20 @@ async def get_fulltext(
         filtered_sections = _filter_sections(all_sections, sections)
 
         canonical_nbk_id = _canonical_fulltext_nbk_id(result.get("nbk_id"), clean_id)
-        # v1.1: fence every section's scraped prose AND the scraped metadata prose
-        # at the MCP serialization boundary (internal GeneReviewSection stays str).
+        # v1.1: fence every section's scraped prose (title + content), the scraped
+        # metadata prose, AND the document title at the MCP serialization boundary.
         metadata = fence_fulltext_metadata(result.get("metadata", {}), doc_id=canonical_nbk_id)
         fenced_sections = {
-            key: _fence_section(section, nbk_id=canonical_nbk_id, record_path=key)
+            key: fence_section_prose(section, doc_id=canonical_nbk_id, record_path=key)
             for key, section in filtered_sections.items()
         }
 
         out = FullTextData(
             nbk_id=canonical_nbk_id,
             url=result.get("url", book_url),
-            title=result.get("title", ""),
+            title=fence_untrusted_text(
+                result.get("title", ""), source="genereviews", record_id=f"{canonical_nbk_id}#title"
+            ),
             sections=fenced_sections,
             metadata=metadata,
         )
