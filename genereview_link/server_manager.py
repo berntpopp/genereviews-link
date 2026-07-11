@@ -368,6 +368,13 @@ class UnifiedServerManager:
         from genereview_link.mcp.prompts import register_prompts
 
         register_prompts(mcp)
+
+        # FastMCP-core not-found reflection guard (Response-Envelope v1.1
+        # fast-follow); see genereview_link/mcp/notfound_guard.py. Installed LAST,
+        # after every tool/resource/prompt is registered.
+        from genereview_link.mcp.notfound_guard import install_notfound_guard
+
+        install_notfound_guard(mcp)
         return mcp
 
     async def start_unified_server(self, config: ServerConfig) -> None:
