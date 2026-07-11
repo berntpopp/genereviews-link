@@ -17,6 +17,11 @@ from fastapi.responses import JSONResponse
 from genereview_link.api.diagnostics import build_search_diagnostics
 from genereview_link.api.errors import FieldError, StructuredHTTPException
 from genereview_link.api.routes.table_enrichment import table_fields
+from genereview_link.mcp.untrusted_content import (
+    UntrustedText,
+    enforce_untrusted_text_limits,
+    fence_untrusted_text,
+)
 from genereview_link.models.genereview_models import (
     IdsOnlyPassage,
     IdsOnlySearchResponse,
@@ -516,6 +521,7 @@ async def search_passages(
     include_table_data = "table_data" in include_set
 
     out: list[RankedPassage] = []
+    fenced_objects: list[UntrustedText] = []
     for pos, r in enumerate(ranked, start=1):
         score_breakdown = (
             ScoreBreakdown(
@@ -542,6 +548,20 @@ async def search_passages(
             else None
         )
         tdata = table_fields(r.passage, want=include_table_data)
+        # v1.1: RankedPassage populates EITHER text OR snippet, never both.
+        # Fence whichever is populated at this MCP serialization boundary.
+        fenced_text: UntrustedText | None = None
+        fenced_snippet: UntrustedText | None = None
+        if mode == "full":
+            fenced_text = fence_untrusted_text(
+                r.passage.text, source="genereviews", record_id=r.passage.passage_id
+            )
+            fenced_objects.append(fenced_text)
+        elif mode == "brief" and r.snippet is not None:
+            fenced_snippet = fence_untrusted_text(
+                r.snippet, source="genereviews", record_id=r.passage.passage_id
+            )
+            fenced_objects.append(fenced_snippet)
         out.append(
             RankedPassage(
                 passage_id=r.passage.passage_id,
@@ -554,8 +574,8 @@ async def search_passages(
                 heading_path=r.passage.heading_path,
                 passage_type=r.passage.passage_type,
                 passage_role=_passage_role(r.passage.passage_role),
-                text=r.passage.text if mode == "full" else None,
-                snippet=r.snippet if mode == "brief" else None,
+                text=fenced_text,
+                snippet=fenced_snippet,
                 char_count=len(r.passage.text),
                 rrf_score=r.rrf_score,
                 lexical_score=r.lexical_rank,
@@ -574,6 +594,8 @@ async def search_passages(
                 **tdata,
             )
         )
+
+    enforce_untrusted_text_limits(fenced_objects)
 
     if include_score_breakdown:
         meta = ResponseMeta(
@@ -686,28 +708,35 @@ async def get_passage(
     include_heading_array = "heading_path_array" in include_set
     include_table_data = "table_data" in include_set
 
-    return PassageWindowResponse(  # type: ignore[call-arg]
-        passage=_passage_row_to_detail(
-            focal,
+    focal_detail = _passage_row_to_detail(
+        focal,
+        include_heading_array=include_heading_array,
+        include_table_data=include_table_data,
+    )
+    before_details = [
+        _passage_row_to_detail(
+            r,
             include_heading_array=include_heading_array,
             include_table_data=include_table_data,
-        ),
-        neighbors_before=[
-            _passage_row_to_detail(
-                r,
-                include_heading_array=include_heading_array,
-                include_table_data=include_table_data,
-            )
-            for r in before
-        ],
-        neighbors_after=[
-            _passage_row_to_detail(
-                r,
-                include_heading_array=include_heading_array,
-                include_table_data=include_table_data,
-            )
-            for r in after
-        ],
+        )
+        for r in before
+    ]
+    after_details = [
+        _passage_row_to_detail(
+            r,
+            include_heading_array=include_heading_array,
+            include_table_data=include_table_data,
+        )
+        for r in after
+    ]
+    enforce_untrusted_text_limits(
+        [focal_detail.text, *(d.text for d in before_details), *(d.text for d in after_details)]
+    )
+
+    return PassageWindowResponse(  # type: ignore[call-arg]
+        passage=focal_detail,
+        neighbors_before=before_details,
+        neighbors_after=after_details,
         has_more_before=has_more_before,
         has_more_after=has_more_after,
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
@@ -725,6 +754,7 @@ def _passage_row_to_detail(
         row.heading_path.split(" > ") if include_heading_array and row.heading_path else None
     )
     tdata = table_fields(row, want=include_table_data)
+    fenced_text = fence_untrusted_text(row.text, source="genereviews", record_id=row.passage_id)
     return PassageDetail(
         nbk_id=row.nbk_id,
         passage_id=row.passage_id,
@@ -734,8 +764,8 @@ def _passage_row_to_detail(
         heading_path=row.heading_path,
         section_level=row.section_level,
         chunk_index=row.chunk_index,
-        text=row.text,
-        char_count=len(row.text),
+        text=fenced_text,
+        char_count=len(fenced_text.text),
         gene_symbols=list(row.gene_symbols),
         passage_type=row.passage_type,
         passage_role=_passage_role(row.passage_role),
@@ -810,6 +840,8 @@ async def get_passages_batch(
                     include_table_data=include_table_data,
                 )
             )
+
+    enforce_untrusted_text_limits([d.text for d in found])
 
     return PassageBatchResponse(  # type: ignore[call-arg]
         passages=found,

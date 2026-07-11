@@ -10,5 +10,5 @@
 
 genereview_link/api/eutils_client.py:1327
 genereview_link/retrieval/repository.py:950  # raised for #43 primary_gene_symbols; see #23 decomposition backlog
-genereview_link/api/routes/passages.py:825  # raised for #43 gene_role param; see #23 decomposition backlog
+genereview_link/api/routes/passages.py:850  # raised for #43 gene_role param; +25 for v1.1 untrusted-text fencing (text/snippet/PassageDetail.text); see #23 decomposition backlog
 genereview_link/server_manager.py:460  # raised +10 for MCP Transport Standard v1 (stateless kwargs + /health fields); +3 for serverInfo.version single-source (from_fastapi version=__version__); +21 for CORS credentials-off + validate_cors_config startup guard (security remediation 2026-07-07); +24 for _metrics_path_label route-template redaction (metrics-label PII fix 2026-07-07)

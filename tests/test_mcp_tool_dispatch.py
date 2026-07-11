@@ -105,7 +105,7 @@ async def test_chapter_section_uses_app_state_repository() -> None:
     body = resp.json()
     assert body["nbk_id"] == "NBK1"
     assert body["chapter_section"] == "summary"
-    assert body["passages"][0]["text"] == "seeded"
+    assert body["content"]["text"] == "seeded"
 
 
 def test_unified_server_uses_single_app_instance(monkeypatch: pytest.MonkeyPatch) -> None:

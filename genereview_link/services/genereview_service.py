@@ -9,8 +9,10 @@ from async_lru import alru_cache
 from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.config import settings
 from genereview_link.logging_config import get_logger
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
 from genereview_link.models.genereview_models import (
     AbstractData,
+    FencedGeneReviewSection,
     FullTextData,
     FullTextMetadata,
     GeneReview,
@@ -28,6 +30,33 @@ def _book_urls_from_links(links_result: dict[str, object]) -> list[str]:
     if not isinstance(urls, list):
         return []
     return [url for url in urls if isinstance(url, str) and "ncbi.nlm.nih.gov/books/" in url]
+
+
+def _fence_section_for_fulltext(
+    section: GeneReviewSection, *, doc_id: str, record_path: str
+) -> FencedGeneReviewSection:
+    """Build the v1.1-fenced sibling of an internal ``GeneReviewSection``.
+
+    ``GeneReview.full_text_data`` (``FullTextData``) is a separate,
+    MCP-facing nested object from the plain ``GeneReview.summary`` /
+    ``.diagnosis`` / ``.management`` / ``.other_sections`` convenience
+    fields (which stay ``GeneReviewSection`` / ``str`` — out of this row's
+    fencing scope), so this builds the fenced copy without mutating the
+    internal model.
+    """
+    return FencedGeneReviewSection(
+        title=section.title,
+        content=fence_untrusted_text(
+            section.content, source="genereviews", record_id=f"{doc_id}#{record_path}"
+        ),
+        level=section.level,
+        subsections={
+            key: _fence_section_for_fulltext(
+                value, doc_id=doc_id, record_path=f"{record_path}/{key}"
+            )
+            for key, value in section.subsections.items()
+        },
+    )
 
 
 def _canonical_fulltext_nbk_id(raw: object) -> str | None:
@@ -151,7 +180,11 @@ class GeneReviewService:
                     abstract_data = AbstractData(
                         pmid=abstract_result.get("pmid", pubmed_id),
                         title=abstract_result.get("title", ""),
-                        abstract=abstract_result.get("abstract", ""),
+                        abstract=fence_untrusted_text(
+                            abstract_result.get("abstract", ""),
+                            source="genereviews",
+                            record_id=f"{pubmed_id}#doc",
+                        ),
                         authors=abstract_result.get("authors", []),
                         journal=abstract_result.get("journal", ""),
                         publication_date=abstract_result.get("publication_date", ""),
@@ -220,11 +253,18 @@ class GeneReviewService:
                         update_info=metadata_dict.get("update_info"),
                     )
 
+                    fulltext_nbk_id = _canonical_fulltext_nbk_id(fulltext_result.get("nbk_id"))
+                    fulltext_doc_id = fulltext_nbk_id or f"pmid:{pubmed_id}"
                     full_text_data = FullTextData(
-                        nbk_id=_canonical_fulltext_nbk_id(fulltext_result.get("nbk_id")),
+                        nbk_id=fulltext_nbk_id,
                         url=fulltext_result.get("url", book_url),
                         title=fulltext_result.get("title", ""),
-                        sections=sections_data,
+                        sections={
+                            key: _fence_section_for_fulltext(
+                                sec, doc_id=fulltext_doc_id, record_path=key
+                            )
+                            for key, sec in sections_data.items()
+                        },
                         metadata=metadata,
                     )
 

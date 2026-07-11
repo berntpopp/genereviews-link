@@ -17,6 +17,7 @@ from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.orchestration import live_corpus_version, stamp_response_version
 from genereview_link.config import ServerConfig
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
 from genereview_link.models.genereview_models import AbstractData
 from genereview_link.server_manager import UnifiedServerManager
 from genereview_link.services.genereview_service import DataNotFoundError, GeneReviewService
@@ -603,7 +604,8 @@ class TestFulltextRoute:
         sub = diagnosis["subsections"]["clinical_features"]
         assert sub["level"] == 3
         assert sub["title"] == "Clinical Features"
-        assert sub["content"] == "cf"
+        assert sub["content"]["kind"] == "untrusted_text"
+        assert sub["content"]["text"] == "cf"
         assert sub["subsections"] == {}
 
     @pytest.mark.asyncio
@@ -967,7 +969,7 @@ class TestOrchestrationHelpers:
         response = AbstractData(
             pmid="1",
             title="T",
-            abstract="A",
+            abstract=fence_untrusted_text("A", source="genereviews", record_id="1#doc"),
             authors=[],
             journal="J",
             publication_date="2024",

@@ -16,11 +16,12 @@ from pydantic import (
     model_serializer,
 )
 
+from genereview_link.mcp.untrusted_content import UntrustedText
 from genereview_link.models.sections import SectionName
 
 
 class GeneReviewSection(BaseModel):
-    """Represents a single scraped section of a GeneReview."""
+    """A scraped section of a GeneReview (internal; content stays str)."""
 
     title: str = Field(description="The original title of the section.")
     content: str = Field(description="The full text content of the section.")
@@ -30,8 +31,21 @@ class GeneReviewSection(BaseModel):
     )
 
 
-# Enable forward references for recursive model
-GeneReviewSection.model_rebuild()
+GeneReviewSection.model_rebuild()  # enable forward refs for the recursive model
+
+
+class FencedGeneReviewSection(BaseModel):
+    """MCP-facing sibling of GeneReviewSection: content is v1.1-fenced."""
+
+    title: str = Field(description="The original title of the section.")
+    content: UntrustedText = Field(description="The section's v1.1-fenced full text content.")
+    level: int = Field(default=1, description="Heading level (1-6) indicating hierarchy.")
+    subsections: dict[str, FencedGeneReviewSection] = Field(
+        default_factory=dict, description="Nested subsections."
+    )
+
+
+FencedGeneReviewSection.model_rebuild()
 
 
 class SearchResult(BaseModel):
@@ -66,7 +80,9 @@ class AbstractData(BaseModel):
 
     pmid: str = Field(description="PubMed ID.")
     title: str = Field(description="Article title.")
-    abstract: str = Field(description="Article abstract.")
+    abstract: UntrustedText = Field(
+        description="Article abstract, v1.1-fenced: upstream prose typed as structural data."
+    )
     authors: list[str] = Field(default_factory=list, description="List of author names.")
     journal: str = Field(description="Journal name.")
     publication_date: str = Field(description="Publication date.")
@@ -130,8 +146,8 @@ class FullTextData(BaseModel):
     nbk_id: str | None = Field(default=None, description="NCBI Book ID.")
     url: str = Field(description="URL of the scraped page.")
     title: str = Field(description="Title of the document.")
-    sections: dict[str, GeneReviewSection] = Field(
-        default_factory=dict, description="All scraped sections."
+    sections: dict[str, FencedGeneReviewSection] = Field(
+        default_factory=dict, description="All scraped sections (v1.1 fenced)."
     )
     metadata: FullTextMetadata = Field(
         default_factory=FullTextMetadata, description="Extracted metadata."
@@ -269,8 +285,8 @@ class RankedPassage(BaseModel):
     heading_path: str | None = None
     passage_type: str = "narrative"
     passage_role: PassageRole | None = None
-    text: str | None = None
-    snippet: str | None = None
+    text: UntrustedText | None = None
+    snippet: UntrustedText | None = None
     char_count: int
     rrf_score: float | None = None
     lexical_score: float | None = None
@@ -300,7 +316,7 @@ class PassageDetail(BaseModel):
     passage_role: PassageRole | None = None
     section_level: int
     chunk_index: int
-    text: str
+    text: UntrustedText
     char_count: int
     gene_symbols: list[str] = Field(default_factory=list)
     heading_path_array: list[str] | None = None
@@ -412,23 +428,20 @@ class PassageWindowResponse(BaseModel):
 
 
 class PassageInSection(BaseModel):
-    """A passage as returned in a chapter section response."""
+    """A passage's structural id within a chapter section response.
+
+    ``text`` is deliberately absent (v1.1 no-duplication): the section's
+    prose lives once, fenced, on ``ChapterSectionResponse.content``.
+    """
 
     passage_id: str
     heading_path: str | None = None
     section_level: int
     chunk_index: int
-    text: str
 
 
 class ChapterSectionResponse(BaseModel):
-    """Envelope returned by GET /chapters/{nbk_id}/sections/{section}.
-
-    Agentic-affordance hints (next_commands) live on ``meta.next_commands``
-    rather than at the top level — consistent with how truncation surfaces a
-    follow-up tool call in /genereview and with the other interaction metadata
-    on ``_meta`` (corpus_version, diagnostics, truncated).
-    """
+    """Envelope for GET /chapters/{nbk_id}/sections/{section}; content is v1.1-fenced."""
 
     nbk_id: str
     chapter_title: str
@@ -436,8 +449,8 @@ class ChapterSectionResponse(BaseModel):
     chapter_last_updated: date | None = None
     passages: list[PassageInSection]
     passage_count: int  # always present; equals len(passages)
-    concatenated_text: str | None = None  # opt-in via include=concatenated_text
-    concatenated_char_count: int | None = None  # only when concatenated_text opted in
+    content: UntrustedText
+    content_char_count: int
     note: str | None = None
     meta: ResponseMeta = Field(alias="_meta", default_factory=ResponseMeta)
     model_config = {"populate_by_name": True}

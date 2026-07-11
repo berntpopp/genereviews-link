@@ -313,7 +313,8 @@ async def test_search_mode_full_populates_text() -> None:
     assert resp.status_code == 200
     body = resp.json()
     results = body["results"]
-    assert results[0]["text"] == "full text here"
+    assert results[0]["text"]["kind"] == "untrusted_text"
+    assert results[0]["text"]["text"] == "full text here"
     assert results[0]["snippet"] is None
     assert body["_meta"]["diagnostics"]["rerank_used"] == "rrf"
 
@@ -1284,8 +1285,8 @@ async def test_search_snippet_chars_controls_brief_mode_snippet_size() -> None:
             params={"q": "BRCA1", "mode": "brief", "snippet_chars": 800, "limit": 1},
         )
     assert resp_small.status_code == resp_big.status_code == 200
-    small_snippet = resp_small.json()["results"][0]["snippet"]
-    big_snippet = resp_big.json()["results"][0]["snippet"]
+    small_snippet = resp_small.json()["results"][0]["snippet"]["text"]
+    big_snippet = resp_big.json()["results"][0]["snippet"]["text"]
     assert len(small_snippet) < len(big_snippet)
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
 from genereview_link.models.genereview_models import (
     ATTRIBUTION_TEXT,
     COPYRIGHT_LINE,
@@ -79,6 +80,8 @@ def test_chapter_section_response_meta_alias_is_underscore_meta() -> None:
         chapter_last_updated=None,
         passages=[],
         passage_count=0,
+        content=fence_untrusted_text("", source="genereviews", record_id="NBK1#management"),
+        content_char_count=0,
     )
     dumped = r.model_dump(by_alias=True)
     assert "_meta" in dumped
@@ -92,6 +95,8 @@ def test_chapter_section_response_has_note_field() -> None:
         chapter_section="summary",
         passages=[],
         passage_count=0,
+        content=fence_untrusted_text("", source="genereviews", record_id="NBK1247#summary"),
+        content_char_count=0,
         note="Summary is not currently indexed; use the NCBI Bookshelf chapter.",
     )
 
@@ -108,7 +113,7 @@ def test_passage_window_response_meta_alias_is_underscore_meta() -> None:
         heading_path=None,
         section_level=1,
         chunk_index=0,
-        text="hello",
+        text=fence_untrusted_text("hello", source="genereviews", record_id="p1"),
         char_count=5,
         recommended_citation="Test. NBK1. Updated 2024-01-01. Passage p1.",
         source_url="https://www.ncbi.nlm.nih.gov/books/NBK1/",
@@ -134,7 +139,9 @@ def test_live_passthrough_meta_uses_underscore_alias() -> None:
     abstract = AbstractData(
         pmid="20301425",
         title="BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
-        abstract="GeneReviews abstract",
+        abstract=fence_untrusted_text(
+            "GeneReviews abstract", source="genereviews", record_id="20301425#doc"
+        ),
         journal="GeneReviews",
         publication_date="1998",
     )

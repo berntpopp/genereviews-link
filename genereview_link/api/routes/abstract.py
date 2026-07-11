@@ -21,6 +21,10 @@ from genereview_link.api.orchestration_errors import (
     invalid_pubmed_id_error,
     upstream_ncbi_unavailable_error,
 )
+from genereview_link.mcp.untrusted_content import (
+    enforce_untrusted_text_limits,
+    fence_untrusted_text,
+)
 from genereview_link.models.genereview_models import AbstractData
 
 router = APIRouter(prefix="/abstract", tags=["Abstract"])
@@ -69,11 +73,17 @@ async def get_abstract(
         if not result:
             raise abstract_not_found_error(pmid)
 
+        # v1.1: fence the upstream PubMed abstract prose at the MCP boundary.
+        fenced_abstract = fence_untrusted_text(
+            result.get("abstract", ""), source="genereviews", record_id=f"{pmid}#doc"
+        )
+        enforce_untrusted_text_limits([fenced_abstract])
+
         # Ensure all required fields have default values
         out = AbstractData(
             pmid=result.get("pmid", pmid),
             title=result.get("title", ""),
-            abstract=result.get("abstract", ""),
+            abstract=fenced_abstract,
             authors=result.get("authors", []),
             journal=result.get("journal", ""),
             publication_date=result.get("publication_date", ""),

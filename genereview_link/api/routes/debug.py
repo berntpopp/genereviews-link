@@ -17,6 +17,7 @@ from genereview_link.api.routes.passages import (
     get_repository,
 )
 from genereview_link.config import settings
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
 from genereview_link.models.genereview_models import RankedPassage, ScoreBreakdown
 from genereview_link.models.sections import SectionName
 from genereview_link.retrieval.embeddings import EmbeddingProvider
@@ -66,7 +67,9 @@ async def debug_ranking(
                 chapter_section=cast(SectionName, r.passage.chapter_section),
                 heading_path=r.passage.heading_path,
                 passage_type=r.passage.passage_type,
-                text=r.passage.text,
+                text=fence_untrusted_text(
+                    r.passage.text, source="genereviews", record_id=r.passage.passage_id
+                ),
                 char_count=len(r.passage.text),
                 score_breakdown=ScoreBreakdown(
                     lexical_rank=r.lexical_rank,

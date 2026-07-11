@@ -99,7 +99,8 @@ async def test_batch_200_returns_all_found() -> None:
     assert body["passages"][0]["passage_id"] == "NBK1247:0001"
     assert body["passages"][1]["passage_id"] == "NBK1247:0002"
     # Spot-check fields
-    assert body["passages"][0]["text"] == "passage one"
+    assert body["passages"][0]["text"]["kind"] == "untrusted_text"
+    assert body["passages"][0]["text"]["text"] == "passage one"
     assert body["passages"][0]["char_count"] == len("passage one")
     assert body["passages"][0]["gene_symbols"] == ["BRCA1", "BRCA2"]
 

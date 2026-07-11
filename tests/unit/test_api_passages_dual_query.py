@@ -53,6 +53,26 @@ def _app() -> FastAPI:
     return app
 
 
+def _drop_fence_timestamps(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Null out ``retrieved_at`` on any fenced field so independent fence calls compare equal.
+
+    ``fence_untrusted_text`` stamps ``provenance.retrieved_at = datetime.now(UTC)`` at
+    serialization, so two logically-identical requests made moments apart otherwise
+    never compare byte-equal.
+    """
+    normalized: list[dict[str, Any]] = []
+    for row in results:
+        row = dict(row)
+        for field in ("text", "snippet"):
+            fenced = row.get(field)
+            if isinstance(fenced, dict):
+                fenced = dict(fenced)
+                fenced["provenance"] = {**fenced["provenance"], "retrieved_at": None}
+                row[field] = fenced
+        normalized.append(row)
+    return normalized
+
+
 @pytest.mark.asyncio
 async def test_q_query_and_matching_dual_query_return_identical_results() -> None:
     app = _app()
@@ -68,8 +88,12 @@ async def test_q_query_and_matching_dual_query_return_identical_results() -> Non
     assert q_resp.status_code == 200
     assert query_resp.status_code == 200
     assert both_resp.status_code == 200
-    assert query_resp.json()["results"] == q_resp.json()["results"]
-    assert both_resp.json()["results"] == q_resp.json()["results"]
+    assert _drop_fence_timestamps(query_resp.json()["results"]) == _drop_fence_timestamps(
+        q_resp.json()["results"]
+    )
+    assert _drop_fence_timestamps(both_resp.json()["results"]) == _drop_fence_timestamps(
+        q_resp.json()["results"]
+    )
     repo = app.state.repository
     assert [call.args[0] for call in repo.search_passages.await_args_list] == [
         "BRCA1",

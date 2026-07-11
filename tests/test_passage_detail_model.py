@@ -7,6 +7,7 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
+from genereview_link.mcp.untrusted_content import fence_untrusted_text
 from genereview_link.models.genereview_models import (
     PassageDetail,
     RankedPassage,
@@ -35,7 +36,7 @@ def test_passage_detail_minimal_fields():
         heading_path="Management > X",
         section_level=2,
         chunk_index=1,
-        text="hello world",
+        text=fence_untrusted_text("hello world", source="genereviews", record_id="NBK1:0001"),
         char_count=11,
         gene_symbols=["TG"],
         recommended_citation="Test Chapter. NBK1. Updated 2025-12-01. Passage NBK1:0001.",
@@ -43,6 +44,8 @@ def test_passage_detail_minimal_fields():
     )
     assert pd.passage_id == "NBK1:0001"
     assert pd.chapter_title == "Test Chapter"
+    assert pd.text.text == "hello world"
+    assert pd.text.kind == "untrusted_text"
 
 
 def test_passage_detail_rejects_bad_chapter_section():
@@ -56,7 +59,7 @@ def test_passage_detail_rejects_bad_chapter_section():
             heading_path=None,
             section_level=1,
             chunk_index=0,
-            text="",
+            text=fence_untrusted_text("", source="genereviews", record_id="NBK1:0001"),
             char_count=0,
             gene_symbols=[],
         )
@@ -72,11 +75,13 @@ def test_ranked_passage_allows_text_or_snippet():
         chapter_section="management",
         heading_path="Management > X",
         text=None,
-        snippet="**BRCA1**: example",
+        snippet=fence_untrusted_text(
+            "**BRCA1**: example", source="genereviews", record_id="NBK1:0001"
+        ),
         char_count=20,
         score_breakdown=_score_breakdown(),
         recommended_citation="Test. NBK1. Updated 2025-12-01. Passage NBK1:0001.",
         source_url="https://www.ncbi.nlm.nih.gov/books/NBK1/",
     )
-    assert rp.snippet == "**BRCA1**: example"
+    assert rp.snippet.text == "**BRCA1**: example"
     assert rp.text is None

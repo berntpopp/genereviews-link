@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Literal, cast
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Path, Query, Request
-from fastapi.responses import JSONResponse
 
 from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.routes.passages import _get_corpus_version, get_repository
+from genereview_link.mcp.untrusted_content import (
+    enforce_untrusted_text_limits,
+    fence_untrusted_text,
+)
 from genereview_link.models.genereview_models import (
     ChapterMetadataResponse,
     ChapterSectionResponse,
@@ -35,22 +38,6 @@ from genereview_link.models.staleness import (
 from genereview_link.retrieval.repository import GeneReviewRepository, _note_for_empty_section
 
 router = APIRouter(tags=["Chapters"])
-
-
-def _serialize_section_response(
-    response: ChapterSectionResponse, *, drop_concatenated: bool
-) -> JSONResponse:
-    """Serialize a ChapterSectionResponse with opt-in fields excluded.
-
-    Drops ``concatenated_text`` + ``concatenated_char_count`` when the caller
-    did not opt in via include=concatenated_text. Null ``_meta.next_commands``
-    is stripped by the ResponseMeta model serializer (not here), so the field
-    surfaces only when an actual affordance is set.
-    """
-    exclude: set[str] = (
-        {"concatenated_text", "concatenated_char_count"} if drop_concatenated else set()
-    )
-    return JSONResponse(response.model_dump(exclude=exclude, mode="json", by_alias=True))
 
 
 def _strip_overlap(parts: list[str], min_overlap: int = 30) -> str:
@@ -87,8 +74,8 @@ def _strip_overlap(parts: list[str], min_overlap: int = 30) -> str:
     summary="Fetch all passages for a section of a GeneReview chapter",
     description=(
         "Fetch all passages for a section. For keyword search within this section, "
-        "use search_passages(q, nbk_id=..., sections=[...]); for joined section "
-        "text use include=concatenated_text with overlap stripped by default. "
+        "use search_passages(q, nbk_id=..., sections=[...]). ``content`` carries the "
+        "full joined section text (v1.1 untrusted_text; overlap stripped by default). "
         "Pass dedupe=false only for literal chunk text."
     ),
 )
@@ -110,23 +97,14 @@ async def get_chapter_section(
             ),
         ),
     ],
-    include: Annotated[
-        list[Literal["concatenated_text"]] | None,
-        Query(
-            description=(
-                "Opt into default-off response fields. Pass include=concatenated_text "
-                "to receive the joined passage text in addition to passages[]."
-            ),
-        ),
-    ] = None,
     dedupe: Annotated[
         bool,
         Query(
             description=(
                 "Strip overlapping text between adjacent chunks "
                 "(longest-common-suffix/prefix heuristic). "
-                "Default True for LLM-ready joined text. Pass false only when "
-                "you need literal stored chunk text."
+                "Default True for LLM-ready joined text in ``content``. Pass false "
+                "only when you need the literal stored chunk concatenation."
             ),
         ),
     ] = True,
@@ -144,11 +122,13 @@ async def get_chapter_section(
     ] = None,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
-) -> JSONResponse:
+) -> ChapterSectionResponse:
     """Return all passages for a specific section of a GeneReview chapter.
 
-    By default returns individual passages only. Pass include=concatenated_text
-    to also receive joined passage text with chunk overlap stripped by default.
+    ``passages[]`` carries structural identifiers only (passage_id,
+    heading_path, section_level, chunk_index); the section's full text is
+    emitted once, fenced, on ``content`` (v1.1 untrusted_text) to avoid
+    duplicating upstream prose across sibling fields.
 
     Latency: ~1ms p50.
     """
@@ -167,13 +147,19 @@ async def get_chapter_section(
                 ],
             )
         if section in SYSTEMATICALLY_UNSCRAPED_SECTIONS:
-            empty_response = ChapterSectionResponse(  # type: ignore[call-arg]
+            empty_content = fence_untrusted_text(
+                "", source="genereviews", record_id=f"{nbk_id}#{section}"
+            )
+            enforce_untrusted_text_limits([empty_content])
+            return ChapterSectionResponse(  # type: ignore[call-arg]
                 nbk_id=nbk_id,
                 chapter_title=chapter.title,
                 chapter_section=section,
                 chapter_last_updated=chapter.last_updated_date,
                 passages=[],
                 passage_count=0,
+                content=empty_content,
+                content_char_count=0,
                 note=_note_for_empty_section(section, nbk_id),
                 meta=ResponseMeta(
                     corpus_version=_get_corpus_version(request),
@@ -184,7 +170,6 @@ async def get_chapter_section(
                     ),
                 ),
             )
-            return _serialize_section_response(empty_response, drop_concatenated=True)
         raise StructuredHTTPException(
             status_code=404,
             code="section_empty_for_chapter",
@@ -203,35 +188,31 @@ async def get_chapter_section(
             ],
         )
     head = passages[0]
-    include_set = set(include or [])
-    if "concatenated_text" in include_set:
-        parts = [p.text for p in passages]
-        concatenated: str | None = _strip_overlap(parts) if dedupe else "\n\n".join(parts)
-    else:
-        concatenated = None
+    parts = [p.text for p in passages]
+    concatenated = _strip_overlap(parts) if dedupe else "\n\n".join(parts)
+    fenced_content = fence_untrusted_text(
+        concatenated, source="genereviews", record_id=f"{nbk_id}#{section}"
+    )
+    enforce_untrusted_text_limits([fenced_content])
     passages_response = [
         PassageInSection(
             passage_id=p.passage_id,
             heading_path=p.heading_path,
             section_level=p.section_level,
             chunk_index=p.chunk_index,
-            text=p.text,
         )
         for p in passages
     ]
-    response = ChapterSectionResponse(  # type: ignore[call-arg]
+    return ChapterSectionResponse(  # type: ignore[call-arg]
         nbk_id=nbk_id,
         chapter_title=head.chapter_title or "",
         chapter_section=section,
         chapter_last_updated=head.chapter_last_updated,
         passages=passages_response,
         passage_count=len(passages_response),
-        concatenated_text=concatenated,
-        concatenated_char_count=(len(concatenated) if concatenated is not None else None),
+        content=fenced_content,
+        content_char_count=len(fenced_content.text),
         meta=ResponseMeta(corpus_version=_get_corpus_version(request)),
-    )
-    return _serialize_section_response(
-        response, drop_concatenated="concatenated_text" not in include_set
     )
 
 

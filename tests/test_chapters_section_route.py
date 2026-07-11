@@ -101,24 +101,23 @@ class TestChapterSectionRoute:
         assert body["nbk_id"] == "NBK1247"
         assert body["chapter_section"] == "summary"
         assert len(body["passages"]) == 2
-        # concatenated_text is opt-in; must be absent by default
-        assert "concatenated_text" not in body
+        # content is the v1.1-fenced, always-present section text (no opt-in).
+        assert body["content"]["kind"] == "untrusted_text"
         # License lives at the dedicated /license endpoint, not inlined here.
         assert "license" not in body
 
     @pytest.mark.asyncio
-    async def test_returns_section_with_concatenated_text_when_opted_in(
+    async def test_returns_section_with_fenced_content_always_present(
         self, http_client: AsyncClient
     ) -> None:
-        resp = await http_client.get(
-            "/chapters/NBK1247/sections/summary",
-            params={"include": "concatenated_text"},
-        )
+        resp = await http_client.get("/chapters/NBK1247/sections/summary")
         assert resp.status_code == 200
         body = resp.json()
-        assert "concatenated_text" in body
-        assert "First chunk" in body["concatenated_text"]
-        assert "Second chunk" in body["concatenated_text"]
+        assert "content" in body
+        assert "First chunk" in body["content"]["text"]
+        assert "Second chunk" in body["content"]["text"]
+        # v1.1: prose is not duplicated onto the per-passage entries.
+        assert "text" not in body["passages"][0]
 
     @pytest.mark.asyncio
     async def test_returns_404_when_section_not_found(
@@ -177,10 +176,7 @@ async def test_returns_passages_with_chapter_title_envelope() -> None:
     app = _build_app(passages=[pr])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get(
-            "/chapters/NBK1/sections/management",
-            params={"include": "concatenated_text"},
-        )
+        resp = await c.get("/chapters/NBK1/sections/management")
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -189,7 +185,7 @@ async def test_returns_passages_with_chapter_title_envelope() -> None:
     assert body["chapter_title"] == "Test Chapter Title"
     assert body["chapter_last_updated"] == "2025-12-01"
     assert body["passages"][0]["passage_id"] == "NBK1:0001"
-    assert body["concatenated_text"] == "sample text"
+    assert body["content"]["text"] == "sample text"
 
 
 @pytest.mark.asyncio
@@ -310,7 +306,7 @@ async def test_section_response_includes_corpus_version_from_app_state() -> None
 
 @pytest.mark.asyncio
 async def test_chapter_section_default_omits_concatenated_text() -> None:
-    """Default response must NOT contain the concatenated_text key at all."""
+    """concatenated_text is gone entirely (v1.1); content replaces it, always present."""
     pr = PassageRow(
         nbk_id="NBK1247",
         passage_id="NBK1247:0001",
@@ -327,11 +323,12 @@ async def test_chapter_section_default_omits_concatenated_text() -> None:
     data = resp.json()
     assert "passages" in data
     assert "concatenated_text" not in data
+    assert data["content"]["kind"] == "untrusted_text"
 
 
 @pytest.mark.asyncio
-async def test_chapter_section_include_concatenated_returns_both() -> None:
-    """include=concatenated_text adds the joined string alongside passages."""
+async def test_chapter_section_content_is_fenced_and_passages_carry_no_prose() -> None:
+    """content.text carries the section prose; passages[] is structural ids only."""
     pr = PassageRow(
         nbk_id="NBK1247",
         passage_id="NBK1247:0001",
@@ -343,15 +340,13 @@ async def test_chapter_section_include_concatenated_returns_both() -> None:
     )
     app = _build_app(passages=[pr])
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get(
-            "/chapters/NBK1247/sections/summary",
-            params={"include": "concatenated_text"},
-        )
+        resp = await c.get("/chapters/NBK1247/sections/summary")
     assert resp.status_code == 200
     data = resp.json()
     assert "passages" in data
-    assert "concatenated_text" in data
-    assert isinstance(data["concatenated_text"], str)
+    assert "content" in data
+    assert isinstance(data["content"]["text"], str)
+    assert "text" not in data["passages"][0]
 
 
 # ---------------------------------------------------------------------------
@@ -394,18 +389,15 @@ def _build_app_with_overlap() -> FastAPI:
 
 @pytest.mark.asyncio
 async def test_dedupe_true_default_strips_overlap() -> None:
-    """Default include=concatenated_text strips the shared suffix/prefix."""
+    """Default (dedupe=true) strips the shared suffix/prefix from content.text."""
     app = _build_app_with_overlap()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get(
-            "/chapters/NBK9999/sections/management",
-            params={"include": "concatenated_text"},
-        )
+        resp = await c.get("/chapters/NBK9999/sections/management")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["concatenated_char_count"] == len(data["concatenated_text"])
-    assert data["concatenated_char_count"] < sum(len(p["text"]) for p in data["passages"])
-    assert data["concatenated_text"] == _EXPECTED_DEDUPED
+    assert data["content_char_count"] == len(data["content"]["text"])
+    assert data["content_char_count"] < len(_PART1) + len(_PART2)
+    assert data["content"]["text"] == _EXPECTED_DEDUPED
 
 
 @pytest.mark.asyncio
@@ -415,16 +407,16 @@ async def test_dedupe_false_preserves_literal_chunk_text() -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get(
             "/chapters/NBK9999/sections/management",
-            params={"include": "concatenated_text", "dedupe": "false"},
+            params={"dedupe": "false"},
         )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["concatenated_text"] == "\n\n".join(p["text"] for p in data["passages"])
+    assert data["content"]["text"] == _EXPECTED_PLAIN
 
 
 @pytest.mark.asyncio
-async def test_dedupe_without_include_has_no_effect() -> None:
-    """dedupe=true without include=concatenated_text must not add the field."""
+async def test_dedupe_true_is_the_default() -> None:
+    """dedupe=true is the default even when not passed explicitly."""
     app = _build_app_with_overlap()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
         resp = await c.get(
@@ -433,19 +425,18 @@ async def test_dedupe_without_include_has_no_effect() -> None:
         )
     assert resp.status_code == 200
     data = resp.json()
-    assert "concatenated_text" not in data
+    assert data["content"]["text"] == _EXPECTED_DEDUPED
 
 
 # ---------------------------------------------------------------------------
-# Task 7: passage_count + concatenated_char_count (Spec E1)
+# Task 7: passage_count + content_char_count (Spec E1; content_char_count
+# replaces the removed concatenated_char_count under v1.1 fencing)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_chapter_section_default_includes_passage_count_without_concatenated_char_count() -> (
-    None
-):
-    """passage_count is always present; concatenated_char_count is absent when not opted in."""
+async def test_chapter_section_default_includes_passage_count_and_content_char_count() -> None:
+    """passage_count and content_char_count are always present (content is not opt-in)."""
     pr1 = PassageRow(
         nbk_id="NBK1247",
         passage_id="NBK1247:0001",
@@ -472,14 +463,14 @@ async def test_chapter_section_default_includes_passage_count_without_concatenat
     assert "passage_count" in body
     assert isinstance(body["passage_count"], int)
     assert body["passage_count"] == len(body["passages"])
-    # concatenated_char_count must be absent when concatenated_text was not requested
     assert "concatenated_char_count" not in body
     assert "concatenated_text" not in body
+    assert body["content_char_count"] == len(body["content"]["text"])
 
 
 @pytest.mark.asyncio
-async def test_chapter_section_concatenated_text_includes_char_count() -> None:
-    """include=concatenated_text also populates concatenated_char_count."""
+async def test_chapter_section_content_char_count_matches_content_text() -> None:
+    """content_char_count always equals len(content.text) (v1.1 fenced, no include flag)."""
     pr = PassageRow(
         nbk_id="NBK1247",
         passage_id="NBK1247:0001",
@@ -491,14 +482,11 @@ async def test_chapter_section_concatenated_text_includes_char_count() -> None:
     )
     app = _build_app(passages=[pr])
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        resp = await c.get(
-            "/chapters/NBK1247/sections/diagnosis",
-            params={"include": "concatenated_text"},
-        )
+        resp = await c.get("/chapters/NBK1247/sections/diagnosis")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["concatenated_text"] is not None
-    assert body["concatenated_char_count"] == len(body["concatenated_text"])
+    assert body["content"]["text"] is not None
+    assert body["content_char_count"] == len(body["content"]["text"])
 
 
 # ---------------------------------------------------------------------------
