@@ -12,6 +12,7 @@ import tarfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import IO, cast
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -57,6 +58,30 @@ async def test_download_tarball_happy_path_streams_and_hashes(
 
     assert dest.read_bytes() == b"hello-corpus"
     assert sha == hashlib.sha256(b"hello-corpus").hexdigest()
+
+
+async def test_fetch_listing_passes_its_explicit_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    read = AsyncMock(return_value=b"path,title,publisher,1993,NBK1116,2026-05-10\n")
+    monkeypatch.setattr(archive, "read_capped", read)
+
+    await archive.fetch_listing()
+
+    call = read.await_args
+    assert call is not None
+    assert call.kwargs["deadline_seconds"] == archive.LISTING_DOWNLOAD_DEADLINE_SECONDS
+
+
+async def test_download_tarball_passes_its_explicit_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stream = AsyncMock(return_value="digest")
+    monkeypatch.setattr(archive, "stream_to_file", stream)
+
+    assert await archive.download_tarball(_listing(), dest=tmp_path / "corpus.tar.gz") == "digest"
+
+    call = stream.await_args
+    assert call is not None
+    assert call.kwargs["deadline_seconds"] == archive.TARBALL_DOWNLOAD_DEADLINE_SECONDS
 
 
 @respx.mock(assert_all_called=False)
@@ -184,6 +209,17 @@ def test_iter_tarball_rejects_oversized_member(monkeypatch: pytest.MonkeyPatch) 
         list(parallel._iter_tarball(arc))
 
 
+def test_iter_tarball_rejects_highly_compressible_decompression_bomb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(parallel, "MAX_MEMBER_BYTES", 1024)
+    arc = _make_targz([("bomb.nxml", b"x" * (1024 * 1024))])
+
+    assert arc.stat().st_size < 4096
+    with pytest.raises(ResponseTooLargeError, match="exceeds"):
+        list(parallel._iter_tarball(arc))
+
+
 def test_iter_tarball_accounts_for_ignored_regular_members(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -228,3 +264,18 @@ async def test_download_sidedata_enforces_cap(
         respx_mock.get(f"{base}/{name}").mock(return_value=httpx.Response(200, content=b"q" * 4096))
     with pytest.raises(ResponseTooLargeError):
         await pipeline._download_sidedata(tmp_path)
+
+
+async def test_download_sidedata_passes_its_explicit_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    read = AsyncMock(return_value=b"content")
+    monkeypatch.setattr(pipeline, "read_capped", read)
+
+    await pipeline._download_sidedata(tmp_path)
+
+    assert read.await_count == 3
+    assert all(
+        call.kwargs["deadline_seconds"] == pipeline.SIDEDATA_DOWNLOAD_DEADLINE_SECONDS
+        for call in read.await_args_list
+    )

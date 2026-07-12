@@ -41,6 +41,8 @@ _DEFENSIVE_DOWNLOAD_HOSTS = frozenset(
 # Fail-closed download ceilings.
 MAX_BUNDLE_BYTES = 2 * 1024**3  # 2 GiB
 MAX_SHA256_BYTES = 1 * 1024 * 1024  # 1 MiB
+CHECKSUM_DOWNLOAD_DEADLINE_SECONDS = 2 * 60.0
+BUNDLE_DOWNLOAD_DEADLINE_SECONDS = 45 * 60.0
 
 # Committed, in-repo authenticity anchors keyed by bundle asset filename. Empty
 # by default: operators pin a release out-of-band via EXPECTED_BUNDLE_SHA256, or
@@ -107,7 +109,12 @@ async def resolve_latest(repo: str) -> str:
 async def fetch_sibling_sha256(url: str) -> str:
     """Fetch <url>.sha256 sibling file and return the hex digest (integrity)."""
     async with _download_client(url) as c:
-        body = await read_capped(c, f"{url}.sha256", max_bytes=MAX_SHA256_BYTES)
+        body = await read_capped(
+            c,
+            f"{url}.sha256",
+            max_bytes=MAX_SHA256_BYTES,
+            deadline_seconds=CHECKSUM_DOWNLOAD_DEADLINE_SECONDS,
+        )
     return body.decode("utf-8", "replace").strip().split()[0]
 
 
@@ -118,7 +125,13 @@ async def download_with_integrity(url: str, dest: Path, *, expected_sha256: str)
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.parent / (dest.name + ".part")
     async with _download_client(url) as c:
-        digest = await stream_to_file(c, url, part, max_bytes=MAX_BUNDLE_BYTES)
+        digest = await stream_to_file(
+            c,
+            url,
+            part,
+            max_bytes=MAX_BUNDLE_BYTES,
+            deadline_seconds=BUNDLE_DOWNLOAD_DEADLINE_SECONDS,
+        )
 
     # Authenticity (independent of the possibly-redirected host): the committed
     # anchor is the authority. A same-host .sha256 alone is NOT authenticity --

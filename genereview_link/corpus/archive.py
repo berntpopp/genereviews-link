@@ -33,6 +33,10 @@ _NCBI_HOSTS = build_host_allowlist(FILE_LIST_URL, LITARCH_BASE)
 MAX_TARBALL_BYTES = 4 * 1024**3  # ~4 GiB
 # file_list.csv is a small text index; anything huge is an attack/mistake.
 MAX_LISTING_BYTES = 64 * 1024 * 1024  # 64 MiB
+# Explicit whole-transfer budgets.  These are intentionally set at each call
+# boundary rather than inheriting the guard's generic default.
+LISTING_DOWNLOAD_DEADLINE_SECONDS = 2 * 60.0
+TARBALL_DOWNLOAD_DEADLINE_SECONDS = 20 * 60.0
 
 
 def _ncbi_client() -> httpx.AsyncClient:
@@ -82,7 +86,12 @@ def parse_file_list_row(row: str, nbk_filter: str = "NBK1116") -> ArchiveListing
 async def fetch_listing(*, nbk_id: str = "NBK1116") -> ArchiveListing:
     """Fetch file_list.csv and return the ArchiveListing for *nbk_id*."""
     async with _ncbi_client() as client:
-        body = await read_capped(client, FILE_LIST_URL, max_bytes=MAX_LISTING_BYTES)
+        body = await read_capped(
+            client,
+            FILE_LIST_URL,
+            max_bytes=MAX_LISTING_BYTES,
+            deadline_seconds=LISTING_DOWNLOAD_DEADLINE_SECONDS,
+        )
     for line in body.decode("utf-8", "replace").splitlines():
         parsed = parse_file_list_row(line, nbk_filter=nbk_id)
         if parsed:
@@ -106,5 +115,10 @@ async def download_tarball(
     dest.parent.mkdir(parents=True, exist_ok=True)
     async with _ncbi_client() as client:
         return await stream_to_file(
-            client, url, dest, max_bytes=MAX_TARBALL_BYTES, chunk_size=chunk_size
+            client,
+            url,
+            dest,
+            max_bytes=MAX_TARBALL_BYTES,
+            chunk_size=chunk_size,
+            deadline_seconds=TARBALL_DOWNLOAD_DEADLINE_SECONDS,
         )
