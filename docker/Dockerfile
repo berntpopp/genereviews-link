@@ -23,10 +23,10 @@ ENV VIRTUAL_ENV="/opt/venv" \
 WORKDIR /app
 COPY uv.lock pyproject.toml README.md ./
 
-# Upgrade pip to a patched release (clears CVE-2025-8869, CVE-2026-1703,
-# CVE-2026-3219, CVE-2026-6357 flagged by image scanners) before installing uv.
-RUN pip install --upgrade "pip>=26.1" uv && \
-    uv sync --frozen --no-dev --active
+# Use a digest-pinned uv binary so rebuilds are reproducible (no floating
+# `pip install uv`). Pin bumps are reviewed as an explicit digest change.
+COPY --from=ghcr.io/astral-sh/uv:0.8.7@sha256:1e26f9a868360eeb32500a35e05787ffff3402f01a8dc8168ef6aee44aef0aab /uv /usr/local/bin/uv
+RUN uv sync --frozen --no-dev --active
 
 # --- Production Stage ---
 FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf AS production
@@ -59,10 +59,10 @@ COPY --chown=app:app ./genereview_link ./genereview_link
 COPY --chown=app:app ./server.py ./mcp_server.py ./pyproject.toml ./README.md ./
 COPY --chown=app:app ./docker/gunicorn_conf.py ./
 
-# Upgrade the base image's system pip (/usr/local) to a patched release so it is
-# not flagged by image scanners (CVE-2025-8869, CVE-2026-1703/3219/6357), then
-# install the project into the (already patched) virtualenv.
-RUN /usr/local/bin/python -m pip install --no-cache-dir --upgrade "pip>=26.1" && \
+# Pin the base image's system pip (/usr/local) to an exact patched release so it
+# is not flagged by image scanners (CVE-2025-8869, CVE-2026-1703/3219/6357) and
+# the bootstrap stays reproducible, then install the project into the virtualenv.
+RUN /usr/local/bin/python -m pip install --no-cache-dir pip==26.1 && \
     /opt/venv/bin/pip install -e . --no-deps
 
 USER app
