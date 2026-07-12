@@ -43,7 +43,7 @@ jobs:
       - name: Run container and check health
         run: |
           docker run --rm -d --name gr-ci -p 8000:8000 genereview-link:ci
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsS http://localhost:8000/health; then
               echo "healthy"
               break

@@ -72,6 +72,8 @@ jobs:
           SQL
       - name: Summary
         run: |
-          echo "## Corpus Bundle Verification" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Verified: ${{ inputs.bundle_url }}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Corpus Bundle Verification"
+            echo ""
+            echo "Verified: ${{ inputs.bundle_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
