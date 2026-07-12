@@ -312,6 +312,19 @@ Static references are also available as MCP resources, including
 - **Fallback Mechanisms**: Multiple strategies for data retrieval
 - **Comprehensive Logging**: Detailed error context for debugging and monitoring
 
+## Security
+
+See [`SECURITY.md`](SECURITY.md) for the vulnerability-reporting process and the
+required repository settings. In particular, an operator must enable **secret
+scanning and push protection** (a GitHub repo setting, not code) via the
+`gh api` command documented there. CodeQL and Dependabot are already wired into
+CI.
+
+When restoring from a release bundle (Mode 1), set `EXPECTED_BUNDLE_SHA256` to
+an independently-trusted, out-of-band SHA-256 of the bundle so authenticity is
+verified against a committed anchor rather than a checksum fetched from the same
+(redirected) download host.
+
 ## License
 
 This project is licensed under the MIT License.
