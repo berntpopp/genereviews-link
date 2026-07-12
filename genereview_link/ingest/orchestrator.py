@@ -10,6 +10,7 @@ from typing import Any
 import asyncpg
 
 from genereview_link.config import settings
+from genereview_link.db.identifiers import quote_pg_identifier
 from genereview_link.retrieval.embeddings import (
     EmbeddingProvider,
     bge_passage_text,
@@ -32,11 +33,12 @@ async def iter_passages_missing_embedding(
     inserted embedding rows do not shift the result window — every passage
     is visited exactly once.
     """
+    quoted_schema = quote_pg_identifier(schema)
     last_nbk = ""
     last_pid = ""
     while True:
         async with pool.acquire() as conn:
-            await conn.execute(f'set search_path to "{schema}", public')
+            await conn.execute(f"set search_path to {quoted_schema}, public")
             rows = await conn.fetch(
                 """
                 select p.nbk_id, p.passage_id, p.text, p.passage_type
@@ -74,6 +76,7 @@ async def backfill_embeddings(
     batch_size = batch_size or settings.INGEST_EMBED_BATCH_SIZE
     db_writers = db_writers or settings.INGEST_EMBED_WRITERS
 
+    quoted_schema = quote_pg_identifier(schema)
     encoded_q: asyncio.Queue[list[Any] | None] = asyncio.Queue(maxsize=2)
     total = 0
 
@@ -107,7 +110,7 @@ async def backfill_embeddings(
             if records is None:
                 return
             async with pool.acquire() as conn:
-                await conn.execute(f'set search_path to "{schema}", public')
+                await conn.execute(f"set search_path to {quoted_schema}, public")
                 await conn.copy_records_to_table(
                     "genereview_embeddings_bge384",
                     records=records,
@@ -128,11 +131,12 @@ async def backfill_embeddings(
 
 async def build_hnsw_index(pool: asyncpg.Pool, *, schema: str = "genereview") -> None:
     """Build the HNSW index post-COPY."""
+    quoted_schema = quote_pg_identifier(schema)
     async with pool.acquire() as conn:
         await conn.execute(
             f"""
             create index if not exists genereview_embeddings_bge384_hnsw_cosine
-                on "{schema}".genereview_embeddings_bge384
+                on {quoted_schema}.genereview_embeddings_bge384
                 using hnsw (embedding vector_cosine_ops)
                 with (m = 16, ef_construction = 200)
             """

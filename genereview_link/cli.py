@@ -130,8 +130,18 @@ def db_migrate(
     ] = "genereview",
 ) -> None:
     """Apply control and data migrations against DATABASE_URL."""
+    from genereview_link.db.identifiers import validate_schema_identifier
     from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
     from genereview_link.db.pool import create_pool
+
+    try:
+        validate_schema_identifier(schema)
+    except ValueError:
+        raise typer.BadParameter(
+            "must be a valid PostgreSQL identifier "
+            "(letters, digits, underscore; not starting with a digit; <=63 chars)",
+            param_hint="--schema",
+        ) from None
 
     async def run() -> None:
         pool = await create_pool()

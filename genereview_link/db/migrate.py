@@ -17,6 +17,7 @@ from typing import Literal
 
 import asyncpg
 
+from genereview_link.db.identifiers import quote_pg_identifier, validate_schema_identifier
 from genereview_link.db.migrations import control as control_pkg
 from genereview_link.db.migrations import data as data_pkg
 
@@ -92,11 +93,14 @@ async def apply_data_migrations(pool: asyncpg.Pool, *, schema: str) -> list[str]
     Migrations may reference unqualified table names since search_path is set
     to schema,public for the duration of each migration.
     """
+    # Fail closed on a hostile schema identifier BEFORE any connection/SQL.
+    validate_schema_identifier(schema)
+    quoted_schema = quote_pg_identifier(schema)
     applied: list[str] = []
     files = _list_sql(data_pkg)
     async with pool.acquire() as conn:
         await _ensure_migrations_table(conn)
-        await conn.execute(f'create schema if not exists "{schema}"')
+        await conn.execute(f"create schema if not exists {quoted_schema}")
         existing = {
             row["version"]
             for row in await conn.fetch(
@@ -110,7 +114,7 @@ async def apply_data_migrations(pool: asyncpg.Pool, *, schema: str) -> list[str]
             if qualified in existing:
                 continue
             async with conn.transaction():
-                await conn.execute(f'set local search_path to "{schema}", public')
+                await conn.execute(f"set local search_path to {quoted_schema}, public")
                 await conn.execute(sql)
                 await conn.execute(
                     "insert into public.schema_migrations (namespace, version) values ('data', $1)",
