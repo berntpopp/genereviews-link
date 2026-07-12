@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # The three sidedata index files are small; cap each fail-closed so a hostile
 # NCBI mirror cannot exhaust RAM via an oversized response.
 MAX_SIDEDATA_BYTES = 64 * 1024 * 1024  # 64 MiB
+SIDEDATA_DOWNLOAD_DEADLINE_SECONDS = 2 * 60.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,5 +274,10 @@ async def _download_sidedata(target: Path) -> None:
         event_hooks={"request": [make_url_guard(hosts)]},
     ) as client:
         for name in files:
-            body = await read_capped(client, f"{base}/{name}", max_bytes=MAX_SIDEDATA_BYTES)
+            body = await read_capped(
+                client,
+                f"{base}/{name}",
+                max_bytes=MAX_SIDEDATA_BYTES,
+                deadline_seconds=SIDEDATA_DOWNLOAD_DEADLINE_SECONDS,
+            )
             (target / name).write_bytes(body)

@@ -30,8 +30,8 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:ci@localhost:5432/genereview
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       - run: uv sync --frozen
       - name: Download bundle and checksum
         run: |
@@ -72,6 +72,8 @@ jobs:
           SQL
       - name: Summary
         run: |
-          echo "## Corpus Bundle Verification" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Verified: ${{ inputs.bundle_url }}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Corpus Bundle Verification"
+            echo ""
+            echo "Verified: ${{ inputs.bundle_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"

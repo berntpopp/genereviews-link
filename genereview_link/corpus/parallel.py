@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator, Iterator
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO
 
 import asyncpg
 
@@ -47,35 +48,49 @@ class _RawNxml:
     raw: bytes
 
 
+def _read_regular_member(fh: IO[bytes], *, declared_size: int, name: str) -> bytes:
+    """Read one regular archive member and reject header/content mismatches."""
+    data = fh.read(MAX_MEMBER_BYTES + 1)
+    if len(data) > MAX_MEMBER_BYTES:
+        raise ResponseTooLargeError(f"tar member {name} expanded beyond {MAX_MEMBER_BYTES} bytes")
+    if len(data) != declared_size:
+        raise ResponseTooLargeError(
+            f"tar member {name} size mismatch: declared {declared_size}, got {len(data)}"
+        )
+    return data
+
+
 def _iter_tarball(path: Path) -> Iterator[_RawNxml]:
     members_seen = 0
-    total_expanded = 0
+    total_declared = 0
+    total_actual = 0
     with tarfile.open(path, "r:gz") as tf:
         for member in tf:
             members_seen += 1
             if members_seen > MAX_TAR_MEMBERS:
                 raise ResponseTooLargeError(f"tarball exceeds {MAX_TAR_MEMBERS} members")
-            if not member.isfile() or not member.name.endswith(".nxml"):
+            if not member.isfile():
                 continue
             if member.size > MAX_MEMBER_BYTES:
                 raise ResponseTooLargeError(
                     f"tar member {member.name} size {member.size} exceeds {MAX_MEMBER_BYTES} bytes"
                 )
+            total_declared += member.size
+            if total_declared > MAX_TOTAL_EXPANDED_BYTES:
+                raise ResponseTooLargeError(
+                    f"tarball declared expansion beyond {MAX_TOTAL_EXPANDED_BYTES} bytes"
+                )
             fh = tf.extractfile(member)
             if fh is None:
+                raise ResponseTooLargeError(f"cannot read regular tar member {member.name}")
+            data = _read_regular_member(fh, declared_size=member.size, name=member.name)
+            total_actual += len(data)
+            if total_actual > MAX_TOTAL_EXPANDED_BYTES:
+                raise ResponseTooLargeError(
+                    f"tarball actual expansion beyond {MAX_TOTAL_EXPANDED_BYTES} bytes"
+                )
+            if not member.name.endswith(".nxml"):
                 continue
-            # Bounded read: never pull more than the cap into RAM even if the
-            # member header understates its true size.
-            data = fh.read(MAX_MEMBER_BYTES + 1)
-            if len(data) > MAX_MEMBER_BYTES:
-                raise ResponseTooLargeError(
-                    f"tar member {member.name} expanded beyond {MAX_MEMBER_BYTES} bytes"
-                )
-            total_expanded += len(data)
-            if total_expanded > MAX_TOTAL_EXPANDED_BYTES:
-                raise ResponseTooLargeError(
-                    f"tarball expanded beyond {MAX_TOTAL_EXPANDED_BYTES} bytes"
-                )
             yield _RawNxml(nbk_id="", relpath=member.name, raw=data)
             del data
             # nbk_id is resolved later via short-name + sidedata

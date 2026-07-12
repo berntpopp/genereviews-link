@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import cast
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -57,6 +59,40 @@ async def test_download_follows_github_to_cdn_hop(
     await gh.download_with_integrity(BUNDLE_URL, dest, expected_sha256=digest)
     assert dest.read_bytes() == payload
     assert not (tmp_path / "bundle.tar.gz.part").exists()
+
+
+async def test_checksum_download_passes_its_explicit_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    read = AsyncMock(return_value=b"a" * 64)
+    monkeypatch.setattr(gh, "read_capped", read)
+
+    await gh.fetch_sibling_sha256(BUNDLE_URL)
+
+    call = read.await_args
+    assert call is not None
+    assert call.kwargs["deadline_seconds"] == gh.CHECKSUM_DOWNLOAD_DEADLINE_SECONDS
+
+
+async def test_bundle_download_passes_its_explicit_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    digest = "a" * 64
+
+    async def write_part(*args: object, **_: object) -> str:
+        dest = cast(Path, args[2])
+        dest.write_bytes(b"bundle")
+        return digest
+
+    stream = AsyncMock(side_effect=write_part)
+    monkeypatch.setattr(gh, "stream_to_file", stream)
+    monkeypatch.setattr(settings, "EXPECTED_BUNDLE_SHA256", digest)
+
+    await gh.download_with_integrity(BUNDLE_URL, tmp_path / "bundle.tar.gz", expected_sha256=digest)
+
+    call = stream.await_args
+    assert call is not None
+    assert call.kwargs["deadline_seconds"] == gh.BUNDLE_DOWNLOAD_DEADLINE_SECONDS
 
 
 @respx.mock(assert_all_called=False)

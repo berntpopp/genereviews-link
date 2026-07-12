@@ -24,8 +24,11 @@ jobs:
         run: make docker-build && make docker-up
       - name: Wait for health
         run: |
-          for i in $(seq 1 30); do
-            curl -fsS "http://127.0.0.1:${MCP_PORT}/health" && break || sleep 2
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${MCP_PORT}/health"; then
+              break
+            fi
+            sleep 2
           done
       - name: Run conformance probe
         env:
