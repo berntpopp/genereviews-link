@@ -1090,43 +1090,39 @@ class TestChunking:
 
 class TestArchiveFetch:
     @pytest.mark.asyncio
-    async def test_fetch_listing_finds_matching_row(self, mocker: MockerFixture) -> None:
+    async def test_fetch_listing_finds_matching_row(self) -> None:
+        import httpx
+        import respx
+
         from genereview_link.corpus import archive
 
         csv_text = (
             "books/NBK1116/genereviews.NBK1116.tar.gz,GeneReviews,UW,1993,NBK1116,2026-04-01\n"
             "other.tar.gz,Other,Pub,2000,NBK9999,2024-01-01\n"
         )
-        fake_response = MagicMock()
-        fake_response.raise_for_status = MagicMock()
-        fake_response.text = csv_text
-
-        fake_client = MagicMock()
-        fake_client.get = AsyncMock(return_value=fake_response)
-        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
-        fake_client.__aexit__ = AsyncMock(return_value=False)
-        mocker.patch.object(archive.httpx, "AsyncClient", return_value=fake_client)
-
-        listing = await archive.fetch_listing()
+        with respx.mock(assert_all_called=False) as router:
+            router.get(archive.FILE_LIST_URL).mock(
+                return_value=httpx.Response(200, content=csv_text.encode())
+            )
+            listing = await archive.fetch_listing()
         assert listing.nbk_id == "NBK1116"
         assert listing.last_updated == "2026-04-01"
 
     @pytest.mark.asyncio
-    async def test_fetch_listing_raises_when_missing(self, mocker: MockerFixture) -> None:
+    async def test_fetch_listing_raises_when_missing(self) -> None:
+        import httpx
+        import respx
+
         from genereview_link.corpus import archive
 
-        fake_response = MagicMock()
-        fake_response.raise_for_status = MagicMock()
-        fake_response.text = "other.tar.gz,Other,Pub,2000,NBK9999,2024-01-01\n"
-
-        fake_client = MagicMock()
-        fake_client.get = AsyncMock(return_value=fake_response)
-        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
-        fake_client.__aexit__ = AsyncMock(return_value=False)
-        mocker.patch.object(archive.httpx, "AsyncClient", return_value=fake_client)
-
-        with pytest.raises(RuntimeError, match="not found"):
-            await archive.fetch_listing(nbk_id="NBK1116")
+        with respx.mock(assert_all_called=False) as router:
+            router.get(archive.FILE_LIST_URL).mock(
+                return_value=httpx.Response(
+                    200, content=b"other.tar.gz,Other,Pub,2000,NBK9999,2024-01-01\n"
+                )
+            )
+            with pytest.raises(RuntimeError, match="not found"):
+                await archive.fetch_listing(nbk_id="NBK1116")
 
 
 # ---- ingest/github_release.download_with_integrity -------------------------

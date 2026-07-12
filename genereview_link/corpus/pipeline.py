@@ -20,8 +20,18 @@ from genereview_link.corpus.parallel import copy_chapters, copy_passages, parse_
 from genereview_link.corpus.records import ChapterRecord, PassageRecord
 from genereview_link.corpus.sidedata import load_sidedata
 from genereview_link.db.migrate import apply_data_migrations
+from genereview_link.download_guard import (
+    STREAM_TIMEOUT,
+    build_host_allowlist,
+    make_url_guard,
+    read_capped,
+)
 
 logger = logging.getLogger(__name__)
+
+# The three sidedata index files are small; cap each fail-closed so a hostile
+# NCBI mirror cannot exhaust RAM via an oversized response.
+MAX_SIDEDATA_BYTES = 64 * 1024 * 1024  # 64 MiB
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,8 +261,12 @@ async def _download_sidedata(target: Path) -> None:
         "NBKid_shortname_genesymbol.txt",
         "NBKid_shortname_OMIM.txt",
     )
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    hosts = build_host_allowlist(base)
+    async with httpx.AsyncClient(
+        timeout=STREAM_TIMEOUT,
+        follow_redirects=False,
+        event_hooks={"request": [make_url_guard(hosts)]},
+    ) as client:
         for name in files:
-            resp = await client.get(f"{base}/{name}")
-            resp.raise_for_status()
-            (target / name).write_bytes(resp.content)
+            body = await read_capped(client, f"{base}/{name}", max_bytes=MAX_SIDEDATA_BYTES)
+            (target / name).write_bytes(body)

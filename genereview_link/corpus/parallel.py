@@ -21,6 +21,14 @@ from genereview_link.config import settings
 from genereview_link.corpus.nxml import ChapterIngestAudit, NxmlParseError, parse_and_chunk_one
 from genereview_link.corpus.records import ChapterRecord, PassageRecord
 from genereview_link.corpus.sidedata import SideData
+from genereview_link.download_guard import ResponseTooLargeError
+
+# Resource ceilings for untrusted tarball members (F-05). A GeneReviews chapter
+# .nxml is well under a few MB; these caps keep a single hostile/corrupt member
+# (or a member-count/expanded-size bomb) from exhausting per-worker RAM.
+MAX_TAR_MEMBERS = 100_000
+MAX_MEMBER_BYTES = 64 * 1024 * 1024  # 64 MiB per member
+MAX_TOTAL_EXPANDED_BYTES = 8 * 1024**3  # 8 GiB across the whole archive
 
 # Coverage threshold: if more than this fraction of a chapter's body text is
 # unaccounted for after parsing, we log it at WARNING for operator review.
@@ -40,14 +48,34 @@ class _RawNxml:
 
 
 def _iter_tarball(path: Path) -> Iterator[_RawNxml]:
+    members_seen = 0
+    total_expanded = 0
     with tarfile.open(path, "r:gz") as tf:
         for member in tf:
+            members_seen += 1
+            if members_seen > MAX_TAR_MEMBERS:
+                raise ResponseTooLargeError(f"tarball exceeds {MAX_TAR_MEMBERS} members")
             if not member.isfile() or not member.name.endswith(".nxml"):
                 continue
+            if member.size > MAX_MEMBER_BYTES:
+                raise ResponseTooLargeError(
+                    f"tar member {member.name} size {member.size} exceeds {MAX_MEMBER_BYTES} bytes"
+                )
             fh = tf.extractfile(member)
             if fh is None:
                 continue
-            data = fh.read()
+            # Bounded read: never pull more than the cap into RAM even if the
+            # member header understates its true size.
+            data = fh.read(MAX_MEMBER_BYTES + 1)
+            if len(data) > MAX_MEMBER_BYTES:
+                raise ResponseTooLargeError(
+                    f"tar member {member.name} expanded beyond {MAX_MEMBER_BYTES} bytes"
+                )
+            total_expanded += len(data)
+            if total_expanded > MAX_TOTAL_EXPANDED_BYTES:
+                raise ResponseTooLargeError(
+                    f"tarball expanded beyond {MAX_TOTAL_EXPANDED_BYTES} bytes"
+                )
             yield _RawNxml(nbk_id="", relpath=member.name, raw=data)
             del data
             # nbk_id is resolved later via short-name + sidedata
