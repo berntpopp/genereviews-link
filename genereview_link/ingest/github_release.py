@@ -121,9 +121,29 @@ async def download_with_integrity(url: str, dest: Path, *, expected_sha256: str)
         digest = await stream_to_file(c, url, part, max_bytes=MAX_BUNDLE_BYTES)
 
     # Authenticity (independent of the possibly-redirected host): the committed
-    # anchor is the authority. A same-host .sha256 alone is NOT authenticity.
+    # anchor is the authority. A same-host .sha256 alone is NOT authenticity --
+    # a host that can serve a tampered bundle can serve a matching sibling too.
     anchor = committed_bundle_digest(url)
-    if anchor is not None and digest != anchor:
+    if anchor is None:
+        # Fail CLOSED: refuse to promote a bundle whose authenticity rests only
+        # on the same-host sibling .sha256. Operators must anchor authenticity
+        # (EXPECTED_BUNDLE_SHA256 / BUNDLE_DIGEST_ANCHORS) or knowingly opt in to
+        # transport-integrity-only bootstrap via ALLOW_UNANCHORED_BUNDLE.
+        if not settings.ALLOW_UNANCHORED_BUNDLE:
+            part.unlink(missing_ok=True)
+            raise RuntimeError(
+                "refusing to promote unanchored corpus bundle: no independent "
+                "authenticity anchor is configured (set EXPECTED_BUNDLE_SHA256 or add a "
+                "BUNDLE_DIGEST_ANCHORS entry, or set ALLOW_UNANCHORED_BUNDLE=true to accept "
+                "same-host transport integrity only)"
+            )
+        logger.warning(
+            "promoting UNANCHORED corpus bundle for %s (ALLOW_UNANCHORED_BUNDLE=true); "
+            "authenticity rests on same-host transport integrity only -- set "
+            "EXPECTED_BUNDLE_SHA256 to anchor authenticity",
+            dest.name,
+        )
+    elif digest != anchor:
         part.unlink(missing_ok=True)
         raise RuntimeError("bundle authenticity check failed: committed digest mismatch")
 
@@ -132,12 +152,6 @@ async def download_with_integrity(url: str, dest: Path, *, expected_sha256: str)
         part.unlink(missing_ok=True)
         raise RuntimeError(f"bundle sha256 mismatch: expected {expected_sha256}, got {digest}")
 
-    if anchor is None:
-        logger.warning(
-            "bundle authenticity not anchored for %s (no committed digest); verified "
-            "transport integrity only -- set EXPECTED_BUNDLE_SHA256 to anchor authenticity",
-            dest.name,
-        )
     os.replace(part, dest)
 
 

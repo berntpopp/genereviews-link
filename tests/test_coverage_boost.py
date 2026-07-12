@@ -1131,16 +1131,22 @@ _GH_BUNDLE = "https://github.com/berntpopp/genereviews-link/releases/download/v1
 
 class TestDownloadWithIntegrity:
     @pytest.mark.asyncio
-    async def test_download_writes_file_and_validates_sha(self, tmp_path: Path) -> None:
+    async def test_download_writes_file_and_validates_sha(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import hashlib
 
         import httpx
         import respx
 
+        from genereview_link.config import settings
         from genereview_link.ingest import github_release as gh
 
         payload = b"hello world"
         expected = hashlib.sha256(payload).hexdigest()
+        # Anchor authenticity so the (unrelated) transport-integrity happy path
+        # under test is not blocked by the fail-closed unanchored-promotion guard.
+        monkeypatch.setattr(settings, "EXPECTED_BUNDLE_SHA256", expected)
 
         dest = tmp_path / "bundle.tar.gz"
         with respx.mock(assert_all_called=False) as router:
@@ -1149,12 +1155,22 @@ class TestDownloadWithIntegrity:
         assert dest.read_bytes() == payload
 
     @pytest.mark.asyncio
-    async def test_download_raises_on_sha_mismatch(self, tmp_path: Path) -> None:
+    async def test_download_raises_on_sha_mismatch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import hashlib
+
         import httpx
         import respx
 
+        from genereview_link.config import settings
         from genereview_link.ingest import github_release as gh
 
+        # Anchor matches the served bytes so we reach the transport-integrity
+        # check; the sibling expected_sha256 is what diverges here.
+        monkeypatch.setattr(
+            settings, "EXPECTED_BUNDLE_SHA256", hashlib.sha256(b"actual").hexdigest()
+        )
         dest = tmp_path / "bundle.tar.gz"
         with respx.mock(assert_all_called=False) as router:
             router.get(_GH_BUNDLE).mock(return_value=httpx.Response(200, content=b"actual"))

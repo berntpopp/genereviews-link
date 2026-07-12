@@ -42,15 +42,19 @@ async def test_url_guard_rejects_scheme_userinfo_and_host() -> None:
 
 
 @respx.mock(assert_all_called=False)
-async def test_download_follows_github_to_cdn_hop(respx_mock: respx.Router, tmp_path: Path) -> None:
+async def test_download_follows_github_to_cdn_hop(
+    respx_mock: respx.Router, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     payload = b"corpus-bundle-bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    # Anchor authenticity so the (separate) redirect-hop behaviour under test is
+    # not masked by the fail-closed unanchored-promotion guard.
+    monkeypatch.setattr(settings, "EXPECTED_BUNDLE_SHA256", digest)
     respx_mock.get(BUNDLE_URL).mock(return_value=httpx.Response(302, headers={"Location": CDN_URL}))
     respx_mock.get(CDN_URL).mock(return_value=httpx.Response(200, content=payload))
 
     dest = tmp_path / "bundle.tar.gz"
-    await gh.download_with_integrity(
-        BUNDLE_URL, dest, expected_sha256=hashlib.sha256(payload).hexdigest()
-    )
+    await gh.download_with_integrity(BUNDLE_URL, dest, expected_sha256=digest)
     assert dest.read_bytes() == payload
     assert not (tmp_path / "bundle.tar.gz.part").exists()
 
@@ -129,6 +133,53 @@ async def test_download_passes_matching_committed_digest(
 
     dest = tmp_path / "bundle.tar.gz"
     await gh.download_with_integrity(BUNDLE_URL, dest, expected_sha256=digest)
+    assert dest.read_bytes() == payload
+
+
+# ---- fail-closed when unanchored (F-06 gate) -------------------------------
+
+
+@respx.mock(assert_all_called=False)
+async def test_download_fails_closed_without_committed_anchor(
+    respx_mock: respx.Router, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No independent anchor + no explicit opt-in => refuse promotion.
+
+    A same-host `.sha256` (expected_sha256) proves transport integrity but NOT
+    authenticity: a host that can serve a tampered bundle can serve a matching
+    sibling too. With EXPECTED_BUNDLE_SHA256 unset, no in-repo anchor, and
+    ALLOW_UNANCHORED_BUNDLE=false, the download must fail closed and leave no
+    promoted file behind.
+    """
+    payload = b"same-host-authenticated-only"
+    sibling_sha = hashlib.sha256(payload).hexdigest()  # transport integrity matches
+    monkeypatch.setattr(settings, "EXPECTED_BUNDLE_SHA256", "")
+    monkeypatch.setattr(gh, "BUNDLE_DIGEST_ANCHORS", {})
+    monkeypatch.setattr(settings, "ALLOW_UNANCHORED_BUNDLE", False)
+    respx_mock.get(BUNDLE_URL).mock(return_value=httpx.Response(200, content=payload))
+
+    dest = tmp_path / "bundle.tar.gz"
+    with pytest.raises(RuntimeError, match="anchor"):
+        await gh.download_with_integrity(BUNDLE_URL, dest, expected_sha256=sibling_sha)
+    assert not dest.exists()
+    assert not (tmp_path / "bundle.tar.gz.part").exists()
+
+
+@respx.mock(assert_all_called=False)
+async def test_download_unanchored_opt_in_allows_promotion(
+    respx_mock: respx.Router, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The explicit ALLOW_UNANCHORED_BUNDLE=true escape hatch restores transport-
+    integrity-only promotion for operators who accept that risk knowingly."""
+    payload = b"unanchored-but-opted-in"
+    sibling_sha = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setattr(settings, "EXPECTED_BUNDLE_SHA256", "")
+    monkeypatch.setattr(gh, "BUNDLE_DIGEST_ANCHORS", {})
+    monkeypatch.setattr(settings, "ALLOW_UNANCHORED_BUNDLE", True)
+    respx_mock.get(BUNDLE_URL).mock(return_value=httpx.Response(200, content=payload))
+
+    dest = tmp_path / "bundle.tar.gz"
+    await gh.download_with_integrity(BUNDLE_URL, dest, expected_sha256=sibling_sha)
     assert dest.read_bytes() == payload
 
 

@@ -19,6 +19,7 @@ from genereview_link.corpus.nxml import extract_primary_gene_symbols
 from genereview_link.corpus.parallel import copy_chapters, copy_passages, parse_pipeline
 from genereview_link.corpus.records import ChapterRecord, PassageRecord
 from genereview_link.corpus.sidedata import load_sidedata
+from genereview_link.db.identifiers import quote_pg_identifier
 from genereview_link.db.migrate import apply_data_migrations
 from genereview_link.download_guard import (
     STREAM_TIMEOUT,
@@ -98,7 +99,9 @@ async def atomic_swap(
         )
         if existing:
             target = f"genereview_old_{existing.replace('-', '_').replace('.', '_')}"
-            await conn.execute(f'alter schema genereview rename to "{target}"')
+            # Fail closed: validate the derived schema identifier before it is
+            # interpolated into the rename DDL (quote_pg_identifier double-quotes).
+            await conn.execute(f"alter schema genereview rename to {quote_pg_identifier(target)}")
             # Remove the old genereview:* migration records so the rename-rewrite
             # below (genereview_staging:* → genereview:*) does not hit a unique
             # constraint violation on the primary key (namespace, version).
@@ -159,7 +162,9 @@ async def cleanup_old(pool: asyncpg.Pool, *, retain: int = 2) -> int:
         return 0
     for row in rows[retain:]:
         async with pool.acquire() as conn:
-            await conn.execute(f'drop schema "{row["schema_name"]}" cascade')
+            # Fail closed: validate the catalog-sourced schema name before the DDL.
+            quoted = quote_pg_identifier(row["schema_name"])
+            await conn.execute(f"drop schema {quoted} cascade")
         dropped += 1
     return dropped
 

@@ -165,6 +165,7 @@ def db_reset(
     confirm: Annotated[bool, typer.Option("--yes", help="Confirm destructive operation.")] = False,
 ) -> None:
     """DROP genereview/genereview_staging schemas and re-run migrations (dev only)."""
+    from genereview_link.db.identifiers import quote_pg_identifier
     from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
     from genereview_link.db.pool import create_pool
 
@@ -183,7 +184,9 @@ def db_reset(
                     "where schema_name like 'genereview_old_%'"
                 )
                 for row in rows:
-                    await conn.execute(f"drop schema {row['schema_name']} cascade")
+                    # Fail closed: validate the catalog-sourced schema name first.
+                    quoted = quote_pg_identifier(row["schema_name"])
+                    await conn.execute(f"drop schema {quoted} cascade")
                 # Clear stale data-migration records so the next apply re-creates tables.
                 await conn.execute(
                     "delete from public.schema_migrations "

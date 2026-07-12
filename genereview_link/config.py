@@ -97,6 +97,15 @@ class Settings(BaseSettings):
     # match is rejected fail-closed. Empty = authenticity unverified (only
     # transport integrity via the sibling .sha256 is checked).
     EXPECTED_BUNDLE_SHA256: str = ""
+    # ALLOW_UNANCHORED_BUNDLE: fail-closed guard for the release-bundle restore.
+    # A downloaded bundle is promoted only when its authenticity is anchored by
+    # an INDEPENDENT committed digest (EXPECTED_BUNDLE_SHA256 or the in-repo
+    # BUNDLE_DIGEST_ANCHORS map). The same-host sibling `.sha256` is a transport
+    # integrity check ONLY -- a host that can serve a tampered bundle can serve a
+    # matching sibling too, so it MUST NOT be the sole authenticity gate. When no
+    # anchor is configured, promotion is refused. Set this to True to knowingly
+    # accept transport-integrity-only bootstrap (e.g. an air-gapped/dev mirror).
+    ALLOW_UNANCHORED_BUNDLE: bool = False
     # Writable directory for bundle download/extraction during bootstrap.
     BUNDLE_BOOTSTRAP_DIR: str = "/tmp/genereview-link"  # noqa: S108
     # BUILD_LOCAL: set to True to run a full local ingest on first boot.
