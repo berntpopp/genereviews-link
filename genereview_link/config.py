@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     # Corpus bootstrap modes
     # BUNDLE_URL: set to a .tar.gz URL (or "latest") to restore from a release bundle.
     BUNDLE_URL: str = ""
+    # EXPECTED_BUNDLE_SHA256: independently-trusted, out-of-band authenticity
+    # anchor for the release bundle. Set this from a source OTHER than the
+    # (possibly redirected) download host -- e.g. a value reviewed into the
+    # deployment config. When set, a downloaded bundle whose SHA-256 does not
+    # match is rejected fail-closed. Empty = authenticity unverified (only
+    # transport integrity via the sibling .sha256 is checked).
+    EXPECTED_BUNDLE_SHA256: str = ""
     # Writable directory for bundle download/extraction during bootstrap.
     BUNDLE_BOOTSTRAP_DIR: str = "/tmp/genereview-link"  # noqa: S108
     # BUILD_LOCAL: set to True to run a full local ingest on first boot.

@@ -438,20 +438,18 @@ class TestResolveLatest:
             await gh.resolve_latest("owner/repo")
 
     @pytest.mark.asyncio
-    async def test_fetch_sibling_sha256_returns_hex(self, mocker: MockerFixture) -> None:
+    async def test_fetch_sibling_sha256_returns_hex(self) -> None:
+        import httpx
+        import respx
+
         from genereview_link.ingest import github_release as gh
 
-        fake_response = MagicMock()
-        fake_response.raise_for_status = MagicMock()
-        fake_response.text = "deadbeef  bundle.tar.gz\n"
-
-        fake_client = MagicMock()
-        fake_client.get = AsyncMock(return_value=fake_response)
-        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
-        fake_client.__aexit__ = AsyncMock(return_value=False)
-        mocker.patch.object(gh.httpx, "AsyncClient", return_value=fake_client)
-
-        digest = await gh.fetch_sibling_sha256("https://x/bundle.tar.gz")
+        url = "https://github.com/berntpopp/genereviews-link/releases/download/v1/bundle.tar.gz"
+        with respx.mock(assert_all_called=False) as router:
+            router.get(f"{url}.sha256").mock(
+                return_value=httpx.Response(200, content=b"deadbeef  bundle.tar.gz\n")
+            )
+            digest = await gh.fetch_sibling_sha256(url)
         assert digest == "deadbeef"
 
     def test_pg_restore_invokes_subprocess(self, mocker: MockerFixture) -> None:
@@ -1128,94 +1126,56 @@ class TestArchiveFetch:
 # ---- ingest/github_release.download_with_integrity -------------------------
 
 
+_GH_BUNDLE = "https://github.com/berntpopp/genereviews-link/releases/download/v1/bundle.tar.gz"
+
+
 class TestDownloadWithIntegrity:
     @pytest.mark.asyncio
-    async def test_download_writes_file_and_validates_sha(
-        self, mocker: MockerFixture, tmp_path: Path
-    ) -> None:
+    async def test_download_writes_file_and_validates_sha(self, tmp_path: Path) -> None:
         import hashlib
+
+        import httpx
+        import respx
 
         from genereview_link.ingest import github_release as gh
 
         payload = b"hello world"
         expected = hashlib.sha256(payload).hexdigest()
 
-        async def _aiter_bytes(_size: int):
-            yield payload
-
-        stream_resp = MagicMock()
-        stream_resp.raise_for_status = MagicMock()
-        stream_resp.aiter_bytes = _aiter_bytes
-
-        stream_cm = MagicMock()
-        stream_cm.__aenter__ = AsyncMock(return_value=stream_resp)
-        stream_cm.__aexit__ = AsyncMock(return_value=False)
-
-        fake_client = MagicMock()
-        fake_client.stream = MagicMock(return_value=stream_cm)
-        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
-        fake_client.__aexit__ = AsyncMock(return_value=False)
-        client_factory = mocker.patch.object(gh.httpx, "AsyncClient", return_value=fake_client)
-
         dest = tmp_path / "bundle.tar.gz"
-        await gh.download_with_integrity(
-            "https://example.com/bundle.tar.gz", dest, expected_sha256=expected
-        )
+        with respx.mock(assert_all_called=False) as router:
+            router.get(_GH_BUNDLE).mock(return_value=httpx.Response(200, content=payload))
+            await gh.download_with_integrity(_GH_BUNDLE, dest, expected_sha256=expected)
         assert dest.read_bytes() == payload
-        assert client_factory.call_args.kwargs["follow_redirects"] is True
 
     @pytest.mark.asyncio
-    async def test_download_raises_on_sha_mismatch(
-        self, mocker: MockerFixture, tmp_path: Path
-    ) -> None:
+    async def test_download_raises_on_sha_mismatch(self, tmp_path: Path) -> None:
+        import httpx
+        import respx
+
         from genereview_link.ingest import github_release as gh
 
-        async def _aiter_bytes(_size: int):
-            yield b"actual"
-
-        stream_resp = MagicMock()
-        stream_resp.raise_for_status = MagicMock()
-        stream_resp.aiter_bytes = _aiter_bytes
-
-        stream_cm = MagicMock()
-        stream_cm.__aenter__ = AsyncMock(return_value=stream_resp)
-        stream_cm.__aexit__ = AsyncMock(return_value=False)
-
-        fake_client = MagicMock()
-        fake_client.stream = MagicMock(return_value=stream_cm)
-        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
-        fake_client.__aexit__ = AsyncMock(return_value=False)
-        client_factory = mocker.patch.object(gh.httpx, "AsyncClient", return_value=fake_client)
-
         dest = tmp_path / "bundle.tar.gz"
-        with pytest.raises(RuntimeError, match="sha256 mismatch"):
-            await gh.download_with_integrity(
-                "https://example.com/bundle.tar.gz",
-                dest,
-                expected_sha256="0" * 64,
-            )
-        assert client_factory.call_args.kwargs["follow_redirects"] is True
+        with respx.mock(assert_all_called=False) as router:
+            router.get(_GH_BUNDLE).mock(return_value=httpx.Response(200, content=b"actual"))
+            with pytest.raises(RuntimeError, match="sha256 mismatch"):
+                await gh.download_with_integrity(_GH_BUNDLE, dest, expected_sha256="0" * 64)
         # File must be cleaned up after a mismatch.
         assert not dest.exists()
 
     @pytest.mark.asyncio
-    async def test_fetch_sibling_sha256_follows_redirects(self, mocker: MockerFixture) -> None:
+    async def test_fetch_sibling_sha256_returns_digest(self) -> None:
+        import httpx
+        import respx
+
         from genereview_link.ingest import github_release as gh
 
-        fake_response = MagicMock()
-        fake_response.text = "abc123  bundle.tar.gz\n"
-        fake_response.raise_for_status = MagicMock()
-
-        fake_client = MagicMock()
-        fake_client.get = AsyncMock(return_value=fake_response)
-        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
-        fake_client.__aexit__ = AsyncMock(return_value=False)
-        client_factory = mocker.patch.object(gh.httpx, "AsyncClient", return_value=fake_client)
-
-        digest = await gh.fetch_sibling_sha256("https://example.com/bundle.tar.gz")
-
+        with respx.mock(assert_all_called=False) as router:
+            router.get(f"{_GH_BUNDLE}.sha256").mock(
+                return_value=httpx.Response(200, content=b"abc123  bundle.tar.gz\n")
+            )
+            digest = await gh.fetch_sibling_sha256(_GH_BUNDLE)
         assert digest == "abc123"
-        assert client_factory.call_args.kwargs["follow_redirects"] is True
 
 
 # ---- CLI db_reset (mocked --yes path) --------------------------------------
