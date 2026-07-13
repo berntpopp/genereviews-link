@@ -18,17 +18,17 @@
     "release_tag": "corpus-2026-05-12-r1",
     "digest": "sha256:7fbcca843ea2ab21c08bf59e44bbe8e92ac3ef7b19a44ce333edd3fc49dac591",
     "image_allowlist": [
-      "home/app/web/genereview_link/db/migrations/control/0001_base.sql",
-      "home/app/web/genereview_link/db/migrations/control/0002_corpus_version.sql",
-      "home/app/web/genereview_link/db/migrations/control/0003_refresh_log.sql",
-      "home/app/web/genereview_link/db/migrations/control/0004_active_embedding.sql",
-      "home/app/web/genereview_link/db/migrations/data/0001_chapters.sql",
-      "home/app/web/genereview_link/db/migrations/data/0002_passages.sql",
-      "home/app/web/genereview_link/db/migrations/data/0003_embeddings_bge384.sql",
-      "home/app/web/genereview_link/db/migrations/data/0004_passage_type_and_tables.sql",
-      "home/app/web/genereview_link/db/migrations/data/0005_passage_role.sql",
-      "home/app/web/genereview_link/db/migrations/data/0006_primary_gene_symbols.sql",
-      "home/app/web/genereview_link/db/migrations/data/__init__.py"
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0001_base.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0002_corpus_version.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0003_refresh_log.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0004_active_embedding.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0001_chapters.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0002_passages.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0003_embeddings_bge384.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0004_passage_type_and_tables.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0005_passage_role.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0006_primary_gene_symbols.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/__init__.py"
     ]
   },
   "definitions": {
