@@ -20,6 +20,18 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
       - run: uv sync --group dev
+      - name: Pre-seed the reviewed corpus artifact
+        # The corpus is a restored database and genereview-corpus-restore has no egress, so
+        # the exact digest-pinned data release must be staged before the stack starts. This
+        # is the same hook the central container-ci smoke gate runs.
+        run: |
+          set -euo pipefail
+          export GF_SMOKE_FIXTURE_DIR="$RUNNER_TEMP/smoke-fixtures"
+          export GF_SMOKE_ENV_FILE="$RUNNER_TEMP/smoke.env"
+          mkdir -p "$GF_SMOKE_FIXTURE_DIR"
+          : > "$GF_SMOKE_ENV_FILE"
+          bash docker/ci-prepare-smoke.sh
+          cat "$GF_SMOKE_ENV_FILE" >> "$GITHUB_ENV"
       - name: Build & start server
         run: make docker-build && make docker-up
       - name: Wait for health
