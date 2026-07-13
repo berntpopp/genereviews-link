@@ -15,7 +15,7 @@ All notable changes to GeneReviews-Link are documented in this file.
   immutable corpus artifact `corpus-data-2026-07-13-r1`
   (`sha256:4486e499337e9f816a2aa0741f2a0e51ca38cda52f96fb57564cfc36f4b3c5bc`). Re-pinned
   the container CI and release callers to the corrected standard revision
-  (`62e12c043dbd4745eac41dccacdee9a73306e9bd`), which reads the contract and the data
+  (`86b11f7ed062ed84dfddcbd309e34da88f3dae5b`), which reads the contract and the data
   identity from `container-release.json`.
 - This also activates `_require_data_binding`, which returned early for a
   `data-independent` contract. The release now asserts that the captured data identity
