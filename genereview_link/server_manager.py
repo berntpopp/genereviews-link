@@ -40,9 +40,6 @@ from genereview_link.server_lifecycle import (
     _bootstrap as _bootstrap,
 )
 from genereview_link.server_lifecycle import (
-    _bundle_bootstrap_paths as _bundle_bootstrap_paths,
-)
-from genereview_link.server_lifecycle import (
     _initialize_state,
     _teardown_state,
 )

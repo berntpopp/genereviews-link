@@ -1,0 +1,43 @@
+name: Container CI
+
+on:
+  pull_request:
+    paths:
+      - "genereview_link/**"
+      - "server.py"
+      - "mcp_server.py"
+      - "docker/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "container-release.json"
+      - ".dockerignore"
+      - ".env.docker.example"
+      - "CHANGELOG.md"
+      - ".github/workflows/container-ci.yml"
+      - ".github/workflows/container-release.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "genereview_link/**"
+      - "server.py"
+      - "mcp_server.py"
+      - "docker/**"
+      - "scripts/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "container-release.json"
+      - ".dockerignore"
+      - ".env.docker.example"
+      - "CHANGELOG.md"
+      - ".github/workflows/container-ci.yml"
+      - ".github/workflows/container-release.yml"
+
+permissions: {}
+
+jobs:
+  container-ci:
+    permissions:
+      contents: read
+    uses: berntpopp/genefoundry-router/.github/workflows/_container-ci.yml@33ea508d8ba92538b151340d50a4dbfd680d7482 # genefoundry-router container-release standard v1

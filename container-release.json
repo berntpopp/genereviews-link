@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "dockerfile": "docker/Dockerfile",
+  "target": "production",
+  "platform": "linux/amd64",
+  "service": {
+    "compose_files": [
+      "docker/docker-compose.yml",
+      "docker/docker-compose.prod.yml"
+    ],
+    "name": "genereview-link",
+    "container_port": 8000,
+    "health_path": "/health",
+    "mcp_path": "/mcp",
+    "startup_timeout_seconds": 600,
+    "networks": [
+      "default",
+      "genereview_internal"
+    ],
+    "internal_networks": [
+      "genereview_internal"
+    ],
+    "auxiliary": [
+      {
+        "name": "postgres",
+        "role": "database",
+        "egress": "approved-networks",
+        "user": "999:999",
+        "writable_targets": [
+          "/var/lib/postgresql",
+          "/var/run/postgresql",
+          "/tmp"
+        ],
+        "healthcheck_test": [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER:-genereview} -d genereview"
+        ]
+      },
+      {
+        "name": "genereview-corpus-restore",
+        "role": "init",
+        "egress": "internal",
+        "writable_targets": [
+          "/var/lib/genereview/restore",
+          "/tmp"
+        ],
+        "read_only_targets": [
+          "/seed"
+        ]
+      }
+    ]
+  },
+  "data": {
+    "mode": "restored-database",
+    "release_tag": "corpus-data-2026-07-13-r1",
+    "digest": "sha256:4486e499337e9f816a2aa0741f2a0e51ca38cda52f96fb57564cfc36f4b3c5bc",
+    "image_allowlist": [
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0001_base.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0002_corpus_version.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0003_refresh_log.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0004_active_embedding.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0001_chapters.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0002_passages.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0003_embeddings_bge384.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0004_passage_type_and_tables.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0005_passage_role.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0006_primary_gene_symbols.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/__init__.py"
+    ]
+  },
+  "definitions": {
+    "contract": "data-bound"
+  },
+  "smoke": {
+    "profile": "postgres-bundle"
+  },
+  "preparation": "docker/ci-prepare-smoke.sh"
+}

@@ -1,13 +1,5 @@
 """Application lifecycle helpers for the GeneReview Link server."""
 
-import hashlib
-import json
-import os
-import shutil
-import tarfile as tf_mod
-from pathlib import Path
-from typing import IO
-
 import asyncpg
 from fastapi import FastAPI
 
@@ -19,38 +11,23 @@ from genereview_link.services.service_manager import get_service_manager, shutdo
 logger = get_logger("server.manager")
 
 
-def _sha256_stream(fh: IO[bytes]) -> str:
-    """Return the SHA-256 digest for an open binary stream."""
-    h = hashlib.sha256()
-    for chunk in iter(lambda: fh.read(65536), b""):
-        h.update(chunk)
-    return h.hexdigest()
-
-
-def _bundle_bootstrap_paths(work_dir: Path) -> tuple[Path, Path]:
-    """Return bundle tarball and extraction paths under the writable work dir."""
-    return work_dir / "bundle.tar.gz", work_dir / "bundle_extract"
-
-
 async def _bootstrap() -> None:
-    """Bootstrap the corpus before the pool is opened for request serving.
+    """Bring the live schema up to date; never load corpus data.
 
-    Three modes:
-    1. BUNDLE_URL set -> download + verify + pg_restore bundle.
-    2. BUILD_LOCAL=true -> run full local ingest pipeline.
-    3. Neither -> assume an external Postgres already has a corpus (or it's empty).
+    The serving application has NO restore path. Corpus data enters PostgreSQL only via
+    the no-egress `genereview-corpus-restore` init sidecar (`genereview-link corpus
+    restore`), which verifies an immutable, digest-pinned, data-only artifact and loads it
+    atomically as an unprivileged role. Downloading and restoring a bundle from inside the
+    request-serving process would give it exactly the egress and the database rights the
+    restored-database contract exists to deny it.
 
-    In all cases, if an active corpus version already exists the function
-    returns immediately (hot-path / already-populated).
+    Two modes remain here:
+    1. BUILD_LOCAL=true -> run the full local ingest pipeline (development only).
+    2. Otherwise -> the corpus is already present (restored by the init sidecar), or the
+       database is empty and `/passages/search` degrades to 503 until it is loaded.
     """
     from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
     from genereview_link.db.pool import create_pool
-    from genereview_link.ingest.github_release import (
-        download_with_integrity,
-        fetch_sibling_sha256,
-        pg_restore,
-        resolve_latest,
-    )
 
     pool = await create_pool()
     try:
@@ -76,60 +53,7 @@ async def _bootstrap() -> None:
             if applied_data:
                 logger.info("applied data migrations to live schema", versions=applied_data)
             logger.info("active corpus found; skipping bootstrap")
-            return  # MODE 1 hot path / already-populated
-
-        bundle_url = settings.BUNDLE_URL
-        if bundle_url == "latest":
-            bundle_url = await resolve_latest(settings.GITHUB_REPO)
-        if bundle_url:
-            logger.info("downloading corpus bundle", url=bundle_url)
-            sha = await fetch_sibling_sha256(bundle_url)
-            work_dir = Path(settings.BUNDLE_BOOTSTRAP_DIR)
-            tmp, extract_dir = _bundle_bootstrap_paths(work_dir)
-            staging_dir = work_dir / "bundle_extract.tmp"
-            shutil.rmtree(extract_dir, ignore_errors=True)
-            shutil.rmtree(staging_dir, ignore_errors=True)
-            work_dir.mkdir(parents=True, exist_ok=True)
-            await download_with_integrity(bundle_url, tmp, expected_sha256=sha)
-            staging_dir.mkdir(parents=True, exist_ok=True)
-            with tf_mod.open(tmp, "r:gz") as tar:
-                manifest_member = tar.getmember("manifest.json")
-                manifest_file = tar.extractfile(manifest_member)
-                if manifest_file is None:
-                    raise RuntimeError("manifest.json is not a file")
-                manifest = json.loads(manifest_file.read())
-                checksum_entries = manifest["checksums"]
-                expected_names = ["manifest.json", *checksum_entries.keys()]
-                expected_members = set(expected_names)
-
-                seen: set[str] = set()
-                for member in tar.getmembers():
-                    if member.name in seen:
-                        raise RuntimeError(f"duplicate tar member: {member.name}")
-                    seen.add(member.name)
-                    if member.name not in expected_members:
-                        raise RuntimeError(f"unexpected tar member: {member.name}")
-
-                for relpath, expected in checksum_entries.items():
-                    member = tar.getmember(relpath)
-                    member_file = tar.extractfile(member)
-                    if member_file is None:
-                        raise RuntimeError(f"manifest member is not a file: {relpath}")
-                    actual = _sha256_stream(member_file)
-                    if actual != expected:
-                        raise RuntimeError(f"manifest checksum mismatch on {relpath}")
-
-                for name in expected_names:
-                    tar.extract(tar.getmember(name), path=str(staging_dir), filter="data")
-            shutil.rmtree(extract_dir, ignore_errors=True)
-            staging_dir.rename(extract_dir)
-            await pg_restore(
-                extract_dir / "corpus.dump",
-                database_url=settings.DATABASE_URL,
-                jobs=os.cpu_count() or 2,
-            )
-            logger.info("corpus bundle restored")
-            return
+            return  # hot path / already-populated by the restore sidecar
 
         if settings.BUILD_LOCAL:
             logger.info("BUILD_LOCAL=true; running full local ingest")
@@ -143,16 +67,16 @@ async def _bootstrap() -> None:
             logger.info("local ingest complete")
             return
 
-        # MODE 3: external Postgres - assume corpus already present (or empty)
+        # No active corpus: the restore sidecar has not run (or the database is external
+        # and empty). The server still starts and serves definitions; corpus-backed routes
+        # degrade to 503 rather than answering from an empty database.
         logger.warning(
-            "no BUNDLE_URL or BUILD_LOCAL set and no active corpus; "
-            "/passages/search will return 503 until corpus is loaded"
+            "no active corpus; /passages/search will return 503 until the "
+            "genereview-corpus-restore sidecar loads the reviewed corpus artifact"
         )
     except asyncpg.PostgresError as exc:
         logger.warning("bootstrap failed; server will start without corpus", error=str(exc))
     finally:
-        if "staging_dir" in locals():
-            shutil.rmtree(staging_dir, ignore_errors=True)
         await pool.close()
 
 
@@ -198,7 +122,7 @@ async def _initialize_state(app: FastAPI) -> None:
         app.state.repository = None
 
     # --- Dense model metadata (cached for _meta under include=score_breakdown) ---
-    from genereview_link.corpus.tokenizer import BGE_DIM, BGE_MODEL_NAME
+    from genereview_link.retrieval.model_identity import BGE_DIM, BGE_MODEL_NAME
 
     app.state.dense_model_id = BGE_MODEL_NAME
     app.state.embedding_dim = BGE_DIM

@@ -471,5 +471,88 @@ def bundle_publish_local(
         typer.echo(f"built {built}; upload skipped")
 
 
+corpus_app = typer.Typer(name="corpus", help="Immutable corpus artifact operations.")
+app.add_typer(corpus_app)
+
+
+@corpus_app.command("restore")
+def corpus_restore() -> None:
+    """Restore the reviewed, data-only corpus artifact into an empty database.
+
+    This is the entry point of the no-egress `genereview-corpus-restore` init sidecar. It
+    is the ONLY path by which corpus data enters PostgreSQL, and it never reaches the
+    network: the artifact is already on disk, read-only, and is proven against the digest
+    committed in this repository before it is opened.
+
+    Order matters. The schema is created by the reviewed in-repo migrations FIRST; the
+    artifact then contributes table data only, verified data-only, loaded atomically by an
+    unprivileged role. The vector index is built afterwards from in-repo code, so no index
+    definition is ever taken from the artifact either.
+    """
+    from genereview_link.config import settings
+    from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
+    from genereview_link.db.pool import create_pool
+    from genereview_link.db.restore import (
+        ArchivePolicyError,
+        assert_data_only_archive,
+        ensure_restore_role,
+        extract_bundle,
+        read_archive_entries,
+        restore_data_only,
+    )
+    from genereview_link.ingest.orchestrator import build_hnsw_index
+
+    async def run() -> None:
+        pool = await create_pool()
+        try:
+            applied = await apply_control_migrations(pool)
+            if applied:
+                logger.info("applied control migrations", versions=applied)
+            applied = await apply_data_migrations(pool, schema="genereview")
+            if applied:
+                logger.info("applied data migrations", versions=applied)
+
+            active = await pool.fetchval(
+                "select version from public.genereview_corpus_version where is_active"
+            )
+            if active:
+                # Idempotent: the PostgreSQL volume already holds a restored corpus. A
+                # second restore would duplicate rows, so stop here and let the app start.
+                logger.info("active corpus already present; nothing to restore", version=active)
+                return
+
+            bundle = extract_bundle(
+                Path(settings.CORPUS_SEED_PATH),
+                Path(settings.CORPUS_RESTORE_DIR) / "bundle",
+                expected_sha256=settings.CORPUS_BUNDLE_SHA256,
+            )
+            assert_data_only_archive(read_archive_entries(bundle.dump))
+            logger.info("corpus archive verified data-only", version=bundle.corpus_version)
+
+            await ensure_restore_role(pool, settings.RESTORE_ROLE, settings.RESTORE_DATABASE_URL)
+            restore_url = settings.RESTORE_DATABASE_URL
+            if not restore_url:
+                raise ArchivePolicyError(
+                    "RESTORE_DATABASE_URL is required: the artifact is never loaded by a superuser"
+                )
+            restore_data_only(bundle.dump, database_url=restore_url)
+            await build_hnsw_index(pool, schema="genereview")
+
+            restored = await pool.fetchval(
+                "select version from public.genereview_corpus_version where is_active"
+            )
+            if not restored:
+                raise ArchivePolicyError("restore completed with no active corpus version")
+            logger.info("corpus restored", version=restored)
+        finally:
+            await pool.close()
+
+    try:
+        asyncio.run(run())
+    except ArchivePolicyError as exc:
+        typer.echo(f"corpus restore refused: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+
 if __name__ == "__main__":
     app()

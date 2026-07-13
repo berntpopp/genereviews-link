@@ -109,8 +109,8 @@ mcp-serve-http: ## Start hosted MCP endpoint with REST API
 docker-build: ## Build Docker image
 	$(DOCKER_COMPOSE) -f docker/docker-compose.yml build
 
-docker-up: ## Start Docker services
-	$(DOCKER_COMPOSE) -f docker/docker-compose.yml up -d
+docker-up: ## Start Docker services (waits for the restore sidecar and a healthy app)
+	$(DOCKER_COMPOSE) -f docker/docker-compose.yml up -d --wait --wait-timeout 600
 
 docker-down: ## Stop Docker services
 	$(DOCKER_COMPOSE) -f docker/docker-compose.yml down

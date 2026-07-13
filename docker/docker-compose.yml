@@ -7,32 +7,129 @@
 # docker_genereview_pg_data volume, migrate the data on next redeploy (do not recreate blindly).
 name: genereviews-link
 
+# The corpus is a RESTORED DATABASE, not a file the server reads. It arrives as an
+# immutable, digest-pinned, DATA-ONLY archive (see container-release.json `data`) and is
+# loaded exactly once, by `genereview-corpus-restore`, into the `genereview_pg_data`
+# volume. That sidecar has no route off the internal network: it cannot fetch anything,
+# and it refuses any archive entry that is not table data for a named corpus table, so the
+# schema can only ever come from the reviewed in-repo migrations.
+#
+# The serving container has NO restore path at all.
+
 services:
   postgres:
     # Pinned by digest (Hardening Standard v1 §1): index digest from
     # `docker buildx imagetools inspect pgvector/pgvector:0.8.2-pg18`.
-    image: pgvector/pgvector:0.8.2-pg18@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d
-    container_name: genereview_link_postgres
+    image: docker.io/pgvector/pgvector@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d
+    pull_policy: missing
+    # Start AS postgres (the image's own uid:gid). The stock entrypoint starts as root and
+    # gosu-drops to postgres, which needs CAP_CHOWN + CAP_SETUID/CAP_SETGID -- impossible
+    # under `cap_drop: ALL`, where it dies with "operation not permitted". Running as
+    # postgres from PID 1 skips that root branch entirely, so the container keeps a
+    # read-only rootfs and ALL capabilities dropped and still initialises cleanly.
+    user: "999:999"
     environment:
       POSTGRES_DB: genereview
-      POSTGRES_USER: ${POSTGRES_USER:-genereview}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-genereview}
+      POSTGRES_USER: "${POSTGRES_USER:-genereview}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-genereview}"
     volumes:
-      - genereview_pg_data:/var/lib/postgresql
+      # Mounted at the image's own /var/lib/postgresql, which is postgres-owned and 1777.
+      # Docker copies that ownership into the empty named volume, so uid 999 can create
+      # PGDATA itself -- no chown, hence no CAP_CHOWN.
+      - type: volume
+        source: genereview_pg_data
+        target: /var/lib/postgresql
+      # A NAMED VOLUME, not a tmpfs: the central smoke stack replaces a sidecar's `tmpfs:`
+      # list wholesale with its own /tmp cap, so a tmpfs socket directory silently vanishes
+      # there and postgres can never open its unix socket.
+      - type: volume
+        source: genereview_pg_run
+        target: /var/run/postgresql
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-genereview}"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-genereview} -d genereview"]
+      interval: 10s
       timeout: 5s
       retries: 10
-    restart: unless-stopped
+      start_period: 30s
+    restart: on-failure
+    networks:
+      - genereview_internal
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.0"
+          pids: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  genereview-corpus-restore:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      target: production
+    image: genereview-link:local
+    # Explicit, shell-free argv: one bounded data process, then exit.
+    command: ["genereview-link", "corpus", "restore"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-genereview}:${POSTGRES_PASSWORD:-genereview}@postgres:5432/genereview
+      # The artifact is loaded by a role that may write the corpus tables and nothing else.
+      # Reviewed migrations run as the owner; the untrusted archive never does.
+      RESTORE_DATABASE_URL: postgresql://genereview_restore:${POSTGRES_PASSWORD:-genereview}@postgres:5432/genereview
+      CORPUS_SEED_PATH: /seed/corpus-bundle.tar.gz
+      CORPUS_BUNDLE_SHA256: "${CORPUS_BUNDLE_SHA256:-0000000000000000000000000000000000000000000000000000000000000000}"
+      CORPUS_RESTORE_DIR: /var/lib/genereview/restore
+    volumes:
+      # A reviewed, pre-seeded artifact: read-only, never a system path.
+      - type: bind
+        source: "${CORPUS_SEED_DIR:-/srv/genefoundry/genereviews-seed}"
+        target: /seed
+        read_only: true
+      - type: volume
+        source: genereview_restore_state
+        target: /var/lib/genereview/restore
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+    # `internal`, not `none`: the restore must reach PostgreSQL. The network it is on has
+    # no route off the host, so it still cannot fetch anything.
+    networks:
+      - genereview_internal
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.0"
+          pids: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   genereview-link:
     build:
       context: ..
       dockerfile: docker/Dockerfile
       target: production
-
-    container_name: genereview_link_server
 
     env_file:
       - path: ../.env
@@ -45,11 +142,12 @@ services:
       GENEREVIEW_LINK_HOST: 0.0.0.0
       GENEREVIEW_LINK_PORT: 8000
       MCP_ALLOWED_HOSTS: '["localhost","127.0.0.1","::1"]'
+      GF_HEALTHCHECK_HOST: "${GF_HEALTHCHECK_HOST:-localhost}"
       DATABASE_URL: postgresql://${POSTGRES_USER:-genereview}:${POSTGRES_PASSWORD:-genereview}@postgres:5432/genereview
 
     depends_on:
-      postgres:
-        condition: service_healthy
+      genereview-corpus-restore:
+        condition: service_completed_successfully
 
     # Dev/local only — loopback-bound (127.0.0.1) so copying this file to a
     # server never publishes the unauthenticated backend on the public IP
@@ -58,61 +156,53 @@ services:
     # overlays (ports: !reset []). Backends are unauthenticated by design.
     ports:
       - "127.0.0.1:${GENEREVIEW_LINK_PORT:-8000}:8000"
-
-    command: ["genereview-link", "serve", "--transport", "unified", "--host", "0.0.0.0", "--port", "8000"]
+    expose:
+      - "8000"
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "-H", "Host: localhost", "http://localhost:8000/health"]
+      test: ["CMD", "sh", "-c", "curl -f -H \"Host: $${GF_HEALTHCHECK_HOST}\" http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 20s
+
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    init: true
+
+    networks:
+      - default
+      - genereview_internal
 
     deploy:
       resources:
         limits:
-          memory: 512M
-        reservations:
-          memory: 256M
+          memory: 3G        # BGE model + API process budget
+          cpus: "1.0"
+          pids: 256
 
-    restart: unless-stopped
-
-    # Runtime hardening (read_only rootfs + tmpfs, cap_drop: ALL,
-    # no-new-privileges, init, pids_limit) is applied by the prod overlay
-    # (docker-compose.prod.yml) and inherited by the npm path
-    # (base + prod + npm). The base file is the unhardened dev/foundation layer.
+    restart: on-failure
 
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
 
-  genereview-link-embed:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-      target: production
-
-    profiles: ["embed"]
-
-    command: ["genereview-link", "embed"]
-
-    env_file:
-      - path: ../.env
-        required: false
-      - path: ../.env.docker
-        required: false
-
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-genereview}:${POSTGRES_PASSWORD:-genereview}@postgres:5432/genereview
-
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-    healthcheck:
-      disable: true
+networks:
+  # The application reaches NCBI E-utilities on the default bridge.
+  default:
+  # PostgreSQL and the restore sidecar sit on an internal-only network with no route off
+  # the host, so neither can be reached from outside and neither can reach out.
+  genereview_internal:
+    internal: true
 
 volumes:
   genereview_pg_data:
+  genereview_pg_run:
+  genereview_restore_state:
