@@ -16,7 +16,11 @@ class _ComposeLoader(yaml.SafeLoader):
 
 
 def _construct_reset(loader: _ComposeLoader, node: yaml.Node) -> Any:
-    return loader.construct_sequence(node)
+    if isinstance(node, yaml.ScalarNode):
+        return loader.construct_scalar(node)
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    return loader.construct_mapping(node)
 
 
 _ComposeLoader.add_constructor("!reset", _construct_reset)

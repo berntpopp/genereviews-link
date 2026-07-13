@@ -4,6 +4,15 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.0.4] - 2026-07-13
+
+### Added
+
+- Adopt the GeneFoundry router container-release standard with SHA-pinned
+  reusable container CI/release callers, digest-only production image
+  configuration, code-only Docker context controls, and complete OCI image
+  labels.
+
 Earlier release notes are retained in [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 ## [5.0.3] - 2026-07-12

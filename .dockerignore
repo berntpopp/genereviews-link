@@ -1,0 +1,66 @@
+# Keep the public image context code-only and reproducible.
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Secrets and environment files.
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!.env.docker.example
+
+# Python caches, virtualenvs, and build output.
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Tests, docs, planning, and generated reports.
+tests/
+docs/
+.planning/
+.benchmarks/
+
+# Authoritative/runtime data must never be baked into application images.
+data/
+datasets/
+corpus/
+output/
+outputs/
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.zst
+*.zip
+*.vcf
+*.bcf
+*.parquet
+
+# Editor, OS, and local tool noise.
+.vscode/
+.idea/
+.DS_Store
+*.log
+*.tmp
+*.temp

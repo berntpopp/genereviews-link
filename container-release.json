@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "dockerfile": "docker/Dockerfile",
+  "target": "production",
+  "service": {
+    "compose_files": [
+      "docker/docker-compose.yml",
+      "docker/docker-compose.prod.yml"
+    ],
+    "name": "genereview-link",
+    "container_port": 8000,
+    "health_path": "/health",
+    "mcp_path": "/mcp",
+    "startup_timeout_seconds": 180
+  },
+  "data": {
+    "mode": "external-reference",
+    "release_tag": "corpus-2026-05-12-r1",
+    "digest": "sha256:7fbcca843ea2ab21c08bf59e44bbe8e92ac3ef7b19a44ce333edd3fc49dac591",
+    "image_allowlist": [
+      "home/app/web/genereview_link/db/migrations/control/0001_base.sql",
+      "home/app/web/genereview_link/db/migrations/control/0002_corpus_version.sql",
+      "home/app/web/genereview_link/db/migrations/control/0003_refresh_log.sql",
+      "home/app/web/genereview_link/db/migrations/control/0004_active_embedding.sql",
+      "home/app/web/genereview_link/db/migrations/data/0001_chapters.sql",
+      "home/app/web/genereview_link/db/migrations/data/0002_passages.sql",
+      "home/app/web/genereview_link/db/migrations/data/0003_embeddings_bge384.sql",
+      "home/app/web/genereview_link/db/migrations/data/0004_passage_type_and_tables.sql",
+      "home/app/web/genereview_link/db/migrations/data/0005_passage_role.sql",
+      "home/app/web/genereview_link/db/migrations/data/0006_primary_gene_symbols.sql",
+      "home/app/web/genereview_link/db/migrations/data/__init__.py"
+    ]
+  },
+  "definitions": {
+    "contract": "data-bound"
+  },
+  "smoke": {
+    "profile": "postgres-bundle"
+  }
+}

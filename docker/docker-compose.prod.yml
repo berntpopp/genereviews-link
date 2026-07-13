@@ -3,13 +3,21 @@
 
 services:
   genereview-link:
+    build: !reset null
+    image: "${GENEREVIEW_LINK_IMAGE:?GENEREVIEW_LINK_IMAGE must be set to ghcr.io/berntpopp/genereviews-link@sha256:<digest>}"
+    pull_policy: missing
+    container_name: !reset null
+    env_file: !reset []
+
     environment:
       GENEREVIEW_LINK_LOG_LEVEL: INFO
       LOG_JSON: "true"
       MCP_ALLOWED_HOSTS: '["localhost","127.0.0.1","::1","genereviews-link.genefoundry.org"]'
 
-    volumes: []
+    volumes: !reset []
     ports: !reset []
+    expose:
+      - "8000"
 
     read_only: true
     tmpfs:
