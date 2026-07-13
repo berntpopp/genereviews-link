@@ -93,8 +93,12 @@ jobs:
             | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-client-18
-          pg_restore --version
-          pg_dump --version
+          # The runner ships an older client, and pg_wrapper resolves `pg_restore` from the
+          # DEFAULT cluster version -- which cannot read a v18 archive ("unsupported version
+          # (1.16) in file header"). Put the exact PG18 binaries first on PATH.
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/18/bin/pg_restore --version
+          /usr/lib/postgresql/18/bin/pg_dump --version
 
       - name: Fetch and prove the reviewed source corpus
         env:
