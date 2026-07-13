@@ -87,6 +87,27 @@ class Settings(BaseSettings):
     # Set to True to enable the /debug/ranking diagnostic endpoint.
     DEBUG_RANKING_ENABLED: bool = False
 
+    # --- Immutable corpus artifact (restored-database mode) ---
+    # The corpus is an immutable, digest-pinned GitHub data release. It is restored ONCE,
+    # by the no-egress `genereview-corpus-restore` init sidecar, into the PostgreSQL
+    # volume -- never by the serving application, which has no restore path at all.
+    #
+    # CORPUS_SEED_PATH: the reviewed bundle, read-only, already on disk. The restoring
+    # container has no route off the internal network, so it can never fetch it itself.
+    CORPUS_SEED_PATH: str = "/seed/corpus.tar.gz"
+    # CORPUS_BUNDLE_SHA256: the exact digest committed in this repository. It is the trust
+    # root: the bytes are proven before the archive is opened. Empty fails closed.
+    CORPUS_BUNDLE_SHA256: str = ""
+    # CORPUS_RESTORE_DIR: writable scratch (a named volume) for archive expansion.
+    CORPUS_RESTORE_DIR: str = "/var/lib/genereview/restore"
+    # RESTORE_DATABASE_URL: connection for the RESTORE only, as an unprivileged role that
+    # may write the corpus tables and nothing else. Reviewed in-repo migrations run as the
+    # owner; the untrusted artifact is loaded with the least rights that can load it.
+    RESTORE_DATABASE_URL: str = ""
+    # RESTORE_ROLE: the unprivileged role the init ensures (NOSUPERUSER, NOCREATEDB,
+    # NOCREATEROLE) before restoring.
+    RESTORE_ROLE: str = "genereview_restore"
+
     # Corpus bootstrap modes
     # BUNDLE_URL: set to a .tar.gz URL (or "latest") to restore from a release bundle.
     BUNDLE_URL: str = ""

@@ -1,5 +1,8 @@
 # Nginx Proxy Manager overlay
 # Usage: docker compose -f docker/docker-compose.yml -f docker/docker-compose.npm.yml up -d
+#
+# The proxy reaches the app on npm-network. The app keeps `default` (NCBI E-utilities) and
+# `genereview_internal` (PostgreSQL, which has no route off the host).
 
 services:
   genereview-link:
@@ -10,10 +13,10 @@ services:
       - "8000"
     networks:
       - default
+      - genereview_internal
       - npm-network
 
 networks:
-  default:
   npm-network:
     external: true
     name: ${NPM_NETWORK_NAME:-npm_network}

@@ -1,0 +1,298 @@
+name: Immutable data-only corpus release
+
+# Re-express an existing, reviewed corpus release as an immutable DATA-ONLY artifact.
+#
+# The published corpus was a full `pg_dump -Fc` archive: it carried SCHEMA, TABLE, INDEX,
+# CONSTRAINT and EXTENSION entries, so restoring it meant executing DDL that arrived over
+# the network. The restored-database contract says the artifact contributes table DATA and
+# nothing else: schema and indexes come only from reviewed in-repo migrations.
+#
+# This job is a pure, reproducible transformation of an artifact that is already trusted:
+#   1. fetch the exact source release and prove it against a digest committed here,
+#   2. restore it into a throwaway PostgreSQL,
+#   3. bring the schema to the in-repo migration head,
+#   4. re-dump ONLY the corpus tables with --data-only --no-owner --no-privileges,
+#   5. publish draft-first, attest the exact bytes, then publish once.
+#
+# No corpus is re-derived and no upstream is re-scraped: the data is bit-identical, only
+# the envelope changes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified build artifact as an immutable data release
+        required: true
+        default: false
+        type: boolean
+      redistribution_allowed:
+        description: Confirm the dated GeneReviews redistribution review is affirmative
+        required: true
+        default: false
+        type: boolean
+      redistribution_review:
+        description: Reviewer and dated evidence reference
+        required: false
+        type: string
+
+concurrency:
+  group: corpus-data-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  # The exact, already-published source corpus. Both values are committed here, so the
+  # download host is never the trust root.
+  SOURCE_TAG: corpus-2026-05-12-r1
+  SOURCE_ASSET: genereview-corpus-2026-05-12-r1-bge-small-en-v1.5-pg18-pgv0.8.2.tar.gz
+  SOURCE_SHA256: 7fbcca843ea2ab21c08bf59e44bbe8e92ac3ef7b19a44ce333edd3fc49dac591
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.bundle.outputs.tag }}
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.2-pg18@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d
+        env:
+          POSTGRES_DB: genereview
+          POSTGRES_USER: genereview
+          POSTGRES_PASSWORD: genereview
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U genereview"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Checkout transformation source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: false
+          version: "0.8.7"
+
+      - name: Install PostgreSQL 18 client
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL --proto '=https' --tlsv1.2 -o \
+            /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client-18
+          pg_restore --version
+          pg_dump --version
+
+      - name: Fetch and prove the reviewed source corpus
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source"
+          gh release download "$SOURCE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$SOURCE_ASSET" --dir "$RUNNER_TEMP/source"
+          # The committed digest is the trust root: the download host is not trusted.
+          echo "$SOURCE_SHA256  $RUNNER_TEMP/source/$SOURCE_ASSET" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/source/$SOURCE_ASSET" -C "$RUNNER_TEMP/source"
+          test -f "$RUNNER_TEMP/source/corpus.dump"
+
+      - name: Restore the source corpus into a throwaway database
+        env:
+          PGPASSWORD: genereview
+        run: |
+          set -euo pipefail
+          pg_restore --no-owner -j 2 \
+            -d "postgresql://genereview:genereview@127.0.0.1:5432/genereview" \
+            "$RUNNER_TEMP/source/corpus.dump" 2>&1 | tail -5 || true
+          psql -h 127.0.0.1 -U genereview -d genereview -tAc \
+            "select count(*) from genereview.genereview_passages" | tee "$RUNNER_TEMP/passages.txt"
+          test "$(cat "$RUNNER_TEMP/passages.txt")" -gt 40000
+
+      - name: Bring the schema to the in-repo migration head
+        env:
+          DATABASE_URL: postgresql://genereview:genereview@127.0.0.1:5432/genereview
+        run: |
+          set -euo pipefail
+          uv sync --group dev --frozen
+          uv run genereview-link db migrate
+
+      - name: Re-dump the corpus tables as a data-only archive
+        id: bundle
+        env:
+          PGPASSWORD: genereview
+          REDISTRIBUTION_ALLOWED: ${{ inputs.redistribution_allowed || false }}
+          REDISTRIBUTION_REVIEW: ${{ inputs.redistribution_review || '' }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/data-release"
+          mkdir -p "$out"
+          # Control tables (schema_migrations, active_embedding, refresh_log) are seeded by
+          # the reviewed migrations, never by the artifact.
+          pg_dump -h 127.0.0.1 -U genereview -d genereview \
+            -Fc --data-only --no-owner --no-privileges \
+            -t genereview.genereview_chapters \
+            -t genereview.genereview_passages \
+            -t genereview.genereview_embeddings_bge384 \
+            -t public.genereview_corpus_version \
+            -f "$out/corpus.dump"
+          # Fail closed if the re-dump is not data-only.
+          pg_restore --list "$out/corpus.dump" | grep -v '^;' | while read -r line; do
+            case "$line" in
+              *"TABLE DATA"*) ;;
+              "") ;;
+              *) echo "non-data entry in re-dump: $line" >&2; exit 1 ;;
+            esac
+          done
+          cp -r "$RUNNER_TEMP/source/sidedata" "$out/sidedata"
+          uv run python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          out = Path(os.environ["RUNNER_TEMP"]) / "data-release"
+          source = Path(os.environ["RUNNER_TEMP"]) / "source" / "manifest.json"
+          previous = json.loads(source.read_text())
+
+          members = ["corpus.dump", *(f"sidedata/{p.name}" for p in sorted((out / "sidedata").iterdir()))]
+          checksums = {
+              name: hashlib.sha256((out / name).read_bytes()).hexdigest() for name in members
+          }
+          tag = f"corpus-data-{datetime.now(UTC):%Y-%m-%d}-r1"
+          manifest = {
+              "manifest_version": "2",
+              "bundle_format": "tar.gz",
+              "dump_format": "postgresql-custom-data-only",
+              "corpus_release_id": tag,
+              "corpus_version": previous["corpus_version"],
+              "source_release": os.environ["SOURCE_TAG"],
+              "source_sha256": os.environ["SOURCE_SHA256"],
+              "chapter_count": previous["chapter_count"],
+              "passage_count": previous["passage_count"],
+              "embedding": previous["embedding"],
+              "postgres": previous["postgres"],
+              "restore": {
+                  "schema_source": "in-repo migrations only",
+                  "entry_types": ["TABLE DATA"],
+                  "tables": [
+                      "genereview.genereview_chapters",
+                      "genereview.genereview_passages",
+                      "genereview.genereview_embeddings_bge384",
+                      "public.genereview_corpus_version",
+                  ],
+                  "flags": [
+                      "--no-owner",
+                      "--no-privileges",
+                      "--single-transaction",
+                      "--exit-on-error",
+                  ],
+              },
+              "checksums": checksums,
+              "license": previous.get("license", {}),
+              "redistribution": {
+                  "allowed": os.environ["REDISTRIBUTION_ALLOWED"] == "true",
+                  "reviewer": os.environ["REDISTRIBUTION_REVIEW"] or "publication-not-authorized",
+                  "reviewed_at": datetime.now(UTC).isoformat(),
+              },
+              "created_at": datetime.now(UTC).isoformat(),
+              "created_by": "corpus-data-release.yml",
+              "disclaimer": "Research use only; not clinical decision support.",
+          }
+          (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          Path(os.environ["GITHUB_OUTPUT"]).open("a").write(f"tag={tag}\n")
+          PY
+          asset="genereview-corpus-data-$(jq -r .corpus_version "$out/manifest.json").tar.gz"
+          tar -czf "$RUNNER_TEMP/$asset" -C "$out" manifest.json corpus.dump sidedata
+          mv "$RUNNER_TEMP/$asset" "$out/corpus-bundle.tar.gz"
+          rm -rf "$out/corpus.dump" "$out/sidedata" "$out/manifest.json"
+          ( cd "$out" && sha256sum corpus-bundle.tar.gz > SHA256SUMS && cat SHA256SUMS )
+
+      - name: Upload immutable build handoff
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        with:
+          name: corpus-data-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/data-release
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment: data-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      # This job is privileged and deliberately never checks out the source: it consumes
+      # only the sealed build handoff, so `gh` has no git remote to infer the repository
+      # from. Name it explicitly instead of granting it a working tree.
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.build.outputs.tag }}
+    steps:
+      - name: Require an affirmative redistribution review
+        env:
+          ALLOWED: ${{ inputs.redistribution_allowed }}
+          REVIEW: ${{ inputs.redistribution_review }}
+        run: |
+          set -euo pipefail
+          test "$ALLOWED" = true
+          test -n "$REVIEW"
+
+      - name: Download the exact build handoff
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4.3.0
+        with:
+          name: corpus-data-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/data-release
+
+      - name: Verify the handoff and create a matching draft
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/data-release"
+          sha256sum --check SHA256SUMS
+          if release_json="$(gh release view "$TAG" --json isDraft 2>/dev/null)"; then
+            # A published release is immutable: never delete or re-point one.
+            test "$(jq -r .isDraft <<<"$release_json")" = true
+            rm -rf "$RUNNER_TEMP/existing" && mkdir -p "$RUNNER_TEMP/existing"
+            gh release download "$TAG" --dir "$RUNNER_TEMP/existing"
+            if ! diff -q corpus-bundle.tar.gz "$RUNNER_TEMP/existing/corpus-bundle.tar.gz"; then
+              gh release delete "$TAG" --yes --cleanup-tag
+              gh release create "$TAG" --draft --title "$TAG" \
+                --notes "Immutable data-only GeneReviews corpus artifact. Research use only; not clinical decision support."
+              gh release upload "$TAG" corpus-bundle.tar.gz SHA256SUMS
+            fi
+          else
+            gh release create "$TAG" --draft --title "$TAG" \
+              --notes "Immutable data-only GeneReviews corpus artifact. Research use only; not clinical decision support."
+            gh release upload "$TAG" corpus-bundle.tar.gz SHA256SUMS
+          fi
+
+      - name: Attest the exact data asset
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v4.1.0
+        with:
+          subject-path: ${{ runner.temp }}/data-release/corpus-bundle.tar.gz
+
+      - name: Publish once and verify the immutable assets
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/data-release"
+          gh release edit "$TAG" --draft=false
+          gh release verify "$TAG"
+          gh release verify-asset "$TAG" corpus-bundle.tar.gz
+          gh release verify-asset "$TAG" SHA256SUMS

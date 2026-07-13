@@ -54,7 +54,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH="/home/app/web" \
     GENEREVIEW_LINK_HOST=0.0.0.0 \
     GENEREVIEW_LINK_PORT=8000 \
-    TMPDIR=/tmp/genereview-link
+    TMPDIR=/tmp
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -65,8 +65,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN groupadd --system app && \
     useradd --system --gid app --home /home/app --create-home app && \
-    mkdir -p /tmp/genereview-link /var/cache/genereview-link && \
-    chown -R app:app /tmp/genereview-link /var/cache/genereview-link /home/app
+    mkdir -p /tmp/genereview-link /var/cache/genereview-link /var/lib/genereview/restore /seed && \
+    chown -R app:app /tmp/genereview-link /var/cache/genereview-link /var/lib/genereview /home/app
 
 COPY --from=builder /opt/venv /opt/venv
 
@@ -85,6 +85,12 @@ RUN /usr/local/bin/python -m pip install --no-cache-dir pip==26.1 && \
 # Production serving and migration tasks use FakeEmbeddingProvider by default.
 # The real BGE embedding stack is used by offline embedding workflows, but its
 # PyTorch artifacts exceed the fleet OCI content policy's file/layer limits.
+# NOTE: numpy and genereview_link.corpus STAY. `pgvector.asyncpg` imports numpy at module
+# import time and genereview_link.db.pool imports that to register the vector codec, so
+# stripping numpy breaks every database connection. The corpus package is pure Python
+# with lazy heavy imports, and the server reads BGE_MODEL_NAME/BGE_DIM from
+# corpus.tokenizer at startup -- stripping it made the app exit on boot. Only the heavy
+# PyTorch artifacts, which exceed the fleet OCI content policy's file limits, are removed.
 RUN rm -rf /opt/venv/lib/python3.12/site-packages/nvidia \
            /opt/venv/lib/python3.12/site-packages/nvidia_*.dist-info \
            /opt/venv/lib/python3.12/site-packages/triton \
@@ -102,9 +108,6 @@ RUN rm -rf /opt/venv/lib/python3.12/site-packages/nvidia \
            /opt/venv/lib/python3.12/site-packages/mpmath-*.dist-info \
            /opt/venv/lib/python3.12/site-packages/networkx \
            /opt/venv/lib/python3.12/site-packages/networkx-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/numpy \
-           /opt/venv/lib/python3.12/site-packages/numpy-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/numpy.libs \
            /opt/venv/lib/python3.12/site-packages/safetensors \
            /opt/venv/lib/python3.12/site-packages/safetensors-*.dist-info \
            /opt/venv/lib/python3.12/site-packages/scipy \
@@ -135,6 +138,7 @@ RUN rm -rf /opt/venv/lib/python3.12/site-packages/nvidia \
            /usr/share/postgresql/*/man \
            /root/.cache/pip \
            /home/app/web/genereview_link \
+    && find /opt/venv/lib/python3.12/site-packages/numpy -type d -name tests -prune -exec rm -rf '{}' + \
     && find /usr/local/lib/python3.12 /opt/venv /home/app/web -type d -name __pycache__ -prune -exec rm -rf '{}' +
 
 RUN find / -xdev -perm /6000 -exec chmod a-s '{}' + \
@@ -175,7 +179,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH="/home/app/web" \
     GENEREVIEW_LINK_HOST=0.0.0.0 \
     GENEREVIEW_LINK_PORT=8000 \
-    TMPDIR=/tmp/genereview-link
+    TMPDIR=/tmp
 
 WORKDIR /home/app/web
 USER app

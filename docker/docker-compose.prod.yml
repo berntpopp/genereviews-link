@@ -1,64 +1,70 @@
 # Production overlay
 # Usage: docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
+#
+# The restore sidecar runs the SAME attested image digest as the server: it is the
+# application's own `corpus restore` entry point, so it inherits the image's non-root user
+# and hardening. `!override` replaces (rather than list-merges) the inherited sequences,
+# which would otherwise yield duplicate mounts and duplicate security_opt entries.
 
 services:
+  postgres:
+    # The central policy validates the RENDERED production compose and requires the
+    # declared `user` in container-release.json to match what actually runs. The stock
+    # entrypoint starts as root and gosu-drops to postgres, which needs CAP_SETUID/CAP_SETGID
+    # -- impossible under the mandatory `cap_drop: ALL`. Starting AS postgres skips that
+    # root branch entirely, so the container keeps a read-only rootfs and all capabilities
+    # dropped and still initialises cleanly.
+    user: "999:999"
+
+  genereview-corpus-restore:
+    build: !reset null
+    image: "${GENEREVIEW_LINK_IMAGE:?GENEREVIEW_LINK_IMAGE must be set to ghcr.io/berntpopp/genereviews-link@sha256:<digest>}"
+    pull_policy: missing
+
   genereview-link:
     build: !reset null
     image: "${GENEREVIEW_LINK_IMAGE:?GENEREVIEW_LINK_IMAGE must be set to ghcr.io/berntpopp/genereviews-link@sha256:<digest>}"
     pull_policy: missing
-    container_name: !reset null
-    env_file: !reset []
 
     environment:
       GENEREVIEW_LINK_LOG_LEVEL: INFO
       LOG_JSON: "true"
       MCP_ALLOWED_HOSTS: '["localhost","127.0.0.1","::1","genereviews-link.genefoundry.org"]'
 
-    volumes: !reset []
+    # The reverse proxy is the only ingress: publish no host port.
     ports: !reset []
     expose:
       - "8000"
 
     read_only: true
-    tmpfs:
-      - /tmp/genereview-link:rw,noexec,nosuid,size=512m,mode=1777
-
-    security_opt:
+    tmpfs: !override
+      - /tmp:rw,noexec,nosuid,size=512m,mode=1777
+    security_opt: !override
       - no-new-privileges:true
-    cap_drop:
+    cap_drop: !override
       - ALL
-
-    pids_limit: 256
     init: true
-
-    command: ["genereview-link", "serve", "--transport", "unified", "--host", "0.0.0.0", "--port", "8000"]
 
     deploy:
       resources:
         limits:
-          memory: 3G        # BGE model + API process + colocated Postgres budget
-          cpus: '1.0'
+          memory: 3G        # BGE model + API process budget
+          cpus: "1.0"
           pids: 256
-        reservations:
-          memory: 512M
-          cpus: '0.5'
-
-      restart_policy:
-        condition: on-failure
-        delay: 5s
-        max_attempts: 3
-        window: 120s
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "-H", "Host: localhost", "http://localhost:8000/health"]
+      test: ["CMD", "sh", "-c", "curl -f -H \"Host: $${GF_HEALTHCHECK_HOST}\" http://localhost:8000/health"]
       interval: 20s
       timeout: 5s
       retries: 5
       start_period: 30s
 
+    # Restart a crashed container, but never mask one that fails to come up: a permanently
+    # failing service must stay down and visible.
+    restart: on-failure
+
     logging:
-      driver: "json-file"
+      driver: json-file
       options:
         max-size: "50m"
         max-file: "5"
-        labels: "service=genereview-link,environment=production"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -24,6 +25,7 @@ def _construct_reset(loader: _ComposeLoader, node: yaml.Node) -> Any:
 
 
 _ComposeLoader.add_constructor("!reset", _construct_reset)
+_ComposeLoader.add_constructor("!override", _construct_reset)
 
 
 def _compose_config(*files: str) -> dict[str, Any]:
@@ -69,7 +71,10 @@ def test_npm_overlay_keeps_app_connected_to_postgres_network() -> None:
 
     assert "default" in app_networks
     assert "npm-network" in app_networks
-    assert "default" in postgres_networks
+    # PostgreSQL sits on the internal-only network -- it has no route off the host -- so the
+    # app must stay attached to it as well or it cannot reach its own database.
+    assert "genereview_internal" in app_networks
+    assert set(postgres_networks) == {"genereview_internal"}
 
 
 def test_docker_env_file_is_injected_into_app_container() -> None:
@@ -91,11 +96,20 @@ def test_postgres_volume_mount_matches_pg18_data_layout() -> None:
     )
 
     volumes = compose["services"]["postgres"]["volumes"]
-    assert "genereview_pg_data:/var/lib/postgresql" in volumes
-    assert "genereview_pg_data:/var/lib/postgresql/data" not in volumes
+    targets = {mount["target"]: mount for mount in volumes}
+    # The image's own /var/lib/postgresql is postgres-owned and 1777, so an empty named
+    # volume mounted THERE inherits that ownership and uid 999 can create PGDATA itself --
+    # no chown, hence no CAP_CHOWN, hence `cap_drop: ALL` still holds. Mounting one level
+    # deeper (/var/lib/postgresql/data) yields a root-owned volume and the container dies.
+    assert targets["/var/lib/postgresql"]["source"] == "genereview_pg_data"
+    assert "/var/lib/postgresql/data" not in targets
+    # The unix socket dir is a NAMED VOLUME, not a tmpfs: the central smoke stack replaces a
+    # sidecar's tmpfs list wholesale, so a tmpfs socket dir vanishes there.
+    assert targets["/var/run/postgresql"]["source"] == "genereview_pg_run"
 
 
-def test_docker_example_defaults_to_latest_release_bundle() -> None:
+def test_docker_example_pins_the_reviewed_corpus_artifact() -> None:
+    """The server no longer resolves `latest`: it never downloads a corpus at all."""
     env = {}
     for raw_line in (REPO_ROOT / ".env.docker.example").read_text().splitlines():
         line = raw_line.strip()
@@ -104,30 +118,34 @@ def test_docker_example_defaults_to_latest_release_bundle() -> None:
         key, value = line.split("=", maxsplit=1)
         env[key] = value
 
-    assert env["BUNDLE_URL"] == "latest"
-    assert env["AUTO_PULL_RELEASES"] == "false"
-    assert env["BUILD_LOCAL"] == "false"
+    assert "BUNDLE_URL" not in env
+    assert env["CORPUS_SEED_DIR"]
+    declared = json.loads((REPO_ROOT / "container-release.json").read_text())
+    assert env["CORPUS_BUNDLE_SHA256"] == declared["data"]["digest"].removeprefix("sha256:")
 
 
 def test_production_compose_uses_unified_cli_server_not_gunicorn_env() -> None:
     config = _compose_config("docker/docker-compose.yml", "docker/docker-compose.prod.yml")
 
     service = config["services"]["genereview-link"]
-    assert service["command"] == [
-        "genereview-link",
-        "serve",
-        "--transport",
-        "unified",
-        "--host",
-        "0.0.0.0",  # noqa: S104
-        "--port",
-        "8000",
-    ]
+    # The central policy forbids overriding the image process, so the unified server is the
+    # image CMD rather than a compose `command:`. Assert it there instead.
+    assert "command" not in service
+    dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text()
+    assert (
+        'CMD ["genereview-link", "serve", "--transport", "unified", '
+        '"--host", "0.0.0.0", "--port", "8000"]' in dockerfile
+    )
     assert "GUNICORN_WORKERS" not in service["environment"]
     assert "GUNICORN_LOG_LEVEL" not in service["environment"]
 
 
-def test_production_tmpfs_matches_bundle_bootstrap_dir_size_and_mode() -> None:
+def test_production_tmpfs_is_the_writable_scratch_the_image_points_tmpdir_at() -> None:
+    """The approved writable scratch path is exactly /tmp, and TMPDIR must resolve inside it.
+
+    A tmpfs at /tmp HIDES any directory the image created under it, so a TMPDIR of
+    /tmp/<something> would point at a path that does not exist at runtime.
+    """
     compose = yaml.load(
         (REPO_ROOT / "docker/docker-compose.prod.yml").read_text(),
         Loader=_ComposeLoader,  # noqa: S506
@@ -135,7 +153,9 @@ def test_production_tmpfs_matches_bundle_bootstrap_dir_size_and_mode() -> None:
 
     tmpfs = compose["services"]["genereview-link"]["tmpfs"]
 
-    assert "/tmp/genereview-link:rw,noexec,nosuid,size=512m,mode=1777" in tmpfs  # noqa: S108
+    assert "/tmp:rw,noexec,nosuid,size=512m,mode=1777" in tmpfs  # noqa: S108
+    dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text()
+    assert "TMPDIR=/tmp\n" in dockerfile or "TMPDIR=/tmp " in dockerfile
 
 
 def test_npm_overlay_inherits_production_tmpfs_mode() -> None:
@@ -148,7 +168,7 @@ def test_npm_overlay_inherits_production_tmpfs_mode() -> None:
     tmpfs = config["services"]["genereview-link"]["tmpfs"]
 
     assert any(
-        entry.startswith("/tmp/genereview-link:")  # noqa: S108
+        entry.startswith("/tmp:")  # noqa: S108
         and "size=512m" in entry
         and "mode=1777" in entry
         for entry in tmpfs

@@ -10,8 +10,11 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-BGE_MODEL_NAME = "BAAI/bge-small-en-v1.5"
-BGE_DIM = 384  # output embedding dimension for bge-small-en-v1.5
+# Re-exported so the ingest pipeline keeps its historical import path. The constants
+# themselves live in retrieval.model_identity, which the serving image actually ships.
+from genereview_link.retrieval.model_identity import BGE_DIM, BGE_MODEL_NAME
+
+__all__ = ["BGE_DIM", "BGE_MODEL_NAME", *globals().get("__all__", [])]
 BGE_MAX_TOKENS = 512  # model context
 BGE_RESERVED_SPECIAL_TOKENS = 2  # [CLS], [SEP]
 BGE_NET_CHUNK_TOKENS = BGE_MAX_TOKENS - BGE_RESERVED_SPECIAL_TOKENS  # 510
