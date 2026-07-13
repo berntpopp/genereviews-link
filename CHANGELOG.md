@@ -4,6 +4,24 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.0.5] - 2026-07-13
+
+### Fixed
+
+- Release evidence now states the data contract this repository actually declares. The
+  reusable release workflow hardcoded `--contract data-independent` and
+  `data_requirements: {"mode":"none"}`, so the signed release manifest claimed the image
+  binds to no data -- while `container-release.json` declares `data-bound` with the pinned
+  immutable corpus artifact `corpus-data-2026-07-13-r1`
+  (`sha256:4486e499337e9f816a2aa0741f2a0e51ca38cda52f96fb57564cfc36f4b3c5bc`). Re-pinned
+  the container CI and release callers to the corrected standard revision
+  (`62e12c043dbd4745eac41dccacdee9a73306e9bd`), which reads the contract and the data
+  identity from `container-release.json`.
+- This also activates `_require_data_binding`, which returned early for a
+  `data-independent` contract. The release now asserts that the captured data identity
+  equals the pinned `data.release_tag` and `data.digest`, instead of silently skipping the
+  strongest assertion in the evidence chain.
+
 ## [5.0.4] - 2026-07-13
 
 ### Changed
