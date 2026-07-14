@@ -71,7 +71,7 @@ populated Postgres. See [Data & corpus](docs/data.md) for the three loading mode
 
 Leaf names are **unprefixed**, per Tool-Naming Standard v1 — the gateway owns the
 namespace. Behind `genefoundry-router` these surface as `genereviews_<tool>` (e.g.
-`genereviews_search_passages`). `serverInfo.name` is `GeneReview Link Tool`; the canonical
+`genereviews_search_passages`). `serverInfo.name` is `genereviews-link`; the canonical
 namespace token is `genereviews`. Static references are also served as MCP resources
 (`genereview://usage`, `genereview://license`).
 

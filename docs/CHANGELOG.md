@@ -180,6 +180,9 @@ so this server composes cleanly behind the `genefoundry-router` gateway under th
   namespace self-prefixes; they surface within budget at the gateway.
 - **`serverInfo.name`:** already explicitly set to `GeneReview Link Tool`; the
   `genereviews` namespace token is now documented in the README.
+  **Superseded in 4.0.0:** renamed to `genereviews-link` under MCP Transport &
+  Session Standard v1 (#81). That is the current value — see
+  `tests/unit/test_server_identity.py`.
 - **`search_passages` `mode` / `q`+`query`:** deliberately left as-is. The
   fleet-canonical `response_mode` (`minimal|compact|standard|full`) is a different
   concept from this server's result-shape `mode` (`brief|full|ids_only`), so it is
