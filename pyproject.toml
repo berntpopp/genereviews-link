@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "genereview-link"
+name = "genereviews-link"
 version = "5.0.6"
 description = "A unified server providing REST API and MCP interfaces for NCBI GeneReviews data."
 readme = "README.md"
