@@ -5,7 +5,23 @@
 # `genereview_internal` (PostgreSQL, which has no route off the host).
 
 services:
+  # Nginx Proxy Manager routes by forwarding to a HOSTNAME on the shared npm network, and
+  # that hostname is the CONTAINER NAME — the live proxy host emits
+  # `proxy_pass http://genereview_link_server:8000;`. The base compose file no longer sets
+  # `container_name` (it was dropped when the corpus-restore sidecar landed), so without
+  # these Compose would auto-generate `genereviews-link-genereview-link-1`, NPM could not
+  # resolve `genereview_link_server`, and genereviews-link.genefoundry.org would 502.
+  # The management tooling (config/projects.yaml -> `containers:`) also addresses these
+  # containers by name for status/health/logs.
+  #
+  # The NPM topology therefore pins the names it is wired to. (The run-once
+  # `genereview-corpus-restore` sidecar is deliberately left unnamed: nothing routes to it.)
+  postgres:
+    container_name: genereview_link_postgres
+
   genereview-link:
+    container_name: genereview_link_server
+
     environment:
       MCP_ALLOWED_HOSTS: '["localhost","127.0.0.1","::1","genereviews-link.genefoundry.org"]'
     ports: !reset []

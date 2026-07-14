@@ -2,6 +2,24 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
+## [5.0.6] - 2026-07-14
+
+### Fixed
+
+- **The NPM deployment would have lost its public hostname on the next deploy.** Nginx
+  Proxy Manager forwards to a **container name** on the shared network — the live proxy
+  host emits `proxy_pass http://genereview_link_server:8000;`. The `container_name` keys
+  (`genereview_link_server`, `genereview_link_postgres`) were dropped from
+  `docker/docker-compose.yml` when the corpus-restore sidecar landed (#97) and nothing
+  restored them, so the deployed chain (`docker-compose.yml -f docker-compose.prod.yml -f
+  docker-compose.npm.yml`) rendered no `container_name` at all. Compose would have
+  auto-named the container `genereviews-link-genereview-link-1`, NPM could not have
+  resolved it, and `genereviews-link.genefoundry.org` would have started returning 502 the
+  moment the server pulled this compose. `docker-compose.npm.yml` now pins both names for
+  the topology that depends on them.
+- `.env.docker.example` defined `GENEREVIEW_LINK_IMAGE` **twice**, with two different
+  placeholder digests; the second silently won. Consolidated into one documented entry.
+
 ## [Unreleased]
 
 ## [5.0.5] - 2026-07-13
