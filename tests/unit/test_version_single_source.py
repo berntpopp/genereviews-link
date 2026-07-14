@@ -3,7 +3,7 @@
 The MCP ``initialize`` response advertises ``serverInfo.version`` from the FastMCP
 instance's ``.version`` attribute. If the server is constructed without an explicit
 ``version=``, FastMCP falls back to advertising its own framework version (e.g.
-``3.2.4``) instead of the ``genereview-link`` package version. This guard pins all
+``3.2.4``) instead of the ``genereviews-link`` package version. This guard pins all
 version sources to a single value so that drift fails loudly.
 """
 
@@ -17,7 +17,7 @@ from genereview_link import __version__
 from genereview_link.config import ServerConfig
 from genereview_link.server_manager import UnifiedServerManager
 
-DIST = "genereview-link"
+DIST = "genereviews-link"
 
 
 def _pyproject_version() -> str:
