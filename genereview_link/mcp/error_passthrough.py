@@ -159,27 +159,55 @@ def wrap_structured_error_tools(route: Any, component: Any) -> None:
     # lookup against an externally-evolving corpus — none mutate state.
     object.__setattr__(component, "annotations", READ_ONLY_OPEN_WORLD)
 
-    # Neutralize FastMCP's non-object-schema `{"result": ...}` wrap (the root
-    # cause of the historical `{"result": {"results": [...]}}` double-wrap on
-    # search_passages) and declare an envelope-shaped outputSchema. See
-    # envelope.reshape_output_schema for why this must happen before any call.
-    object.__setattr__(
-        component,
-        "output_schema",
-        envelope.reshape_output_schema(component.output_schema, component.name),
-    )
+    # Suppress outputSchema entirely (Tool-Surface Budget Standard v1 §B1: it is
+    # optional in MCP, no model reads it, and it was 73% of this server's surface —
+    # the get_genereview_summary schema alone was 6,293t). output_schema=None ALSO
+    # neutralizes FastMCP's historical `{"result": ...}` double-wrap on
+    # search_passages: with no schema, OpenAPITool.run wraps only a NON-object body
+    # (components.py run()), and every route here returns a JSON object, so the
+    # envelope passes through unwrapped. The v1.1 `untrusted_text` fence still rides
+    # on the wire in structuredContent (runtime data is unchanged); per the v1.1a
+    # amendment the `kind` literal must appear on the wire, not in a declared schema.
+    object.__setattr__(component, "output_schema", None)
 
     original_run = component.run
     tool_name = component.name
+    # Snapshot the tool's declared argument names once, at wrap time. An argument
+    # outside this set is a bad CALL (invalid_input), and rejecting it here — at the
+    # single chokepoint every tool shares — is the only place that covers ALL tools
+    # uniformly: FastMCP's OpenAPI provider does not reject unknown arguments (a
+    # no-path-param tool silently accepts them and a path-param tool 422s without
+    # naming anything), so an unrecognised argument would otherwise pass through.
+    valid_parameters: frozenset[str] = frozenset(
+        (component.parameters or {}).get("properties") or {}
+    )
 
     async def run_with_structured_errors(arguments: dict[str, Any]) -> ToolResult:
         start = time.perf_counter()
+
+        # Reject an unexpected argument name before doing any work. This is a
+        # bad call, not a missing thing: it is invalid_input (never not_found),
+        # and the frame carries isError:true so the model can self-correct.
+        unexpected = set(arguments) - valid_parameters
+        if unexpected:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            unknown_envelope = envelope.build_unknown_argument_envelope(
+                tool_name,
+                valid_parameters=sorted(valid_parameters),
+                request_id=envelope.new_request_id(),
+                elapsed_ms=elapsed_ms,
+            )
+            return ToolResult(structured_content=unknown_envelope, is_error=True)
+
         try:
             result = await original_run(arguments)
         except Exception as exc:
             elapsed_ms = (time.perf_counter() - start) * 1000
             error_envelope = _build_error_envelope_from_exception(tool_name, exc, elapsed_ms)
-            return ToolResult(structured_content=error_envelope)
+            # Response-Envelope v1: isError:true is REQUIRED on every error frame so
+            # a client branching on isError surfaces it to the model. A returned dict
+            # never sets isError — it must ride on the ToolResult.
+            return ToolResult(structured_content=error_envelope, is_error=True)
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         raw = result.structured_content if isinstance(result.structured_content, dict) else {}

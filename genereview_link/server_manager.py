@@ -317,6 +317,10 @@ class UnifiedServerManager:
             ),
             route_maps=mcp_route_maps,
             mcp_component_fn=wrap_structured_error_tools,
+            # Tool-Surface Budget Standard v1: do not inline $ref-dereferenced input
+            # schemas. Free and safe (no INPUT schema here contains a $ref) — trims
+            # the served surface further on top of output_schema=None.
+            dereference_schemas=False,
         )
 
         # Register genereview://license as an MCP resource.

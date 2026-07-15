@@ -476,7 +476,21 @@ class GeneReviewRepository:
                        authors, initial_pub_date, last_updated_date, ingested_at
                   from genereview_chapters
                  where $1 = any(gene_symbols)
-                 order by last_updated_date desc nulls last, nbk_id
+                 order by
+                       -- The gene's DEFINING chapter first (issue #106 D1). Ordering
+                       -- by recency alone made a chapter that merely MENTIONS the gene
+                       -- (e.g. a multi-gene overview) outrank the gene's own review.
+                       -- 1. Prefer a chapter where the gene is a primary gene
+                       --    (forward-compatible: primary_gene_symbols is empty on
+                       --    current installs, so this is a no-op until re-ingest).
+                       (case when $1 = any(primary_gene_symbols) then 0 else 1 end),
+                       -- 2. Then the most gene-specific chapter: the fewest
+                       --    gene_symbols (the gene's own review lists just it; a
+                       --    multi-gene overview lists many).
+                       array_length(gene_symbols, 1) asc nulls last,
+                       -- 3. Then recency, then a stable id tiebreak.
+                       last_updated_date desc nulls last,
+                       nbk_id
                  limit coalesce($2::int, 2147483647)
                 """,
                 gene_symbol,

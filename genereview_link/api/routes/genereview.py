@@ -51,7 +51,9 @@ def _minimal_gene_review_from_indexed_chapter(
     nbk_id = chapter.nbk_id
     return GeneReview(
         gene_symbol=gene_symbol.upper(),
-        pubmed_id=str(chapter.pubmed_id),
+        # Corpus chapters routinely have no pubmed_id (issue #106 D1); emit an
+        # empty string rather than the literal "None".
+        pubmed_id=chapter.pubmed_id or "",
         book_url=f"https://www.ncbi.nlm.nih.gov/books/{nbk_id}/",
         title=fence_untrusted_text(
             chapter.title, source="genereviews", record_id=f"{nbk_id}#title"
@@ -193,7 +195,12 @@ async def get_genereview(
             repository = get_optional_repository(request)
             if repository is not None:
                 chapter = await repository.get_chapter_by_gene(gene_symbol.upper())
-                if chapter is not None and chapter.pubmed_id:
+                # Use the resolved corpus chapter even when it carries no pubmed_id
+                # (issue #106 D1: corpus chapters routinely have an empty pubmed_id).
+                # Gating on chapter.pubmed_id here forced EVERY call onto the blind
+                # live E-utils path, which returned the wrong chapter + a fabricated
+                # title. The NBK id + real title are what identify the chapter.
+                if chapter is not None:
                     indexed_chapter = chapter
 
         if indexed_chapter is not None:

@@ -288,8 +288,8 @@ class TestGetGenereviewComprehensive:
         service, _ = _make_service(
             comprehensive_error=RuntimeError("scrape boom"),
             all_links={"urls": ["https://www.ncbi.nlm.nih.gov/books/NBK1247/"]},
-            # Basic scrape fallback returns nothing useful either.
-            scrape_book={},
+            # Basic scrape fallback provides a REAL chapter title.
+            scrape_book={"title": {"content": "Basic Scrape Title"}},
             abstract={
                 "pmid": "12345",
                 "title": "Abstract Used As Title",
@@ -301,23 +301,24 @@ class TestGetGenereviewComprehensive:
         )
 
         result = await service.get_genereview_comprehensive("BRCA1")
-        # v1.1 no-duplication: the chapter title does NOT borrow the article title
-        # (that lives once, fenced, on abstract_data.title). With no scraped chapter
-        # title, GeneReview.title is the server-synthesized placeholder.
-        assert result.title.text == "GeneReview for BRCA1"
+        # Comprehensive scrape failed, but the basic-scrape fallback yielded a real
+        # chapter title, so the call continues with THAT (never a fabricated one).
+        assert result.title.text == "Basic Scrape Title"
         assert result.abstract_data is not None
         assert result.abstract_data.title.text == "Abstract Used As Title"
         assert result.full_text_data is None
 
     @pytest.mark.asyncio
-    async def test_default_title_when_nothing_available(self) -> None:
+    async def test_raises_when_no_authoritative_title_available(self) -> None:
+        # issue #106 D1: with no corpus chapter and no scraped chapter title, the
+        # service must NOT fabricate a "GeneReview for <GENE>" title — it fails.
         service, _ = _make_service(
             comprehensive={"url": "u", "title": "", "sections": {}, "metadata": {}},
             all_links={"urls": ["https://www.ncbi.nlm.nih.gov/books/NBK1247/"]},
             abstract=None,
         )
-        result = await service.get_genereview_comprehensive("BRCA1")
-        assert result.title.text == "GeneReview for BRCA1"
+        with pytest.raises(DataNotFoundError):
+            await service.get_genereview_comprehensive("BRCA1")
 
     @pytest.mark.asyncio
     async def test_repository_chapter_title_survives_empty_scrape_title(self) -> None:
@@ -386,12 +387,27 @@ class TestGetGenereviewComprehensive:
         service, fake = _make_service(
             book_url="https://www.ncbi.nlm.nih.gov/books/NBK1247/",
         )
-        result = await service.get_genereview_comprehensive(
+        # A resolved corpus chapter supplies the authoritative title, so disabling
+        # all optional data still yields a valid (real-title) summary.
+        chapter = ChapterRow(
+            nbk_id="NBK1247",
+            short_name="brca1",
+            title="BRCA1 Repository Title",
+            pubmed_id=None,
+            gene_symbols=("BRCA1",),
+            omim_ids=(),
+            authors=None,
+            initial_pub_date=None,
+            last_updated_date=None,
+        )
+        result = await service.get_genereview_comprehensive_uncached(
             "BRCA1",
             include_abstract=False,
             include_links=False,
             include_fulltext=False,
+            chapter=chapter,
         )
+        assert result.title.text == "BRCA1 Repository Title"
         assert result.abstract_data is None
         assert result.all_links is None
         assert result.full_text_data is None
@@ -407,3 +423,66 @@ class TestGetGenereviewComprehensive:
 
         with pytest.raises(TypeError, match="repository"):
             await service.get_genereview_comprehensive("BRCA1", repository=object())
+
+
+class TestD1ChapterResolutionAndTitle:
+    """Regression tests for issue #106 D1 (CRITICAL).
+
+    The corpus ships chapters with an EMPTY pubmed_id, which made the service's
+    ``if chapter.pubmed_id:`` guard fall through to a blind live E-utils lookup
+    that took ``results[0]`` (a chapter merely MENTIONING the gene) and stamped
+    it with a fabricated ``GeneReview for <GENE>`` title. The service must
+    instead honour the resolved corpus chapter's real NBK id + title, and must
+    NEVER synthesize a ``GeneReview for <GENE>`` title over any chapter.
+    """
+
+    @pytest.mark.asyncio
+    async def test_indexed_chapter_uses_real_title_without_pubmed_id(self) -> None:
+        # The CFTR-defining chapter as it exists in the live corpus: no pubmed_id.
+        chapter = ChapterRow(
+            nbk_id="NBK1250",
+            short_name="cf",
+            title="Cystic Fibrosis",
+            pubmed_id=None,
+            gene_symbols=("CFTR",),
+            omim_ids=(),
+            authors=None,
+            initial_pub_date=None,
+            last_updated_date=None,
+        )
+        # A fake client whose blind live search would resolve to the WRONG chapter.
+        service, fake = _make_service(
+            search_results={"ids": ["24624459"], "count": 1, "retmax": 1, "retstart": 0},
+            book_url="https://www.ncbi.nlm.nih.gov/books/NBK190101/",
+        )
+        result = await service.get_genereview_comprehensive_uncached(
+            "CFTR",
+            include_abstract=False,
+            include_links=False,
+            include_fulltext=False,
+            chapter=chapter,
+        )
+        assert result.book_url == "https://www.ncbi.nlm.nih.gov/books/NBK1250/"
+        assert result.title.text == "Cystic Fibrosis"
+        assert result.title.text != "GeneReview for CFTR"
+        # It must NOT have consulted the blind unranked live E-utils list.
+        assert not any(c[0] == "search_genereviews" for c in fake.calls)
+
+    @pytest.mark.asyncio
+    async def test_never_fabricates_generic_title_on_live_miss(self) -> None:
+        # No corpus chapter; live path resolves a pmid + book url but no real
+        # chapter title. The service must NOT invent "GeneReview for <GENE>".
+        service, _ = _make_service(
+            search_results={"ids": ["99999"], "count": 1, "retmax": 1, "retstart": 0},
+            book_url="https://www.ncbi.nlm.nih.gov/books/NBK9999/",
+            comprehensive={},  # scrape yields no title
+            scrape_book={},  # basic scrape yields no title
+        )
+        with pytest.raises(DataNotFoundError):
+            await service.get_genereview_comprehensive_uncached(
+                "MYSTERYGENE",
+                include_abstract=False,
+                include_links=False,
+                include_fulltext=True,
+                chapter=None,
+            )
