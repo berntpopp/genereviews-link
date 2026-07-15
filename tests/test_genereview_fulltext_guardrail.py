@@ -103,6 +103,21 @@ def _build_app_with_service(payloads: dict[str, GeneReview]) -> FastAPI:
         yield FakeService()
 
     app.dependency_overrides[get_managed_service] = _get_service
+
+    # The route always resolves the gene to a corpus chapter first (issue #106 D1),
+    # so a defining chapter must be present for the service to be reached.
+    class _FakeChapter:
+        nbk_id = "NBK1247"
+        short_name = "brca1"
+        title = "BRCA1- and BRCA2-Associated HBOC"
+        pubmed_id = "20301425"
+        gene_symbols = ("BRCA1",)
+
+    class _FakeRepo:
+        async def get_defining_chapter_by_gene(self, gene_symbol: str) -> _FakeChapter:
+            return _FakeChapter()
+
+    app.state.repository = _FakeRepo()
     return app
 
 
@@ -306,7 +321,7 @@ def _build_app_with_shared_service(
             last_updated_date=date(2025, 12, 1),
         )
         fake_repo = AsyncMock()
-        fake_repo.get_chapter_by_gene = AsyncMock(return_value=chapter)
+        fake_repo.get_defining_chapter_by_gene = AsyncMock(return_value=chapter)
         app.state.repository = fake_repo
 
     return app

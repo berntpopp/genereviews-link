@@ -211,12 +211,19 @@ class GeneReviewService:
         chapter: ChapterRow | None = None,
     ) -> GeneReview:
         """Fetch all available data for a GeneReview."""
-        if chapter is not None and chapter.pubmed_id:
-            pubmed_id = chapter.pubmed_id
+        if chapter is not None:
+            # Authoritative corpus resolution (issue #106 D1): honour the resolved
+            # chapter's OWN NBK id and title. pubmed_id is frequently EMPTY in the
+            # corpus — that is fine; the NBK id + real title identify the chapter,
+            # and we NEVER consult the blind, unranked live E-utils list here (which
+            # returned a chapter merely MENTIONING the gene and a fabricated title).
+            pubmed_id = chapter.pubmed_id or ""
             book_url = f"https://www.ncbi.nlm.nih.gov/books/{chapter.nbk_id}/"
             title = chapter.title
         else:
-            # 1. Search for GeneReviews
+            # No corpus chapter resolved: live fallback. This path never fabricates
+            # a title — if no authoritative chapter title can be scraped it raises
+            # DataNotFoundError below rather than guessing over an unranked list.
             search_results = await self.client.search_genereviews(gene_symbol, retmax=1)
             if not search_results["ids"]:
                 raise DataNotFoundError(f"GeneReview not found for gene: {gene_symbol}")
@@ -225,9 +232,11 @@ class GeneReviewService:
             book_url = None
             title = ""
 
-        # 2. Get abstract data if requested (title/abstract/journal/authors fenced)
+        # 2. Get abstract data if requested (title/abstract/journal/authors fenced).
+        # Skip when no pubmed_id is available (corpus chapters carry none) — the
+        # abstract is PMID-keyed and there is nothing to fetch without one.
         abstract_data = None
-        if include_abstract:
+        if include_abstract and pubmed_id:
             try:
                 abstract_result = await self.client.fetch_abstract(pubmed_id)
                 if abstract_result:
@@ -254,10 +263,10 @@ class GeneReviewService:
                     "Could not fetch abstract", pmid=pubmed_id, exc_type=type(e).__name__
                 )
 
-        # 3. Get all links if requested
+        # 3. Get all links if requested (PMID-keyed; skip without a pubmed_id).
         all_links = None
         book_urls = [book_url] if book_url else []
-        if include_links:
+        if include_links and pubmed_id:
             try:
                 links_result = await self.client.get_all_links(pubmed_id)
                 all_links = LinkData(urls=links_result.get("urls", []))
@@ -271,13 +280,13 @@ class GeneReviewService:
             except Exception as e:
                 logger.warning("Could not fetch links", pmid=pubmed_id, exc_type=type(e).__name__)
 
-        # Fallback to original method if no book URLs found
-        if not book_urls:
+        # Fallback to original method if no book URLs found (PMID-keyed).
+        if not book_urls and pubmed_id:
             book_url = await self.client.get_book_url_from_pmid(pubmed_id)
             if book_url:
                 book_urls = [book_url]
 
-        if not book_urls and not include_links:
+        if not book_urls and not include_links and pubmed_id:
             try:
                 links_result = await self.client.get_all_links(pubmed_id)
                 book_urls = _book_urls_from_links(links_result)
@@ -352,9 +361,15 @@ class GeneReviewService:
         # already lives (fenced, once) on abstract_data.title; borrowing it into
         # GeneReview.title would duplicate the sanitized prose AND compute
         # raw_sha256 over the already-normalized text instead of the raw title.
-        # When no chapter title is available, use a server-synthesized placeholder.
+        #
+        # NEVER fabricate a "GeneReview for <GENE>" placeholder (issue #106 D1): a
+        # synthesized authoritative-looking title stamped over an unverified chapter
+        # is a confidently-wrong answer a curator will trust. If no real chapter
+        # title resolved, resolution failed — surface that honestly.
         if not title:
-            title = f"GeneReview for {gene_symbol}"
+            raise DataNotFoundError(
+                f"No authoritative GeneReviews chapter title resolved for gene: {gene_symbol}"
+            )
 
         # Extract specific sections for backward compatibility, fencing each
         # section's scraped prose (v1.1) at this MCP serialization boundary.

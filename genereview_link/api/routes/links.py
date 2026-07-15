@@ -6,7 +6,7 @@ Provides REST API endpoint for retrieving all available links for PubMed article
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 
 from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.errors import StructuredHTTPException
@@ -38,7 +38,13 @@ router = APIRouter(prefix="/links", tags=["Links"])
 )
 async def get_links(
     request: Request,
-    pmid: str,
+    pmid: Annotated[
+        str,
+        Path(
+            description="PubMed ID (numeric), e.g. '20301425'.",
+            examples=["20301425"],
+        ),
+    ],
     client: Annotated[EutilsClient, Depends(get_managed_client)],
     fresh: bool = Query(
         False,

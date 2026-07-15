@@ -2,6 +2,71 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
+## [5.1.0] - 2026-07-15
+
+MCP contract-hardening (issue #106). Behaviour Conformance v1 gate: CONFORMANT
+(74 pass, 0 fail, 0 UNGATED). Tool surface 20,063t → 5,678t; input doc% 81 → 100.
+
+### Fixed
+
+- **[CRITICAL] `get_genereview_summary` resolved a gene to the WRONG GeneReviews chapter
+  and stamped it with a fabricated title.** Corpus chapters carry an empty `pubmed_id`, so
+  the route guard and the service's inner guard both fell through to a blind live NCBI
+  E-utils lookup that took `results[0]` — a chapter merely *mentioning* the gene — and,
+  with no scraped title, synthesized `"GeneReview for <GENE>"`. CFTR resolved to NBK190101
+  "Pancreatitis Overview"; SCN1A to NBK1388 "Familial Hemiplegic Migraine". Resolution is
+  now **always corpus-authoritative** — even with `fresh=true` (which now controls only
+  whether the resolved chapter's *content* is re-fetched live). The gene is resolved to its
+  **defining** chapter: the chapter where the gene is in `primary_gene_symbols`, OR is the
+  chapter's sole gene, OR appears as a whole word in the chapter title. A gene that is only
+  *mentioned* in a multi-gene chapter (e.g. CLDN2, which occurs only in the 13-gene
+  "Pancreatitis Overview"), or is absent, returns `not_found` — never a guessed chapter and
+  never a fabricated title. CFTR → NBK1250 "Cystic Fibrosis"; SCN1A → NBK1318 "SCN1A
+  Seizure Disorders"; CLDN2 → not_found.
+- **FastAPI list-shaped 422s were discarded.** A bad enum value / pattern-mismatched path
+  param returned `invalid_input` with a bare `"HTTP 422"` naming no parameter. The error
+  mapper now lifts each validation error's parameter name and message into a named
+  `field_errors` entry (never echoing the caller's rejected input).
+- **A syntactically-valid but nonexistent `nbk_id`** filter (e.g. `NBK999999999`) returned
+  0 rows with `success:true`; it is now rejected as `not_found`.
+- **`isError` was false on every error envelope.** Error frames now return
+  `ToolResult(structured_content=..., is_error=True)` on both the exception path and the
+  new unknown-argument path, so clients branching on `isError` see the error.
+- **`error_code` harmonized to the closed six-value enum** (`internal_error` → `internal`).
+- **Unknown arguments** are now rejected with `invalid_input` (never `not_found`) naming
+  the tool's own valid parameters; caller-supplied argument names are never echoed.
+- **D4: `gene_role` removed from `search_passages`.** It filtered on `primary_gene_symbols`,
+  which is unpopulated on every current corpus, so `primary`/`mentioned` returned silently-
+  empty results and the declared enum was wider than the runtime supported. Rather than ship
+  a non-functional filter that lies, the parameter is removed from the tool (the repository
+  keeps the capability for a future corpus re-ingest). "Which chapter is a gene about" is
+  answered by `get_genereview_summary`'s fixed defining-chapter resolution.
+- **A bogus `nbk_id` filter on `search_passages`** returned 0 rows with `success:true`; it
+  is now rejected as `invalid_input`.
+- **D5: brief-mode rows could arrive with both `text` and `snippet` null** (dense-only
+  hits with no `ts_headline` fragment). Brief mode now falls back to a leading passage
+  excerpt so every row carries content.
+
+### Changed
+
+- **Tool-surface budget:** `outputSchema` is suppressed (`output_schema=None`) and
+  `dereference_schemas=False`, cutting the surface from 20,063t to 5,678t. The v1.1
+  `untrusted_text` fence still rides on the wire in `structuredContent` (v1.1a amendment).
+- **Schema documentation:** every required and array parameter now carries a description
+  and `examples`; closed vocabularies are declared as enums. `search_passages` advertises
+  `q` as required in its MCP schema so the behaviour gate can probe it — the `query` alias
+  is still accepted at runtime (input validation stays lenient, the safe direction).
+- Vendored the Behaviour Conformance v1 gate (`tests/conformance/behaviour.py` +
+  `test_behaviour_v1.py`) and wired it into the conformance workflow.
+
+### Notes
+
+- **D2 (multi-level table headers) is already fixed in the parser** and covered by
+  `test_extract_table_flattens_nested_headers_to_match_rows`; the deployed corpus predates
+  that parser, so it resolves on the next corpus re-ingest (no code change).
+- **D3 (default `rrf` buries exact-phrase matches)** is a ranking-quality issue that
+  requires the real BGE embedding model to reproduce and evaluate; not addressed here.
+
 ## [5.0.6] - 2026-07-14
 
 ### Fixed

@@ -7,7 +7,7 @@ for PubMed articles by ID.
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 
 from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.errors import StructuredHTTPException
@@ -44,7 +44,13 @@ router = APIRouter(prefix="/abstract", tags=["Abstract"])
 )
 async def get_abstract(
     request: Request,
-    pmid: str,
+    pmid: Annotated[
+        str,
+        Path(
+            description="PubMed ID (numeric), e.g. '20301425'.",
+            examples=["20301425"],
+        ),
+    ],
     client: Annotated[EutilsClient, Depends(get_managed_client)],
     fresh: bool = Query(
         False,

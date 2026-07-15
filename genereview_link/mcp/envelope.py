@@ -14,15 +14,15 @@ dict a FastAPI route already returns (as extracted by
 ``genereview_link.mcp.error_passthrough``). The REST API surface is untouched —
 this is an MCP `structuredContent` contract, not a REST response-body contract.
 
-Mirrors the fleet's de-facto conformant exemplar (clingen-link's
-``clingen_link/mcp/errors.py``): errors are RETURNED as structured content
-(``success: false`` in-band) rather than raised as an opaque ``ToolError`` text
-blob. The installed FastMCP 3.2.4 / mcp SDK give no supported way to combine a
-wire-level ``isError: true`` with a populated ``structuredContent`` on the
-success-return path (raising loses ``structuredContent`` entirely — see the
-low-level ``mcp.server.lowlevel.server._make_error_result`` helper, which only
-carries a text message) so, like the rest of the fleet, we rely on the in-band
-``success`` flag rather than the wire ``isError`` bit.
+Errors are RETURNED as structured content (``success: false`` in-band) rather
+than raised as an opaque ``ToolError`` text blob, so the machine-readable
+envelope survives. The wire-level ``isError: true`` bit is set ALONGSIDE the
+structured envelope by returning ``ToolResult(structured_content=..., is_error=
+True)`` from the wrapper in ``genereview_link.mcp.error_passthrough`` — raising
+would throw ``structuredContent`` away (``_make_error_result`` carries only a
+text message), so the wrapper returns rather than raises. This gives clients
+BOTH the ``isError`` bit (Response-Envelope v1: REQUIRED for self-correction)
+and the flat structured envelope.
 """
 
 from __future__ import annotations
@@ -40,16 +40,17 @@ CAPABILITIES_VERSION = "1"
 
 SOURCE = "genereviews"
 
-# Closed error-code enum (Response-Envelope Standard v1 §2), harmonized with
-# codes already used fleet-wide (e.g. clingen-link's `internal_error`, not the
-# doc's shorthand `internal`).
+# Closed error-code enum (Response-Envelope Standard v1 §2). Exactly these six
+# values and nothing else — the Behaviour Conformance gate rejects anything
+# outside the set, so the doc's canonical `internal` is used (NOT the older
+# `internal_error` shorthand some repos shipped).
 ErrorCode = Literal[
     "invalid_input",
     "not_found",
     "ambiguous_query",
     "upstream_unavailable",
     "rate_limited",
-    "internal_error",
+    "internal",
 ]
 
 
@@ -97,7 +98,7 @@ _ERROR_CODE_MAP: dict[str, tuple[ErrorCode, bool]] = {
     "invalid_pubmed_id": ("invalid_input", False),
     "invalid_nbk_id": ("invalid_input", False),
     "fulltext_scrape_failed": ("not_found", False),
-    "internal_error": ("internal_error", False),
+    "internal_error": ("internal", False),
     "chapter_not_found": ("not_found", False),
     "section_empty_for_chapter": ("not_found", False),
     "conflicting_query_param": ("invalid_input", False),
@@ -109,6 +110,7 @@ _ERROR_CODE_MAP: dict[str, tuple[ErrorCode, bool]] = {
     "query_must_be_string": ("invalid_input", False),
     "not_yet_indexed": ("not_found", False),
     "response_too_large": ("invalid_input", False),
+    "unknown_argument": ("invalid_input", False),
 }
 
 # Fallback classification by HTTP status when no known `code` is present
@@ -132,7 +134,7 @@ _GENERIC_RECOVERY_ACTION: dict[ErrorCode, str] = {
     "ambiguous_query": "Narrow the query so it resolves to a single result.",
     "upstream_unavailable": "Retry with backoff; the upstream NCBI service was unavailable.",
     "rate_limited": "Retry after backing off; the request rate exceeded a limit.",
-    "internal_error": "Retry once; if the error persists, use search_passages or "
+    "internal": "Retry once; if the error persists, use search_passages or "
     "get_chapter_metadata for indexed corpus retrieval.",
 }
 
@@ -263,6 +265,54 @@ def build_error_envelope(
     return envelope
 
 
+def build_unknown_argument_envelope(
+    tool_name: str,
+    *,
+    valid_parameters: list[str],
+    request_id: str,
+    elapsed_ms: float,
+) -> dict[str, Any]:
+    """Flat ``invalid_input`` frame for an unexpected argument name.
+
+    An unknown argument is a bad *call*, not a missing *thing*: it MUST be
+    ``invalid_input`` (never ``not_found``, which tells the model the tool does
+    not exist so it strikes it from its list), and the frame must name something
+    the model can act on — here, the tool's own declared parameter names.
+
+    SECURITY: the rejected argument name is caller-controlled and is therefore
+    NEVER echoed into the frame. The message and ``field_errors`` carry only
+    server-authored strings (the tool's own declared parameters).
+    """
+    valid = sorted(valid_parameters)
+    if valid:
+        message = "Unexpected argument. Valid arguments: " + ", ".join(valid) + "."
+    else:
+        message = "Unexpected argument: this tool takes no arguments."
+    detail: dict[str, Any] = {
+        "code": "unknown_argument",
+        "message": message,
+        "recovery_hint": (
+            "Remove the unrecognised argument and call again using only the listed parameters."
+        ),
+        "field_errors": [
+            {
+                "field": "arguments",
+                "reason": "unrecognised argument name",
+                "valid_values": valid,
+            }
+        ],
+        "next_commands": [],
+    }
+    return build_error_envelope(
+        tool_name,
+        status_code=400,
+        detail=detail,
+        fallback_message=message,
+        request_id=request_id,
+        elapsed_ms=elapsed_ms,
+    )
+
+
 def _classify(internal_code: str | None, status_code: int) -> tuple[ErrorCode, bool]:
     if internal_code and internal_code in _ERROR_CODE_MAP:
         return _ERROR_CODE_MAP[internal_code]
@@ -270,7 +320,7 @@ def _classify(internal_code: str | None, status_code: int) -> tuple[ErrorCode, b
         return _STATUS_CODE_FALLBACK[status_code]
     if status_code >= 500:
         return "upstream_unavailable", True
-    return "internal_error", False
+    return "internal", False
 
 
 # --- Declared untrusted_text object shape (v1.1) -----------------------------

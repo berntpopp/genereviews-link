@@ -83,6 +83,7 @@ async def get_chapter_section(
         Path(
             pattern=r"^NBK\d+$",
             description="Bare NCBI Bookshelf ID, e.g. 'NBK1247'.",
+            examples=["NBK1247"],
         ),
     ],
     section: Annotated[
@@ -93,6 +94,7 @@ async def get_chapter_section(
                 '"clinical_features", "management", "genetic_counseling", '
                 '"molecular_genetics", "resources", "other", "references".'
             ),
+            examples=["management"],
         ),
     ],
     dedupe: Annotated[
@@ -246,6 +248,7 @@ async def get_chapter_metadata(
         Path(
             pattern=r"^NBK\d+$",
             description="Bare NCBI Bookshelf ID, e.g. 'NBK1247'.",
+            examples=["NBK1247"],
         ),
     ],
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]

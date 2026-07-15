@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -462,6 +463,46 @@ class GeneReviewRepository:
     async def get_chapter_by_gene(self, gene_symbol: str) -> ChapterRow | None:
         chapters = await self.get_chapters_by_gene(gene_symbol, limit=1)
         return chapters[0] if chapters else None
+
+    async def get_defining_chapter_by_gene(self, gene_symbol: str) -> ChapterRow | None:
+        """The chapter where *gene_symbol* is the DEFINING gene, or None.
+
+        A gene merely MENTIONED in a multi-gene chapter (e.g. CLDN2, which occurs
+        only in the 13-gene "Pancreatitis Overview") has no GeneReview of its own —
+        this returns None so the caller can answer ``not_found`` rather than
+        surfacing an overview as the gene's authoritative review (issue #106 D1).
+
+        A chapter is DEFINING for the gene when ANY of these hold:
+          * the gene is in ``primary_gene_symbols`` (forward-compatible; empty on
+            current installs, so this is a no-op until re-ingest);
+          * the chapter reviews a single gene (``gene_symbols == [gene]``);
+          * the gene symbol appears as a whole word in the chapter title
+            (e.g. "SCN1A Seizure Disorders", "BRCA1- and BRCA2-Associated ...").
+        Candidates are ordered defining-first (primary, then fewest gene_symbols,
+        then recency); the first that qualifies wins. "Fewest genes" alone is NOT
+        proof of a defining chapter — a mention-only gene must fall through to None.
+        """
+        async with self._acquire() as conn:
+            rows = await conn.fetch(
+                """
+                select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
+                       authors, initial_pub_date, last_updated_date, ingested_at,
+                       ($1 = any(primary_gene_symbols)) as is_primary,
+                       array_length(gene_symbols, 1) as n_genes
+                  from genereview_chapters
+                 where $1 = any(gene_symbols)
+                 order by (case when $1 = any(primary_gene_symbols) then 0 else 1 end),
+                          array_length(gene_symbols, 1) asc nulls last,
+                          last_updated_date desc nulls last,
+                          nbk_id
+                """,
+                gene_symbol,
+            )
+        word = re.compile(r"\b" + re.escape(gene_symbol) + r"\b", re.IGNORECASE)
+        for row in rows:
+            if row["is_primary"] or row["n_genes"] == 1 or word.search(row["title"] or ""):
+                return _to_chapter_row(row)
+        return None
 
     async def get_chapters_by_gene(
         self,

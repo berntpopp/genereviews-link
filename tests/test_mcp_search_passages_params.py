@@ -116,25 +116,28 @@ async def test_mcp_search_passages_conflicting_q_and_query_returns_structured_er
 
 
 @pytest.mark.asyncio
-async def test_mcp_search_passages_ids_only_schema_declares_envelope_frame() -> None:
-    """The declared outputSchema is the Response-Envelope frame (success/_meta)
-    AND makes the fenced untrusted_text object (kind const) reachable inside the
-    ``results[*].text`` list-item schema — see envelope.reshape_output_schema."""
+async def test_mcp_search_passages_output_schema_suppressed_but_fence_on_wire() -> None:
+    """Tool-Surface Budget v1: outputSchema is suppressed (None). The v1.1
+    untrusted_text fence must still appear ON THE WIRE in structuredContent
+    (v1.1a amendment: the `kind` literal must be present in the served payload,
+    not in a declared schema)."""
     mcp, _repo = await _build_mcp()
     tool = next(tool for tool in await mcp.list_tools() if tool.name == "search_passages")
+    # outputSchema is suppressed to cut the tool surface.
+    assert tool.output_schema is None
+    # ...but `q` is advertised as required so the behaviour gate can probe the tool.
+    assert "q" in (tool.parameters.get("required") or [])
 
-    schema = tool.output_schema
-    assert schema["type"] == "object"
-    assert set(schema["required"]) == {"success", "_meta"}
-    assert schema["additionalProperties"] is True
-    # v1.1: the untrusted_text `kind` const literal must be declared inside the
-    # array items schema (a bare permissive array would hide it).
-    item = schema["properties"]["results"]["items"]
-    text_schema = item["properties"]["text"]["anyOf"][0]
-    assert text_schema["properties"]["kind"]["const"] == "untrusted_text"
-    assert set(text_schema["required"]) == {"kind", "text", "provenance", "raw_sha256"}
-    # chapter_title (always fenced) is declared as the untrusted_text object too.
-    assert item["properties"]["chapter_title"]["properties"]["kind"]["const"] == "untrusted_text"
+    async with Client(mcp) as client:
+        body = await _call_search_passages(client, {"q": "BRCA1"})
+
+    row = body["results"][0]
+    # chapter_title is always fenced; the untrusted_text object rides on the wire.
+    assert row["chapter_title"]["kind"] == "untrusted_text"
+    assert {"kind", "text", "provenance", "raw_sha256"} <= set(row["chapter_title"])
+    # the fenced snippet/text carrier is also an untrusted_text object.
+    snippet = row.get("snippet")
+    assert snippet is not None and snippet["kind"] == "untrusted_text"
 
 
 @pytest.mark.asyncio

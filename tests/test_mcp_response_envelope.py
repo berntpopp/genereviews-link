@@ -136,7 +136,7 @@ async def test_non_http_exception_is_internal_error_not_upstream_unavailable() -
     body = result.structured_content
     assert body is not None
     assert body["success"] is False
-    assert body["error_code"] == "internal_error"
+    assert body["error_code"] == "internal"
     assert body["retryable"] is False
     assert body["recovery_action"]
 

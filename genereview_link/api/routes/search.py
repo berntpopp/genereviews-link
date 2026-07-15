@@ -5,7 +5,7 @@ Provides REST API endpoint for searching NCBI database.
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 
 from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.errors import StructuredHTTPException
@@ -49,7 +49,14 @@ def _empty_search_recovery(gene_symbol: str) -> tuple[str, list[dict[str, Any]]]
 )
 async def search_genereviews(
     request: Request,
-    gene_symbol: str,
+    gene_symbol: Annotated[
+        str,
+        Path(
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            description="HGNC gene symbol to resolve, e.g. 'BRCA1'.",
+            examples=["BRCA1"],
+        ),
+    ],
     client: Annotated[EutilsClient, Depends(get_managed_client)],
     retmax: int = Query(20, description="Maximum number of results to return", ge=1, le=100),
     fresh: bool = Query(False, description="Bypass index; fetch live from NCBI"),

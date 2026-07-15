@@ -279,6 +279,9 @@ def _make_brief_repo(rows: int = 7) -> Any:
     repo.dense_scores_for_passages = AsyncMock(return_value={})
     repo._dense_candidates_filtered = AsyncMock(return_value=[])
     repo.fetch_passages_by_ids = AsyncMock(return_value={})
+    # nbk_id existence check (issue #106 #5): a resolved chapter means the filter
+    # targets a real chapter rather than silently matching nothing.
+    repo.get_chapter_by_nbk = AsyncMock(return_value=object())
     return repo
 
 

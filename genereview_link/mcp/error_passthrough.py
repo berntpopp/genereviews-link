@@ -57,6 +57,45 @@ def _find_http_status_response(exc: BaseException) -> httpx.Response | None:
     return None
 
 
+def _detail_from_validation_errors(errors: list[Any]) -> dict[str, Any] | None:
+    """Build a named ``invalid_input`` detail from FastAPI's LIST-shaped 422 body.
+
+    FastAPI/pydantic request-validation failures (a bad enum value, a
+    pattern-mismatched path param, a non-numeric int) return
+    ``detail: [{loc, msg, type}, ...]`` — a LIST, not the dict shape a
+    StructuredHTTPException emits. The earlier code only handled the dict shape, so
+    these fell through to a bare ``"HTTP 422"`` message that named no parameter and
+    gave the model nothing to self-correct from. Here we lift each error's
+    parameter name (``loc[-1]``) and framework message into a named field_error.
+
+    SECURITY: only the route's own parameter names (``loc``) and pydantic's
+    server-generated messages are used — never the caller's rejected input value
+    (which pydantic carries separately in ``input`` and which we drop).
+    """
+    field_errors: list[dict[str, Any]] = []
+    names: list[str] = []
+    for err in errors:
+        if not isinstance(err, dict):
+            continue
+        loc = err.get("loc")
+        name = str(loc[-1]) if isinstance(loc, list) and loc else "arguments"
+        msg = err.get("msg")
+        names.append(name)
+        field_errors.append(
+            {"field": name, "reason": msg if isinstance(msg, str) else "invalid value"}
+        )
+    if not field_errors:
+        return None
+    named = ", ".join(dict.fromkeys(names))
+    return {
+        "code": "invalid_input",
+        "message": f"Invalid value for parameter(s): {named}.",
+        "recovery_hint": "Correct the named parameter(s) and retry.",
+        "field_errors": field_errors,
+        "next_commands": [],
+    }
+
+
 def _structured_detail(response: httpx.Response) -> dict[str, Any] | None:
     """Extract the repository's StructuredHTTPException detail body."""
     try:
@@ -66,6 +105,9 @@ def _structured_detail(response: httpx.Response) -> dict[str, Any] | None:
     if not isinstance(body, dict):
         return None
     detail = body.get("detail")
+    if isinstance(detail, list):
+        # FastAPI RequestValidationError — a LIST of {loc, msg, type} errors.
+        return _detail_from_validation_errors(detail)
     if not isinstance(detail, dict):
         return None
     code = detail.get("code")
@@ -159,27 +201,71 @@ def wrap_structured_error_tools(route: Any, component: Any) -> None:
     # lookup against an externally-evolving corpus — none mutate state.
     object.__setattr__(component, "annotations", READ_ONLY_OPEN_WORLD)
 
-    # Neutralize FastMCP's non-object-schema `{"result": ...}` wrap (the root
-    # cause of the historical `{"result": {"results": [...]}}` double-wrap on
-    # search_passages) and declare an envelope-shaped outputSchema. See
-    # envelope.reshape_output_schema for why this must happen before any call.
-    object.__setattr__(
-        component,
-        "output_schema",
-        envelope.reshape_output_schema(component.output_schema, component.name),
-    )
+    # Suppress outputSchema entirely (Tool-Surface Budget Standard v1 §B1: it is
+    # optional in MCP, no model reads it, and it was 73% of this server's surface —
+    # the get_genereview_summary schema alone was 6,293t). output_schema=None ALSO
+    # neutralizes FastMCP's historical `{"result": ...}` double-wrap on
+    # search_passages: with no schema, OpenAPITool.run wraps only a NON-object body
+    # (components.py run()), and every route here returns a JSON object, so the
+    # envelope passes through unwrapped. The v1.1 `untrusted_text` fence still rides
+    # on the wire in structuredContent (runtime data is unchanged); per the v1.1a
+    # amendment the `kind` literal must appear on the wire, not in a declared schema.
+    object.__setattr__(component, "output_schema", None)
+
+    # search_passages requires a query at runtime (either `q` or the `query` alias),
+    # but FastAPI marks both optional (the either-or check lives in the route), so
+    # the served inputSchema declares NO required param. That leaves the Behaviour
+    # gate unable to build a valid call from `examples` (it reads required params
+    # only), reporting the tool UNGATED. Advertise `q` as required so the tool is
+    # probeable. This only TIGHTENS the schema: runtime stays lenient (FastMCP's
+    # input validation is off, so a `query`-only call is still accepted) — the safe
+    # direction (runtime a superset of the schema).
+    if component.name == "search_passages":
+        params = component.parameters
+        if isinstance(params, dict) and "q" in (params.get("properties") or {}):
+            required = list(params.get("required") or [])
+            if "q" not in required:
+                required.append("q")
+                params["required"] = required
 
     original_run = component.run
     tool_name = component.name
+    # Snapshot the tool's declared argument names once, at wrap time. An argument
+    # outside this set is a bad CALL (invalid_input), and rejecting it here — at the
+    # single chokepoint every tool shares — is the only place that covers ALL tools
+    # uniformly: FastMCP's OpenAPI provider does not reject unknown arguments (a
+    # no-path-param tool silently accepts them and a path-param tool 422s without
+    # naming anything), so an unrecognised argument would otherwise pass through.
+    valid_parameters: frozenset[str] = frozenset(
+        (component.parameters or {}).get("properties") or {}
+    )
 
     async def run_with_structured_errors(arguments: dict[str, Any]) -> ToolResult:
         start = time.perf_counter()
+
+        # Reject an unexpected argument name before doing any work. This is a
+        # bad call, not a missing thing: it is invalid_input (never not_found),
+        # and the frame carries isError:true so the model can self-correct.
+        unexpected = set(arguments) - valid_parameters
+        if unexpected:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            unknown_envelope = envelope.build_unknown_argument_envelope(
+                tool_name,
+                valid_parameters=sorted(valid_parameters),
+                request_id=envelope.new_request_id(),
+                elapsed_ms=elapsed_ms,
+            )
+            return ToolResult(structured_content=unknown_envelope, is_error=True)
+
         try:
             result = await original_run(arguments)
         except Exception as exc:
             elapsed_ms = (time.perf_counter() - start) * 1000
             error_envelope = _build_error_envelope_from_exception(tool_name, exc, elapsed_ms)
-            return ToolResult(structured_content=error_envelope)
+            # Response-Envelope v1: isError:true is REQUIRED on every error frame so
+            # a client branching on isError surfaces it to the model. A returned dict
+            # never sets isError — it must ride on the ToolResult.
+            return ToolResult(structured_content=error_envelope, is_error=True)
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         raw = result.structured_content if isinstance(result.structured_content, dict) else {}
