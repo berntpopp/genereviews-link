@@ -2,6 +2,14 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Re-vendored the behaviour conformance gate from genefoundry-router `ba09fdc`
+  (`docs/conformance/behaviour.py` blob `30d639242b`) so live MCP contract checks
+  treat not-found example probes as inconclusive instead of failures.
+
 ## [5.1.0] - 2026-07-15
 
 MCP contract-hardening (issue #106). Behaviour Conformance v1 gate: CONFORMANT
@@ -84,8 +92,6 @@ MCP contract-hardening (issue #106). Behaviour Conformance v1 gate: CONFORMANT
   the topology that depends on them.
 - `.env.docker.example` defined `GENEREVIEW_LINK_IMAGE` **twice**, with two different
   placeholder digests; the second silently won. Consolidated into one documented entry.
-
-## [Unreleased]
 
 ## [5.0.5] - 2026-07-13
 
