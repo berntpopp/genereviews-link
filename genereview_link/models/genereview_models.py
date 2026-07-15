@@ -538,9 +538,17 @@ class PassageBatchRequest(BaseModel):
 
     ids: Annotated[
         list[Annotated[str, StringConstraints(pattern=r"^NBK\d+:\d{4}$")]],
-        Field(min_length=1),
+        Field(
+            min_length=1,
+            description="Passage ids to fetch (1-20), each of the form 'NBKxxxx:NNNN'.",
+            examples=[["NBK1247:0000", "NBK1247:0001"]],
+        ),
     ]
-    include: list[Literal["table_data"]] | None = None
+    include: list[Literal["table_data"]] | None = Field(
+        default=None,
+        description="Opt into table_data (v1.1-fenced header + rows cells for table passages).",
+        examples=[["table_data"]],
+    )
 
 
 class PassageBatchResponse(BaseModel):
@@ -561,7 +569,15 @@ class PassageBatchResponse(BaseModel):
 class SearchBatchSpec(BaseModel):
     """One search spec in a batch request; mirrors GET /passages/search params."""
 
-    q: Annotated[str, Field(min_length=1, max_length=512)]
+    q: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=512,
+            description="Query string for this spec.",
+            examples=["breast cancer surveillance"],
+        ),
+    ]
     gene: str | None = None
     nbk_id: str | None = None
     sections: list[SectionName] | None = None
@@ -575,7 +591,15 @@ class SearchBatchSpec(BaseModel):
 class SearchBatchRequest(BaseModel):
     """Body for POST /passages/search/batch — 1-5 independent search specs."""
 
-    specs: Annotated[list[SearchBatchSpec], Field(min_length=1, max_length=5)]
+    specs: Annotated[
+        list[SearchBatchSpec],
+        Field(
+            min_length=1,
+            max_length=5,
+            description="1-5 independent search specs, each mirroring search_passages params.",
+            examples=[[{"q": "breast cancer surveillance"}]],
+        ),
+    ]
 
 
 class SearchBatchResultItem(BaseModel):

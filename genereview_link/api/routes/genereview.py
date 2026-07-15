@@ -7,7 +7,7 @@ to full data.
 import re
 from typing import Annotated, Protocol
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 
 from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.orchestration import (
@@ -155,7 +155,14 @@ def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
 )
 async def get_genereview(
     request: Request,
-    gene_symbol: str,
+    gene_symbol: Annotated[
+        str,
+        Path(
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            description="HGNC gene symbol to resolve, e.g. 'CFTR'.",
+            examples=["CFTR"],
+        ),
+    ],
     service: Annotated[GeneReviewService, Depends(get_managed_service)],
     include_abstract: bool = Query(True, description="Include PubMed abstract and metadata"),
     include_links: bool = Query(True, description="Include all available links"),

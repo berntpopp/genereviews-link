@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal, cast, get_args
 
@@ -45,6 +46,7 @@ from genereview_link.retrieval.rerank import (
 router = APIRouter(tags=["Passages"])
 
 BATCH_MAX_IDS = 20
+_NBK_ID_RE = re.compile(r"NBK\d+")
 SECTION_VALUES_DESCRIPTION = ", ".join(f'"{section}"' for section in SECTION_NAMES)
 PASSAGE_ROLE_VALUES: frozenset[str] = frozenset(str(role) for role in get_args(PassageRole))
 
@@ -87,6 +89,24 @@ def _table_body_placeholder(passage_id: str) -> UntrustedText:
     return fence_untrusted_text(
         _TABLE_BODY_PLACEHOLDER, source="genereviews", record_id=f"{passage_id}#table_cells_ref"
     )
+
+
+def _leading_excerpt(text: str, max_chars: int) -> str:
+    """A leading excerpt of ``text``, trimmed to a word boundary (issue #106 D5).
+
+    Dense-only hits (lexical_score 0.0) produce no ts_headline fragment, so brief
+    mode fell back to ``snippet=null`` AND ``text=null`` — a content-free row an
+    agent cannot triage. This gives every brief row a leading excerpt of the
+    passage instead.
+    """
+    stripped = text.strip()
+    if len(stripped) <= max_chars:
+        return stripped
+    cut = stripped[:max_chars].rstrip()
+    space = cut.rfind(" ")
+    if space > max_chars // 2:
+        cut = cut[:space].rstrip()
+    return cut + "…"
 
 
 def _format_source_url(nbk_id: str) -> str:
@@ -167,7 +187,12 @@ async def search_passages(
         Query(
             min_length=1,
             max_length=512,
-            description=("Query string (canonical). Either q or query is required."),
+            description=(
+                "Query string (canonical). Either q or query is required; the MCP "
+                "schema advertises q as required and the ``query`` alias is accepted "
+                "at runtime for cross-MCP convention."
+            ),
+            examples=["breast cancer surveillance"],
         ),
     ] = None,
     query: Annotated[
@@ -175,7 +200,7 @@ async def search_passages(
         Query(
             min_length=1,
             max_length=512,
-            description="Alias for q (cross-MCP convention).",
+            description="Alias for q (cross-MCP convention); must equal q if both are set.",
         ),
     ] = None,
     gene: Annotated[
@@ -185,6 +210,7 @@ async def search_passages(
                 "Filter to a single HGNC gene symbol (e.g. 'BRCA1'). "
                 "Matches any chapter whose gene_symbols array contains this value."
             ),
+            examples=["BRCA1"],
         ),
     ] = None,
     gene_role: Annotated[
@@ -205,6 +231,7 @@ async def search_passages(
         str | None,
         Query(
             description="Restrict results to one chapter, e.g. 'NBK1247'.",
+            examples=["NBK1247"],
         ),
     ] = None,
     sections: Annotated[
@@ -213,6 +240,7 @@ async def search_passages(
             description=(
                 f"Restrict to one or more canonical sections. Values: {SECTION_VALUES_DESCRIPTION}."
             ),
+            examples=[["management"]],
         ),
     ] = None,
     heading_path_contains: Annotated[
@@ -251,7 +279,8 @@ async def search_passages(
                 '(drops the opt-in score_breakdown field), "heading_path" '
                 "(drops heading_path from every row). Use when you only need "
                 "text + passage_id."
-            )
+            ),
+            examples=[["score_breakdown"]],
         ),
     ] = None,
     include: Annotated[
@@ -263,7 +292,8 @@ async def search_passages(
                 "_meta.dense_model_id + embedding_dim), "
                 '"table_data" (for table passages: populates v1.1-fenced header '
                 "+ rows cells; narrative passages remain unaffected)."
-            )
+            ),
+            examples=[["score_breakdown"]],
         ),
     ] = None,
     snippet_chars: Annotated[
@@ -312,7 +342,42 @@ async def search_passages(
     assert q is not None
     if nbk_id is not None:
         nbk_id = canonicalize_nbk_id(nbk_id)
+        # Reject a malformed nbk_id rather than silently matching nothing
+        # (Response-Envelope v1.1: silent omission is not compliant). A bogus
+        # value would otherwise return 0 rows with success:true, indistinguishable
+        # from "this chapter genuinely has no matching passages".
+        if not _NBK_ID_RE.fullmatch(nbk_id):
+            raise StructuredHTTPException(
+                status_code=400,
+                code="invalid_nbk_id",
+                message="nbk_id must be an NCBI Bookshelf id such as 'NBK1247'",
+                recovery_hint="pass a valid chapter id, e.g. nbk_id='NBK1247'",
+                field_errors=[FieldError(field="nbk_id", reason="not a valid NBK chapter id")],
+            )
     query_intents = detect_query_intents(q)
+
+    # gene_role primary/mentioned depend on primary_gene_symbols, which ships empty
+    # on existing corpus installs (issue #106 D4). Reject those roles rather than
+    # returning a silently-empty result set that reads as "no such passages".
+    if gene_role in ("primary", "mentioned") and not getattr(
+        request.app.state, "primary_gene_symbols_populated", False
+    ):
+        raise StructuredHTTPException(
+            status_code=400,
+            code="gene_role_not_supported",
+            message=(
+                f"gene_role={gene_role!r} is not supported on this corpus: "
+                "primary_gene_symbols is not populated (populated only on re-ingest)."
+            ),
+            recovery_hint="omit gene_role (or use gene_role='any') on this corpus.",
+            field_errors=[
+                FieldError(
+                    field="gene_role",
+                    reason="primary_gene_symbols not populated on this corpus",
+                    valid_values=["any"],
+                )
+            ],
+        )
 
     if gene:
         idx = getattr(request.app.state, "gene_index", None)
@@ -578,12 +643,20 @@ async def search_passages(
                 if table_cells_emitted
                 else fence_untrusted_text(r.passage.text, source="genereviews", record_id=pid)
             )
-        elif mode == "brief" and r.snippet is not None:
-            fenced_snippet = (
-                _table_body_placeholder(pid)
-                if table_cells_emitted
-                else fence_untrusted_text(r.snippet, source="genereviews", record_id=pid)
-            )
+        elif mode == "brief":
+            if table_cells_emitted:
+                fenced_snippet = _table_body_placeholder(pid)
+            else:
+                # Dense-only hits yield no ts_headline snippet (issue #106 D5); fall
+                # back to a leading excerpt so every brief row carries some content.
+                snippet_text = (
+                    r.snippet
+                    if r.snippet is not None
+                    else _leading_excerpt(r.passage.text, snippet_chars)
+                )
+                fenced_snippet = fence_untrusted_text(
+                    snippet_text, source="genereviews", record_id=pid
+                )
         out.append(
             RankedPassage(
                 passage_id=r.passage.passage_id,
@@ -677,6 +750,7 @@ async def get_passage(
                 "chapter; NNNN is the 4-digit chunk index within the chapter."
             ),
             pattern=r"^NBK\d+:\d{4}$",
+            examples=["NBK1247:0000"],
         ),
     ],
     neighbors: Annotated[
@@ -705,6 +779,7 @@ async def get_passage(
             description=(
                 "Opt into table_data (v1.1-fenced header + rows cells for table passages)."
             ),
+            examples=[["table_data"]],
         ),
     ] = None,
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]

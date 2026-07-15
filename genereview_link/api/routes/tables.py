@@ -37,13 +37,17 @@ async def get_table(
         Path(
             pattern=r"^NBK\d+$",
             description="Bare NCBI Bookshelf ID, e.g. 'NBK1247'.",
+            examples=["NBK1247"],
         ),
     ],
     table_id: Annotated[
         str,
         Path(
             pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
-            description="Table identifier, e.g. 't5'. Discoverable via get_chapter_metadata.",
+            description=(
+                "Table identifier, e.g. 'brca1.molgen.TA'. Discoverable via get_chapter_metadata."
+            ),
+            examples=["brca1.molgen.TA"],
         ),
     ],
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]

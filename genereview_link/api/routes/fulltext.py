@@ -7,7 +7,7 @@ import logging
 import re
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 from rapidfuzz import fuzz, process
 
 from genereview_link.api.client_manager import get_managed_client
@@ -128,7 +128,13 @@ def _filter_sections(
 )
 async def get_fulltext(
     request: Request,
-    nbk_id: str,
+    nbk_id: Annotated[
+        str,
+        Path(
+            description="Bare NCBI Bookshelf ID, e.g. 'NBK1247'.",
+            examples=["NBK1247"],
+        ),
+    ],
     client: Annotated[EutilsClient, Depends(get_managed_client)],
     sections: Annotated[
         str | None,

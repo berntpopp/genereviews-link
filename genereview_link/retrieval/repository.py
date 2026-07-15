@@ -459,6 +459,24 @@ class GeneReviewRepository:
             for r in rows
         ]
 
+    async def primary_gene_symbols_populated(self) -> bool:
+        """True if ANY chapter carries a non-empty ``primary_gene_symbols`` array.
+
+        ``primary_gene_symbols`` is populated only on re-ingest; existing corpus
+        installs ship it empty (``'{}'``). ``gene_role`` filters ``primary`` and
+        ``mentioned`` are meaningless against an empty field (issue #106 D4), so the
+        route consults this at startup and rejects those roles rather than silently
+        returning zero rows.
+        """
+        async with self._acquire() as conn:
+            row = await conn.fetchrow(
+                "select exists("
+                "  select 1 from genereview_chapters"
+                "   where array_length(primary_gene_symbols, 1) > 0"
+                ") as populated"
+            )
+        return bool(row and row["populated"])
+
     async def get_chapter_by_gene(self, gene_symbol: str) -> ChapterRow | None:
         chapters = await self.get_chapters_by_gene(gene_symbol, limit=1)
         return chapters[0] if chapters else None

@@ -163,6 +163,10 @@ def _app(mock_row: LexicalPassageRow | None = None) -> FastAPI:
     app.include_router(passages_routes.router)
     app.state.repository = repo
     app.state.embedder = FakeEmbeddingProvider(dim=384)
+    # Simulate a re-ingested corpus where primary_gene_symbols IS populated, so the
+    # forwarding tests below exercise gene_role primary/mentioned. The unpopulated
+    # case (the live-corpus reality, issue #106 D4) is covered by its own test.
+    app.state.primary_gene_symbols_populated = True
     return app
 
 
@@ -212,6 +216,38 @@ async def test_gene_role_mentioned_is_forwarded_to_repo() -> None:
     repo = app.state.repository
     lex_kwargs = repo.search_passages.call_args.kwargs
     assert lex_kwargs.get("gene_role") == "mentioned"
+
+
+@pytest.mark.asyncio
+async def test_gene_role_primary_rejected_when_primary_unpopulated() -> None:
+    """issue #106 D4: gene_role=primary must be REJECTED (not silently empty) when
+    primary_gene_symbols is not populated on this corpus."""
+    app = _app()
+    app.state.primary_gene_symbols_populated = False
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1 surgery", "gene": "BRCA1", "gene_role": "primary"},
+        )
+    assert resp.status_code == 400
+    body = resp.json()["detail"]
+    assert body["code"] == "gene_role_not_supported"
+    # It must NOT have run a search that returns a silently-empty result set.
+    app.state.repository.search_passages.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_gene_role_mentioned_rejected_when_primary_unpopulated() -> None:
+    """issue #106 D4: gene_role=mentioned also depends on primary_gene_symbols."""
+    app = _app()
+    app.state.primary_gene_symbols_populated = False
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        resp = await c.get(
+            "/passages/search",
+            params={"q": "BRCA1 surgery", "gene": "BRCA1", "gene_role": "mentioned"},
+        )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "gene_role_not_supported"
 
 
 @pytest.mark.asyncio
