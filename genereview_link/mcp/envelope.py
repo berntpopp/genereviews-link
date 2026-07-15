@@ -111,7 +111,6 @@ _ERROR_CODE_MAP: dict[str, tuple[ErrorCode, bool]] = {
     "not_yet_indexed": ("not_found", False),
     "response_too_large": ("invalid_input", False),
     "unknown_argument": ("invalid_input", False),
-    "gene_role_not_supported": ("invalid_input", False),
 }
 
 # Fallback classification by HTTP status when no known `code` is present

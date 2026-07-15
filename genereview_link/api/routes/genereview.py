@@ -143,13 +143,13 @@ def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
         "defaults to False; opt in for full chapter prose. max_chars (default 16000) "
         "truncates fulltext to keep responses context-budget friendly; truncated "
         "responses set _meta.truncated=true and surface next_commands -> "
-        "get_chapter_section. Resolves gene -> PubMed -> NBK using the local corpus "
-        "when available, and falls back through live NCBI services. If resolution "
-        "fails, use search_passages(gene=<symbol>) to retrieve indexed chapter "
-        "evidence directly. Pass fresh=true to bypass indexed context and fetch live "
-        "data. Corpus-backed responses carry _meta.corpus_version; live or "
-        "unresolved responses may use live version stamping or omit corpus_version "
-        "when no corpus chapter resolved."
+        "get_chapter_section. Resolves the gene to its DEFINING corpus chapter (the "
+        "chapter that gene's GeneReview is about); a gene only mentioned in a "
+        "multi-gene chapter, or absent from the corpus, returns not_found (use "
+        "search_passages(gene=<symbol>) for mention-level evidence). Pass fresh=true "
+        "to re-fetch the resolved chapter's content live from NCBI (resolution stays "
+        "corpus-authoritative). Corpus-backed responses carry _meta.corpus_version; "
+        "fresh responses stamp live provenance."
     ),
     operation_id="get_genereview_summary",
 )
@@ -197,27 +197,35 @@ async def get_genereview(
     Pass ``?fresh=true`` to bypass the index and fetch live from NCBI.
     """
     try:
-        indexed_chapter = None
-        if not fresh:
-            repository = get_optional_repository(request)
-            if repository is not None:
-                chapter = await repository.get_chapter_by_gene(gene_symbol.upper())
-                # Use the resolved corpus chapter even when it carries no pubmed_id
-                # (issue #106 D1: corpus chapters routinely have an empty pubmed_id).
-                # Gating on chapter.pubmed_id here forced EVERY call onto the blind
-                # live E-utils path, which returned the wrong chapter + a fabricated
-                # title. The NBK id + real title are what identify the chapter.
-                if chapter is not None:
-                    indexed_chapter = chapter
+        # Resolution is ALWAYS corpus-authoritative — even with fresh=true. The
+        # corpus is the source of truth for gene -> chapter; the blind, unranked
+        # live E-utils list is not (issue #106 D1). fresh controls only whether the
+        # resolved chapter's CONTENT is re-fetched live vs served from the warm
+        # cache. A gene that resolves to no DEFINING chapter (mentioned only in a
+        # multi-gene chapter, or absent) is not_found — never a guessed chapter.
+        repository = get_optional_repository(request)
+        chapter = None
+        if repository is not None:
+            chapter = await repository.get_defining_chapter_by_gene(gene_symbol.upper())
+        if chapter is None:
+            raise gene_not_found_error(gene_symbol)
 
-        if indexed_chapter is not None:
+        if fresh:
+            result = await service.get_genereview_comprehensive_uncached(
+                gene_symbol,
+                include_abstract=include_abstract,
+                include_links=include_links,
+                include_fulltext=include_fulltext,
+                chapter=chapter,
+            )
+        else:
             try:
                 cached_result = await service.get_genereview_comprehensive_indexed(
                     gene_symbol,
                     include_abstract=include_abstract,
                     include_links=include_links,
                     include_fulltext=include_fulltext,
-                    chapter=indexed_chapter,
+                    chapter=chapter,
                 )
                 # get_genereview_comprehensive_indexed is alru_cache-backed and
                 # returns the same instance on cache hits; copy before the route
@@ -225,25 +233,10 @@ async def get_genereview(
                 # (_truncate_genereview_fulltext) to avoid cross-request leakage.
                 result = cached_result.model_copy(deep=True)
             except DataNotFoundError:
-                result = _minimal_gene_review_from_indexed_chapter(gene_symbol, indexed_chapter)
-        else:
-            result = await service.get_genereview_comprehensive_uncached(
-                gene_symbol,
-                include_abstract=include_abstract,
-                include_links=include_links,
-                include_fulltext=include_fulltext,
-            )
+                result = _minimal_gene_review_from_indexed_chapter(gene_symbol, chapter)
         stamp_response_version(
             result,
-            corpus_version=(
-                live_corpus_version()
-                if fresh
-                else active_corpus_version(request)
-                if indexed_chapter is not None
-                # Non-indexed -> served by a live NCBI fetch, so stamp live provenance
-                # (was ``None``, which mislabeled live content as version-less).
-                else live_corpus_version()
-            ),
+            corpus_version=(live_corpus_version() if fresh else active_corpus_version(request)),
         )
         if include_fulltext and max_chars > 0:
             _truncate_genereview_fulltext(result, max_chars)

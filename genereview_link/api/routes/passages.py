@@ -213,20 +213,6 @@ async def search_passages(
             examples=["BRCA1"],
         ),
     ] = None,
-    gene_role: Annotated[
-        Literal["any", "primary", "mentioned"],
-        Query(
-            description=(
-                "Filter by gene role in the chapter. 'any' (default): gene in "
-                "gene_symbols (current behaviour). 'primary': gene in "
-                "primary_gene_symbols (chapter-defining gene). 'mentioned': gene "
-                "in gene_symbols but NOT in primary_gene_symbols. "
-                "Requires gene to be set; ignored when gene is absent. "
-                "Note: primary_gene_symbols is populated on re-ingest; existing "
-                "installs default to '{}' until then."
-            ),
-        ),
-    ] = "any",
     nbk_id: Annotated[
         str | None,
         Query(
@@ -354,30 +340,18 @@ async def search_passages(
                 recovery_hint="pass a valid chapter id, e.g. nbk_id='NBK1247'",
                 field_errors=[FieldError(field="nbk_id", reason="not a valid NBK chapter id")],
             )
+        # A syntactically-valid but NONEXISTENT chapter (e.g. NBK999999999) would
+        # otherwise filter to 0 rows with success:true — a silent-empty. Reject it
+        # as not_found so the caller knows the chapter, not the query, is the problem.
+        if await repo.get_chapter_by_nbk(nbk_id) is None:
+            raise StructuredHTTPException(
+                status_code=404,
+                code="chapter_not_found",
+                message=f"chapter {nbk_id!r} is not in the corpus",
+                recovery_hint="use get_chapter_metadata or search_passages to find valid chapters",
+                field_errors=[FieldError(field="nbk_id", reason="chapter not found in the corpus")],
+            )
     query_intents = detect_query_intents(q)
-
-    # gene_role primary/mentioned depend on primary_gene_symbols, which ships empty
-    # on existing corpus installs (issue #106 D4). Reject those roles rather than
-    # returning a silently-empty result set that reads as "no such passages".
-    if gene_role in ("primary", "mentioned") and not getattr(
-        request.app.state, "primary_gene_symbols_populated", False
-    ):
-        raise StructuredHTTPException(
-            status_code=400,
-            code="gene_role_not_supported",
-            message=(
-                f"gene_role={gene_role!r} is not supported on this corpus: "
-                "primary_gene_symbols is not populated (populated only on re-ingest)."
-            ),
-            recovery_hint="omit gene_role (or use gene_role='any') on this corpus.",
-            field_errors=[
-                FieldError(
-                    field="gene_role",
-                    reason="primary_gene_symbols not populated on this corpus",
-                    valid_values=["any"],
-                )
-            ],
-        )
 
     if gene:
         idx = getattr(request.app.state, "gene_index", None)
@@ -439,7 +413,6 @@ async def search_passages(
                 brief=(mode == "brief"),
                 snippet_max_fragments=snippet_max_fragments,
                 snippet_max_words=snippet_max_words,
-                gene_role=gene_role,
             )
         )
         dense_task = asyncio.create_task(
@@ -450,7 +423,6 @@ async def search_passages(
                 sections=sections_tuple,
                 heading_path_contains=heading_path_contains,
                 top_k=k_parallel,
-                gene_role=gene_role,
             )
         )
         lex_rows, dense_rows = await asyncio.gather(lexical_task, dense_task)
@@ -512,7 +484,6 @@ async def search_passages(
             brief=(mode == "brief"),
             snippet_max_fragments=snippet_max_fragments,
             snippet_max_words=snippet_max_words,
-            gene_role=gene_role,
         )
         lex = [
             dataclasses.replace(
@@ -534,8 +505,6 @@ async def search_passages(
     applied_filters: list[str] = []
     if gene:
         applied_filters.append(f"gene={gene}")
-        if gene_role != "any":
-            applied_filters.append(f"gene_role={gene_role}")
     if nbk_id:
         applied_filters.append(f"nbk_id={nbk_id}")
     if sections:

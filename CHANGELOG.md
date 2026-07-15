@@ -14,20 +14,33 @@ MCP contract-hardening (issue #106). Behaviour Conformance v1 gate: CONFORMANT
   the route guard and the service's inner guard both fell through to a blind live NCBI
   E-utils lookup that took `results[0]` — a chapter merely *mentioning* the gene — and,
   with no scraped title, synthesized `"GeneReview for <GENE>"`. CFTR resolved to NBK190101
-  "Pancreatitis Overview"; SCN1A to NBK1388 "Familial Hemiplegic Migraine". Now the gene's
-  **defining** chapter is resolved (by `primary_gene_symbols`, then fewest `gene_symbols`,
-  then recency) and its **real** corpus title is used; a title is NEVER fabricated (the
-  live fallback raises `not_found` when no authoritative chapter title resolves). CFTR →
-  NBK1250 "Cystic Fibrosis"; SCN1A → NBK1318 "SCN1A Seizure Disorders".
+  "Pancreatitis Overview"; SCN1A to NBK1388 "Familial Hemiplegic Migraine". Resolution is
+  now **always corpus-authoritative** — even with `fresh=true` (which now controls only
+  whether the resolved chapter's *content* is re-fetched live). The gene is resolved to its
+  **defining** chapter: the chapter where the gene is in `primary_gene_symbols`, OR is the
+  chapter's sole gene, OR appears as a whole word in the chapter title. A gene that is only
+  *mentioned* in a multi-gene chapter (e.g. CLDN2, which occurs only in the 13-gene
+  "Pancreatitis Overview"), or is absent, returns `not_found` — never a guessed chapter and
+  never a fabricated title. CFTR → NBK1250 "Cystic Fibrosis"; SCN1A → NBK1318 "SCN1A
+  Seizure Disorders"; CLDN2 → not_found.
+- **FastAPI list-shaped 422s were discarded.** A bad enum value / pattern-mismatched path
+  param returned `invalid_input` with a bare `"HTTP 422"` naming no parameter. The error
+  mapper now lifts each validation error's parameter name and message into a named
+  `field_errors` entry (never echoing the caller's rejected input).
+- **A syntactically-valid but nonexistent `nbk_id`** filter (e.g. `NBK999999999`) returned
+  0 rows with `success:true`; it is now rejected as `not_found`.
 - **`isError` was false on every error envelope.** Error frames now return
   `ToolResult(structured_content=..., is_error=True)` on both the exception path and the
   new unknown-argument path, so clients branching on `isError` see the error.
 - **`error_code` harmonized to the closed six-value enum** (`internal_error` → `internal`).
 - **Unknown arguments** are now rejected with `invalid_input` (never `not_found`) naming
   the tool's own valid parameters; caller-supplied argument names are never echoed.
-- **D4: `gene_role=primary`/`mentioned` returned a silently-empty result set** on installs
-  where `primary_gene_symbols` is unpopulated (every current corpus). Now rejected with
-  `invalid_input` (probed once at startup) instead of an empty success envelope.
+- **D4: `gene_role` removed from `search_passages`.** It filtered on `primary_gene_symbols`,
+  which is unpopulated on every current corpus, so `primary`/`mentioned` returned silently-
+  empty results and the declared enum was wider than the runtime supported. Rather than ship
+  a non-functional filter that lies, the parameter is removed from the tool (the repository
+  keeps the capability for a future corpus re-ingest). "Which chapter is a gene about" is
+  answered by `get_genereview_summary`'s fixed defining-chapter resolution.
 - **A bogus `nbk_id` filter on `search_passages`** returned 0 rows with `success:true`; it
   is now rejected as `invalid_input`.
 - **D5: brief-mode rows could arrive with both `text` and `snippet` null** (dense-only

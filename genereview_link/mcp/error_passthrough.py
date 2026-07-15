@@ -57,6 +57,45 @@ def _find_http_status_response(exc: BaseException) -> httpx.Response | None:
     return None
 
 
+def _detail_from_validation_errors(errors: list[Any]) -> dict[str, Any] | None:
+    """Build a named ``invalid_input`` detail from FastAPI's LIST-shaped 422 body.
+
+    FastAPI/pydantic request-validation failures (a bad enum value, a
+    pattern-mismatched path param, a non-numeric int) return
+    ``detail: [{loc, msg, type}, ...]`` — a LIST, not the dict shape a
+    StructuredHTTPException emits. The earlier code only handled the dict shape, so
+    these fell through to a bare ``"HTTP 422"`` message that named no parameter and
+    gave the model nothing to self-correct from. Here we lift each error's
+    parameter name (``loc[-1]``) and framework message into a named field_error.
+
+    SECURITY: only the route's own parameter names (``loc``) and pydantic's
+    server-generated messages are used — never the caller's rejected input value
+    (which pydantic carries separately in ``input`` and which we drop).
+    """
+    field_errors: list[dict[str, Any]] = []
+    names: list[str] = []
+    for err in errors:
+        if not isinstance(err, dict):
+            continue
+        loc = err.get("loc")
+        name = str(loc[-1]) if isinstance(loc, list) and loc else "arguments"
+        msg = err.get("msg")
+        names.append(name)
+        field_errors.append(
+            {"field": name, "reason": msg if isinstance(msg, str) else "invalid value"}
+        )
+    if not field_errors:
+        return None
+    named = ", ".join(dict.fromkeys(names))
+    return {
+        "code": "invalid_input",
+        "message": f"Invalid value for parameter(s): {named}.",
+        "recovery_hint": "Correct the named parameter(s) and retry.",
+        "field_errors": field_errors,
+        "next_commands": [],
+    }
+
+
 def _structured_detail(response: httpx.Response) -> dict[str, Any] | None:
     """Extract the repository's StructuredHTTPException detail body."""
     try:
@@ -66,6 +105,9 @@ def _structured_detail(response: httpx.Response) -> dict[str, Any] | None:
     if not isinstance(body, dict):
         return None
     detail = body.get("detail")
+    if isinstance(detail, list):
+        # FastAPI RequestValidationError — a LIST of {loc, msg, type} errors.
+        return _detail_from_validation_errors(detail)
     if not isinstance(detail, dict):
         return None
     code = detail.get("code")

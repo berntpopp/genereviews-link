@@ -42,6 +42,7 @@ from genereview_link.config import ServerConfig
 from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
 from genereview_link.retrieval.repository import (
     ChapterMetadataRow,
+    ChapterRow,
     LexicalPassageRow,
     PassageRow,
     SectionSummaryRow,
@@ -219,6 +220,20 @@ def _hostile_repo(**overrides: Any) -> MagicMock:
         return_value=[{"passage_id": "NBK1116:0042", "dense_score": 0.9}]
     )
     repo.fetch_passages_by_ids = AsyncMock(return_value={})
+    repo.get_chapter_by_nbk = AsyncMock(return_value=object())
+    repo.get_defining_chapter_by_gene = AsyncMock(
+        return_value=ChapterRow(
+            nbk_id="NBK1116",
+            short_name="x",
+            title=HOSTILE,
+            pubmed_id="20301425",
+            gene_symbols=("BRCA1",),
+            omim_ids=(),
+            authors=None,
+            initial_pub_date=None,
+            last_updated_date=None,
+        )
+    )
     repo.get_passage_window = AsyncMock(return_value=(_hostile_passage_row(), [], [], False, False))
     repo.get_section = AsyncMock(return_value=[_hostile_passage_row()])
     repo.get_table = AsyncMock(

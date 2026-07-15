@@ -578,14 +578,40 @@ class SearchBatchSpec(BaseModel):
             examples=["breast cancer surveillance"],
         ),
     ]
-    gene: str | None = None
-    nbk_id: str | None = None
-    sections: list[SectionName] | None = None
-    heading_path_contains: Annotated[str | None, Field(min_length=1, max_length=200)] = None
-    mode: Literal["brief", "full", "ids_only"] = "brief"
-    limit: Annotated[int, Field(ge=1, le=100)] = 5
-    rerank: Literal["rrf", "lexical", "off"] = "rrf"
-    snippet_chars: Annotated[int, Field(ge=80, le=800)] = 400
+    gene: str | None = Field(
+        default=None,
+        description="Optional HGNC gene symbol filter for this spec.",
+        examples=["BRCA1"],
+    )
+    nbk_id: str | None = Field(
+        default=None,
+        description="Optional single-chapter filter, e.g. 'NBK1247'.",
+        examples=["NBK1247"],
+    )
+    sections: list[SectionName] | None = Field(
+        default=None,
+        description="Optional canonical-section filter (see search_passages sections).",
+        examples=[["management"]],
+    )
+    heading_path_contains: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="Optional case-insensitive substring filter on heading_path.",
+        examples=["Risk-Reducing Surgery"],
+    )
+    mode: Literal["brief", "full", "ids_only"] = Field(
+        default="brief", description="Response detail: brief (default), full, or ids_only."
+    )
+    limit: Annotated[int, Field(ge=1, le=100)] = Field(
+        default=5, description="Number of rows to return for this spec (1-100)."
+    )
+    rerank: Literal["rrf", "lexical", "off"] = Field(
+        default="rrf", description="Reranker: rrf (default), lexical, or off."
+    )
+    snippet_chars: Annotated[int, Field(ge=80, le=800)] = Field(
+        default=400, description="Approximate brief-mode snippet length in characters (80-800)."
+    )
 
 
 class SearchBatchRequest(BaseModel):

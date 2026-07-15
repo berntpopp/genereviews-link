@@ -143,23 +143,6 @@ async def _initialize_state(app: FastAPI) -> None:
                 error=str(exc),
             )
 
-    # --- primary_gene_symbols availability (issue #106 D4) ---
-    # gene_role=primary/mentioned depend on primary_gene_symbols, which ships empty
-    # on existing corpus installs. Probe once so the route can reject those roles
-    # instead of returning a silently-empty result set.
-    app.state.primary_gene_symbols_populated = False
-    if app.state.repository is not None:
-        try:
-            app.state.primary_gene_symbols_populated = (
-                await app.state.repository.primary_gene_symbols_populated()
-            )
-            logger.info(
-                "primary_gene_symbols availability probed",
-                populated=app.state.primary_gene_symbols_populated,
-            )
-        except Exception as exc:
-            logger.warning("primary_gene_symbols probe failed", error=str(exc))
-
     # --- Gene symbol index (cached for fuzzy alias suggestions) ---
     app.state.gene_index = None
     if app.state.pool is not None:

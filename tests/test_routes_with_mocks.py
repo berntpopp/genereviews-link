@@ -669,7 +669,7 @@ class TestGenereviewRoute:
             gene_symbols = ("BRCA1", "BRCA2")
 
         class FakeRepo:
-            async def get_chapter_by_gene(self, gene_symbol: str) -> FakeChapter:
+            async def get_defining_chapter_by_gene(self, gene_symbol: str) -> FakeChapter:
                 assert gene_symbol == "BRCA1"
                 return FakeChapter()
 
@@ -708,7 +708,7 @@ class TestGenereviewRoute:
             gene_symbols = ("GRIN2B",)
 
         class FakeRepo:
-            async def get_chapter_by_gene(self, gene_symbol: str) -> FakeChapter:
+            async def get_defining_chapter_by_gene(self, gene_symbol: str) -> FakeChapter:
                 assert gene_symbol == "GRIN2B"
                 return FakeChapter()
 
@@ -734,27 +734,20 @@ class TestGenereviewRoute:
         assert body["_meta"]["corpus_version"] == "2026-05-10-r6"
 
     @pytest.mark.asyncio
-    async def test_repo_miss_live_fallback_stamps_live_version(
+    async def test_gene_with_no_defining_chapter_returns_not_found(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
+        # issue #106 D1: a gene that resolves to NO defining chapter (mentioned only
+        # in a multi-gene chapter, or absent) is not_found — NEVER a blind pick from
+        # the unranked live E-utils list, and NEVER a fabricated summary. fresh=true
+        # must not resurrect the blind live path.
         class FakeRepo:
-            async def get_chapter_by_gene(self, gene_symbol: str) -> None:
-                assert gene_symbol == "BRCA1"
+            async def get_defining_chapter_by_gene(self, gene_symbol: str) -> None:
                 return None
 
-        fake_client._search_result = {"ids": ["20301425"]}
-        fake_client._book_url = "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
-        # A live summary needs an authoritative scraped title (issue #106 D1: the
-        # server never fabricates one), so exercise the live path with fulltext on.
-        fake_client._fulltext = {
-            "nbk_id": "1247",
-            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
-            "title": "BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
-            "sections": {},
-            "metadata": {},
-        }
+        fake_client._search_result = {"ids": ["24624459"]}
+        fake_client._book_url = "https://www.ncbi.nlm.nih.gov/books/NBK190101/"
         app.state.repository = FakeRepo()
-        app.state.corpus_version = "2026-05-10-r6"
 
         real_service = GeneReviewService(client=fake_client)
 
@@ -763,71 +756,17 @@ class TestGenereviewRoute:
 
         app.dependency_overrides[get_managed_service] = _get_service
 
-        resp = await http_client.get("/genereview/BRCA1?include_fulltext=true")
-
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["gene_symbol"] == "BRCA1"
-        assert body["pubmed_id"] == "20301425"
-        assert body["book_url"] == "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
-        # repo miss -> live NCBI fallback -> version reflects live provenance, not null.
-        assert body["corpus_version"].startswith("live:")
-        assert body["_meta"]["corpus_version"] == body["corpus_version"]
+        for path in ("/genereview/CLDN2", "/genereview/CLDN2?fresh=true&include_fulltext=true"):
+            resp = await http_client.get(path)
+            assert resp.status_code == 404, path
 
     @pytest.mark.asyncio
-    async def test_repo_miss_without_authoritative_title_returns_not_found(
+    async def test_absent_repository_returns_not_found(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
-        # issue #106 D1: a live fallback that cannot resolve a real chapter title
-        # must return not_found, NEVER a fabricated "GeneReview for <GENE>" summary.
-        class FakeRepo:
-            async def get_chapter_by_gene(self, gene_symbol: str) -> None:
-                return None
-
-        fake_client._search_result = {"ids": ["20301425"]}
-        fake_client._book_url = "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
-        app.state.repository = FakeRepo()
-
-        real_service = GeneReviewService(client=fake_client)
-
-        async def _get_service() -> Any:
-            yield real_service
-
-        app.dependency_overrides[get_managed_service] = _get_service
-
-        resp = await http_client.get("/genereview/ZZZUNKNOWN?include_fulltext=true")
-
+        # No repository configured -> no corpus resolution -> not_found (never blind live).
+        resp = await http_client.get("/genereview/BRCA1?include_fulltext=true")
         assert resp.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_absent_repository_live_fallback_stamps_live_version(
-        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
-    ) -> None:
-        fake_client._search_result = {"ids": ["20301425"]}
-        fake_client._book_url = "https://www.ncbi.nlm.nih.gov/books/NBK1247/"
-        fake_client._fulltext = {
-            "nbk_id": "1247",
-            "url": "https://www.ncbi.nlm.nih.gov/books/NBK1247/",
-            "title": "BRCA1- and BRCA2-Associated Hereditary Breast and Ovarian Cancer",
-            "sections": {},
-            "metadata": {},
-        }
-        app.state.corpus_version = "2026-05-10-r6"
-
-        real_service = GeneReviewService(client=fake_client)
-
-        async def _get_service() -> Any:
-            yield real_service
-
-        app.dependency_overrides[get_managed_service] = _get_service
-
-        resp = await http_client.get("/genereview/BRCA1?include_fulltext=true")
-
-        assert resp.status_code == 200
-        body = resp.json()
-        # absent repository -> live NCBI fallback -> version reflects live provenance, not null.
-        assert body["corpus_version"].startswith("live:")
-        assert body["_meta"]["corpus_version"] == body["corpus_version"]
 
     @pytest.mark.asyncio
     async def test_returns_404_when_service_raises(self, fake_client: FakeClient) -> None:
@@ -861,14 +800,26 @@ class TestGenereviewRoute:
             async def get_genereview_comprehensive_uncached(self, *args: Any, **kwargs: Any) -> Any:
                 raise RuntimeError("boom")
 
+        class FakeChapter:
+            nbk_id = "NBK1247"
+            short_name = "brca1"
+            title = "BRCA1- and BRCA2-Associated HBOC"
+            pubmed_id = "1"
+            gene_symbols = ("BRCA1",)
+
+        class FakeRepo:
+            async def get_defining_chapter_by_gene(self, gene_symbol: str) -> FakeChapter:
+                return FakeChapter()
+
         async def _get_service() -> Any:
             yield FakeService()
 
         fastapi_app.dependency_overrides[get_managed_service] = _get_service
+        fastapi_app.state.repository = FakeRepo()
 
         transport = ASGITransport(app=fastapi_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/genereview/BRCA1")
+            resp = await client.get("/genereview/BRCA1?fresh=true")
             assert resp.status_code == 500
             detail = assert_structured_error_detail(resp.json())
             assert detail["next_commands"][0]["tool"] == "search_passages"
@@ -894,14 +845,27 @@ class TestGenereviewRoute:
                     ),
                 )
 
+        class FakeChapter:
+            nbk_id = "NBK1247"
+            short_name = "brca1"
+            title = "BRCA1- and BRCA2-Associated HBOC"
+            pubmed_id = "1"
+            gene_symbols = ("BRCA1",)
+
+        class FakeRepo:
+            async def get_defining_chapter_by_gene(self, gene_symbol: str) -> FakeChapter:
+                return FakeChapter()
+
         async def _get_service() -> Any:
             yield FakeService()
 
         fastapi_app.dependency_overrides[get_managed_service] = _get_service
+        fastapi_app.state.repository = FakeRepo()
 
         transport = ASGITransport(app=fastapi_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/genereview/BRCA1")
+            # fresh=true exercises the uncached service path with a resolved chapter.
+            resp = await client.get("/genereview/BRCA1?fresh=true")
             assert resp.status_code == 200
             body = resp.json()
             assert body["gene_symbol"] == "BRCA1"

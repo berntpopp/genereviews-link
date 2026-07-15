@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
@@ -459,27 +460,49 @@ class GeneReviewRepository:
             for r in rows
         ]
 
-    async def primary_gene_symbols_populated(self) -> bool:
-        """True if ANY chapter carries a non-empty ``primary_gene_symbols`` array.
-
-        ``primary_gene_symbols`` is populated only on re-ingest; existing corpus
-        installs ship it empty (``'{}'``). ``gene_role`` filters ``primary`` and
-        ``mentioned`` are meaningless against an empty field (issue #106 D4), so the
-        route consults this at startup and rejects those roles rather than silently
-        returning zero rows.
-        """
-        async with self._acquire() as conn:
-            row = await conn.fetchrow(
-                "select exists("
-                "  select 1 from genereview_chapters"
-                "   where array_length(primary_gene_symbols, 1) > 0"
-                ") as populated"
-            )
-        return bool(row and row["populated"])
-
     async def get_chapter_by_gene(self, gene_symbol: str) -> ChapterRow | None:
         chapters = await self.get_chapters_by_gene(gene_symbol, limit=1)
         return chapters[0] if chapters else None
+
+    async def get_defining_chapter_by_gene(self, gene_symbol: str) -> ChapterRow | None:
+        """The chapter where *gene_symbol* is the DEFINING gene, or None.
+
+        A gene merely MENTIONED in a multi-gene chapter (e.g. CLDN2, which occurs
+        only in the 13-gene "Pancreatitis Overview") has no GeneReview of its own —
+        this returns None so the caller can answer ``not_found`` rather than
+        surfacing an overview as the gene's authoritative review (issue #106 D1).
+
+        A chapter is DEFINING for the gene when ANY of these hold:
+          * the gene is in ``primary_gene_symbols`` (forward-compatible; empty on
+            current installs, so this is a no-op until re-ingest);
+          * the chapter reviews a single gene (``gene_symbols == [gene]``);
+          * the gene symbol appears as a whole word in the chapter title
+            (e.g. "SCN1A Seizure Disorders", "BRCA1- and BRCA2-Associated ...").
+        Candidates are ordered defining-first (primary, then fewest gene_symbols,
+        then recency); the first that qualifies wins. "Fewest genes" alone is NOT
+        proof of a defining chapter — a mention-only gene must fall through to None.
+        """
+        async with self._acquire() as conn:
+            rows = await conn.fetch(
+                """
+                select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
+                       authors, initial_pub_date, last_updated_date, ingested_at,
+                       ($1 = any(primary_gene_symbols)) as is_primary,
+                       array_length(gene_symbols, 1) as n_genes
+                  from genereview_chapters
+                 where $1 = any(gene_symbols)
+                 order by (case when $1 = any(primary_gene_symbols) then 0 else 1 end),
+                          array_length(gene_symbols, 1) asc nulls last,
+                          last_updated_date desc nulls last,
+                          nbk_id
+                """,
+                gene_symbol,
+            )
+        word = re.compile(r"\b" + re.escape(gene_symbol) + r"\b", re.IGNORECASE)
+        for row in rows:
+            if row["is_primary"] or row["n_genes"] == 1 or word.search(row["title"] or ""):
+                return _to_chapter_row(row)
+        return None
 
     async def get_chapters_by_gene(
         self,
@@ -494,21 +517,7 @@ class GeneReviewRepository:
                        authors, initial_pub_date, last_updated_date, ingested_at
                   from genereview_chapters
                  where $1 = any(gene_symbols)
-                 order by
-                       -- The gene's DEFINING chapter first (issue #106 D1). Ordering
-                       -- by recency alone made a chapter that merely MENTIONS the gene
-                       -- (e.g. a multi-gene overview) outrank the gene's own review.
-                       -- 1. Prefer a chapter where the gene is a primary gene
-                       --    (forward-compatible: primary_gene_symbols is empty on
-                       --    current installs, so this is a no-op until re-ingest).
-                       (case when $1 = any(primary_gene_symbols) then 0 else 1 end),
-                       -- 2. Then the most gene-specific chapter: the fewest
-                       --    gene_symbols (the gene's own review lists just it; a
-                       --    multi-gene overview lists many).
-                       array_length(gene_symbols, 1) asc nulls last,
-                       -- 3. Then recency, then a stable id tiebreak.
-                       last_updated_date desc nulls last,
-                       nbk_id
+                 order by last_updated_date desc nulls last, nbk_id
                  limit coalesce($2::int, 2147483647)
                 """,
                 gene_symbol,
