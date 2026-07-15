@@ -94,7 +94,7 @@ async def test_internal_error_severs_str_exc() -> None:
 
     for payload in (sc, mirror):
         assert payload["success"] is False
-        assert payload["error_code"] == "internal_error"
+        assert payload["error_code"] == "internal"
         msg = payload["message"]
         _assert_no_injection_prose(msg)
         _assert_no_forbidden(msg)

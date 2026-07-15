@@ -170,6 +170,22 @@ def wrap_structured_error_tools(route: Any, component: Any) -> None:
     # amendment the `kind` literal must appear on the wire, not in a declared schema.
     object.__setattr__(component, "output_schema", None)
 
+    # search_passages requires a query at runtime (either `q` or the `query` alias),
+    # but FastAPI marks both optional (the either-or check lives in the route), so
+    # the served inputSchema declares NO required param. That leaves the Behaviour
+    # gate unable to build a valid call from `examples` (it reads required params
+    # only), reporting the tool UNGATED. Advertise `q` as required so the tool is
+    # probeable. This only TIGHTENS the schema: runtime stays lenient (FastMCP's
+    # input validation is off, so a `query`-only call is still accepted) — the safe
+    # direction (runtime a superset of the schema).
+    if component.name == "search_passages":
+        params = component.parameters
+        if isinstance(params, dict) and "q" in (params.get("properties") or {}):
+            required = list(params.get("required") or [])
+            if "q" not in required:
+                required.append("q")
+                params["required"] = required
+
     original_run = component.run
     tool_name = component.name
     # Snapshot the tool's declared argument names once, at wrap time. An argument
