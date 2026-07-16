@@ -2,14 +2,6 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
-## [Unreleased]
-
-### Changed
-
-- Re-vendored the behaviour conformance gate from genefoundry-router `56db958`
-  (`docs/conformance/behaviour.py` blob `c69801687`) so live MCP contract checks
-  treat not-found example probes as inconclusive and keep empty auxiliary objects from hiding counted rows.
-
 ## [5.1.0] - 2026-07-15
 
 MCP contract-hardening (issue #106). Behaviour Conformance v1 gate: CONFORMANT
@@ -66,6 +58,9 @@ MCP contract-hardening (issue #106). Behaviour Conformance v1 gate: CONFORMANT
   is still accepted at runtime (input validation stays lenient, the safe direction).
 - Vendored the Behaviour Conformance v1 gate (`tests/conformance/behaviour.py` +
   `test_behaviour_v1.py`) and wired it into the conformance workflow.
+- Re-vendored the behaviour conformance gate from genefoundry-router `56db958`
+  (`docs/conformance/behaviour.py` blob `c69801687`) so live MCP contract checks
+  treat not-found example probes as inconclusive and keep empty auxiliary objects from hiding counted rows.
 
 ### Notes
 
