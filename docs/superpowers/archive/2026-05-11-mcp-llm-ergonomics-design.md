@@ -2,6 +2,8 @@
 
 **Date:** 2026-05-11
 **Status:** Draft, awaiting user review
+> Historical record
+
 **Scope:** Lift the GeneReview-Link MCP server from 7.8/10 toward ~9/10 on
 LLM-consumer ergonomics, deferring rerank quality tuning and data-quality
 fixes (text casing, heading-path leaves) to separate workstreams.

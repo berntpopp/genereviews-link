@@ -1,6 +1,8 @@
 # Ranking Architecture Redesign — Design Spec
 
 **Date:** 2026-05-12
+> Historical record
+
 **Author:** senior MCP engineer (Opus 4.7, in collaboration with project maintainer)
 **Source review:** `docs/superpowers/reviews/2026-05-12-mcp-llm-deep-toolset-review.md`
 **Companion spec:** `docs/superpowers/specs/2026-05-12-deep-review-solutions-design.md` (subsumes B7 from this doc)

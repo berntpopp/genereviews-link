@@ -1,6 +1,8 @@
 # Batch B — Ranking Quality (passage_role + intent-aware scoring) — Design Spec
 
 **Date:** 2026-05-12 (rev 2 — addresses peer review)
+> Historical record
+
 **Branch target:** new branch off `main` after Batch A+E merges.
 **Predecessor:** Batch A+E (score visibility) — needed to inspect resulting `rrf_score` and `dense_rank_position` per row.
 **Successor:** Batch C — discoverability/navigation.

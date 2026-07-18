@@ -1,6 +1,8 @@
 # PubTator-Style Annotation Alternatives RTX Bake-Off
 
 **Date:** 2026-05-14
+> Historical record
+
 **Branch:** `spike/pubtator-local-annotation`
 **Machine:** RTX 5090, 32 GB VRAM, PyTorch `2.11.0+cu130`
 

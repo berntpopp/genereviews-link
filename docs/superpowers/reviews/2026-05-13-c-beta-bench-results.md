@@ -1,6 +1,8 @@
 # C-beta Cross-Encoder Bake-Off Results
 
 **Date:** 2026-05-13
+> Historical record
+
 **Bench fixture:** `tests/fixtures/ranking_bench.jsonl` (299 entries)
 **C-alpha baseline:** rrf P@1=0.408, MRR@5=0.560, Recall@5=0.826, composite=0.598
 

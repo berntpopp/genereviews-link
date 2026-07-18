@@ -1,6 +1,8 @@
 # Ranking Redesign Phase C-gamma — Entity-Aware Retrieval (Design Spec)
 
 **Date:** 2026-05-13
+> Historical record
+
 **Author:** senior MCP engineer (Opus 4.7, in collaboration with project maintainer)
 **Source review:** `docs/superpowers/reviews/2026-05-13-c-beta-bench-results.md`
 **Predecessors:**

@@ -1,5 +1,7 @@
 # Bulk Archive Ingest + Postgres RAG Retrieval — Implementation Plan (Part 2)
 
+> Historical record
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. This file continues [2026-05-11-bulk-archive-postgres-rag.md](2026-05-11-bulk-archive-postgres-rag.md). All Phase 1-3 tasks must be complete before starting here.
 
 ---

@@ -3,6 +3,8 @@
 **Date:** 2026-05-12
 **Status:** Findings + design for fix.  Implementation tracked in tasks #22-#27.
 
+> Historical record
+
 ## What broke
 
 `genereview_link/corpus/nxml.py:217-308` `_walk_section` walks the direct

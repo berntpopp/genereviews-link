@@ -1,6 +1,8 @@
 # MCP LLM-Ergonomics Pass 3-A — Design Spec
 
 **Date:** 2026-05-12
+> Historical record
+
 **Branch target:** new branch off `main` after `feat/mcp-llm-ergonomics` (PR #11) merges.
 **Successor:** Pass-3-B (separate spec) covers `since=` filter, `cite()` helper, PMID cross-link, `related_chapters`.
 

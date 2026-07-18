@@ -1,5 +1,7 @@
 # Deep Review Solutions Implementation Plan
 
+> Historical record
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix the concrete MCP consumer defects found in the 2026-05-12 deep review, excluding B7 and rank-disagreement diagnostics which are deferred to a separate ranking architecture redesign.

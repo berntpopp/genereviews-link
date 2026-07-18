@@ -1,6 +1,8 @@
 # Group A API Reliability And LLM Recovery Design
 
 **Date:** 2026-05-13
+> Historical record
+
 **Issues:** #41, #42, #35, #47
 **Scope:** One remediation phase focused on orchestration entry points.
 

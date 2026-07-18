@@ -1,6 +1,8 @@
 # Issue #43 — Distinguish primary genes from mentioned genes
 
 **Date:** 2026-06-12  
+> Historical record
+
 **Issue:** #43 — BRCA1=FANCS causes false-positive Fanconi hits  
 **Effort:** M  
 **PR strategy:** Single PR (all changes are additive, backward-compatible)

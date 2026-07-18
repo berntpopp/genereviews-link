@@ -17,6 +17,8 @@ verdict: APPROVE WITH FOLLOW-UPS
 
 # Deep review — PR #11 MCP LLM-Ergonomics Pass
 
+> Historical record
+
 **Scope.** 20 files, +1,289 / -82 LOC across 13 commits ed9a48d..94976e2.
 Each phase already passed two-stage subagent reviews in isolation; this
 review focuses on cross-cutting concerns those isolated reviews could not

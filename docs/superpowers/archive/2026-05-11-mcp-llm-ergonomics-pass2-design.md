@@ -2,6 +2,8 @@
 
 **Date:** 2026-05-11
 **Status:** Draft, awaiting user review
+> Historical record
+
 **Predecessor:** `2026-05-11-mcp-llm-ergonomics-design.md` (shipped)
 **Scope:** Lift the deployed MCP server from consumer-rated 8.2/10 toward
 ~9.2/10 by addressing the two systematic weaknesses every reviewer

@@ -1,6 +1,8 @@
 # Phase 1 Correctness And Performance Implementation Plan
 
 **Status:** Completed in PR #53, merged to `main` as
+> Historical record
+
 `4496721b5bbe58106220b92baf20e6fd6aa85da6`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

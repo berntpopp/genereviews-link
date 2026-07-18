@@ -1,5 +1,7 @@
 # Issue #27: Corpus Release Bundle CI Workflow — Implementation Plan
 
+> Historical record
+
 > **Design-only deliverable.** This plan cannot be auto-merged or validated in
 > a sandbox: it requires real NCBI ingest (~40 k passages), Hugging Face model
 > download (~30 MB), and `contents: write` GitHub permissions. Implement it on

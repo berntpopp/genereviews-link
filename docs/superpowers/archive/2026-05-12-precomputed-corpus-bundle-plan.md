@@ -1,5 +1,7 @@
 # Precomputed Corpus Bundle Implementation Plan
 
+> Historical record
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build and publish complete GeneReviews corpus bundles locally on the RTX 5090, then let Docker restore those bundles from GitHub Releases instead of ingesting/backfilling on first boot.
