@@ -184,8 +184,8 @@ module = [
     "lxml.*",
     "defusedxml.*",
     "transformers.*",
-    "tokenizers.*",
     "sentence_transformers.*",
+    "torch.*",
     "pgvector.*",
     "apscheduler.*",
 ]
