@@ -1,6 +1,8 @@
 # Task B1 findings: chapter_last_updated semantics
 
 **Date:** 2026-05-12
+> Historical record
+
 **Outcome:** (a) — parser picks wrong date-type
 
 ## Method

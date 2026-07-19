@@ -1,6 +1,8 @@
 # Modernize Stack and Agents Files — Design Spec
 
 - **Date:** 2026-05-10
+> Historical record
+
 - **Repo:** genereviews-link
 - **Reference:** pubtator-link (sibling repo at `../pubtator-link`)
 - **Status:** Approved by user, ready for plan generation

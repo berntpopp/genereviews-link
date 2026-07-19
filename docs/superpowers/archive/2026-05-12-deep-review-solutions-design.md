@@ -1,6 +1,8 @@
 # Deep Review Engineering Solutions — Design Spec (rev 2)
 
 **Date:** 2026-05-12 (rev 2: senior-review corrections applied)
+> Historical record
+
 **Author:** senior MCP engineer (Opus 4.7, deep-review session)
 **Source review:** `docs/superpowers/reviews/2026-05-12-mcp-llm-deep-toolset-review.md`
 **Scope:** concrete code-level fixes for all 13 bugs (B1–B13) and the 8 consensus improvements from the cross-LLM synthesis, with file:line refs, code sketches, effort estimates, and external-research citations.

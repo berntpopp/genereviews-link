@@ -8,6 +8,8 @@ scope: exercise every advertised tool + every advertised mode on real evidence-g
 
 # GeneReview-Link MCP — Deep Toolset Review (Review #4)
 
+> Historical record
+
 > All 10 tools exercised, both resources read, all 3 rerank modes + 3 response modes + every documented filter compared against a varied evidence-grounding workload. **One ship-blocker, four parser-side defects, one corpus-freshness gap, one ranking-quality footgun.** Corpus path remains best-in-class; legacy E-utils + scraper path is the long pole.
 
 ---

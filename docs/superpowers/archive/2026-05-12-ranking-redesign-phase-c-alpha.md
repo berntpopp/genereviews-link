@@ -1,5 +1,7 @@
 # Ranking Redesign Phase C-α — Hybrid Retrieval + Benchmark Harness Implementation Plan
 
+> Historical record
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the lexical-gated dense scoring in `rerank=rrf` with true parallel hybrid retrieval (lexical-top-K ∪ dense-top-K corpus-wide, filter-aware), and deliver the benchmark harness + dataset that C-β will use to pick a cross-encoder.

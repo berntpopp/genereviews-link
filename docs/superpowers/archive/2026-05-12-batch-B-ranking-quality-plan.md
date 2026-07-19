@@ -1,5 +1,7 @@
 # Batch B — Ranking Quality (passage_role + intent-aware scoring) — Implementation Plan
 
+> Historical record
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Date:** 2026-05-12 (rev 2 — addresses peer review)

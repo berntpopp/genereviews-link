@@ -1,6 +1,8 @@
 # Bulk Archive Ingest + Postgres RAG Retrieval — Design Spec
 
 - **Date:** 2026-05-11
+> Historical record
+
 - **Repo:** genereviews-link
 - **References:**
   - `../pubtator-link` (lift retrieval + migration patterns)

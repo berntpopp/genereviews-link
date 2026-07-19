@@ -1,5 +1,7 @@
 # MCP LLM-Ergonomics Pass Implementation Plan
 
+> Historical record
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Lift the GeneReview-Link MCP server from 7.8/10 to ~8.9/10 on LLM-consumer ergonomics by adding a `get_passage` tool, snippet-first responses, structured error payloads, server-level instructions, and chapter-level metadata on every passage.

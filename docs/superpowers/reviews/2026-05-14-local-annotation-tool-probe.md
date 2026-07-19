@@ -1,6 +1,8 @@
 # Local Biomedical Annotation Tool Probe
 
 **Date:** 2026-05-14
+> Historical record
+
 **Branch:** `spike/pubtator-local-annotation`
 
 ## Goal

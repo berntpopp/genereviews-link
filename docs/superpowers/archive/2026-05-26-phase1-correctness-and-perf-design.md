@@ -2,6 +2,8 @@
 
 **Date:** 2026-05-26
 **Status:** Completed in PR #53, merged to `main` as
+> Historical record
+
 `4496721b5bbe58106220b92baf20e6fd6aa85da6`.
 **Findings:** #1, #2, #4, #11, #12, #19 (from
 `.planning/2026-05-25-senior-engineering-review.md`), plus one

@@ -1,6 +1,8 @@
 # Issue #49 — Hybrid Local Biomedical Annotation Probe
 
 **Date:** 2026-06-12
+> Historical record
+
 **Issue:** #49 — Evaluate hybrid local biomedical entity annotation for C-gamma retrieval
 **Type:** SPIKE — deliverable is a script + summary report, not a production feature
 **Prior art:**

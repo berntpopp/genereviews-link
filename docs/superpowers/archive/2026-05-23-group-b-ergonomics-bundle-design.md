@@ -1,6 +1,8 @@
 # Group B API Ergonomics And Scraper Polish Design
 
 **Date:** 2026-05-23
+> Historical record
+
 **Issues:** #34, #39, #29, #36, #38, #37
 **Scope:** One remediation phase bundling Tier 1 LLM-ergonomics polish and
 scraper bugs identified in the 2026-05-13 external LLM-MCP review.

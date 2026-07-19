@@ -1,6 +1,8 @@
 # Precomputed Corpus Bundle Release Workflow - Design Spec
 
 **Date:** 2026-05-12
+> Historical record
+
 **Issue:** https://github.com/berntpopp/genereviews-link/issues/27
 **Author:** Codex, in collaboration with project maintainer
 

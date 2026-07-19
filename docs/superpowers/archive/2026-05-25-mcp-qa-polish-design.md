@@ -1,5 +1,7 @@
 # MCP QA Polish Design
 
+> Historical record
+
 Date: 2026-05-25
 Status: Completed in PR #53 (`39af970`, follow-up `15ffbec`).
 

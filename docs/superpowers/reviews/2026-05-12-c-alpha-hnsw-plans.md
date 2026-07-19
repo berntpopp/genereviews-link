@@ -1,6 +1,8 @@
 # C-alpha HNSW + Filter EXPLAIN ANALYZE Review
 
 **Date:** 2026-05-12
+> Historical record
+
 **Branch:** feat/ranking-c-alpha
 **Script:** `scripts/measure_dense_filter_plans.py`
 **Artifact:** `c_alpha_hnsw_plans.json`

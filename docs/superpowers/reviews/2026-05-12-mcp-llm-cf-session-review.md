@@ -7,6 +7,8 @@ target: PR #11 (feat/mcp-llm-ergonomics, head c9cd08f at review time)
 
 # GeneReview-Link MCP — LLM Consumer Rating (Review #3)
 
+> Historical record
+
 > Honest scores from this session's actual use, plus concrete improvement asks.
 
 ## Scores

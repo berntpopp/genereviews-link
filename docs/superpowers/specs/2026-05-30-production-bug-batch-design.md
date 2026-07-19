@@ -1,6 +1,8 @@
 # Production Correctness Bug Batch (Design Spec)
 
 **Date:** 2026-05-30
+> Historical record
+
 **Author:** senior MCP engineer (Opus 4.8, in collaboration with project maintainer)
 **Source:** GitHub issues #54, #55, #56, #33 (filed from 7-day production log analysis ending 2026-05-30; code at `197dd9d`)
 **Branch target:** `fix/prod-correctness-batch` off `main`.

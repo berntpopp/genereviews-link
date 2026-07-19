@@ -1,5 +1,7 @@
 # Modernize Stack and Agents Files Implementation Plan
 
+> Historical record
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Bring genereviews-link to parity with pubtator-link's build, dependency, tooling, security, observability, Docker, CI, and agents-file conventions without changing the HTTP/MCP surface or service-layer semantics.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -58,6 +59,13 @@ async def _build_mcp() -> tuple[Any, MagicMock]:
     return mcp, repo
 
 
+async def _build_production_mcp() -> Any:
+    manager = UnifiedServerManager()
+    config = ServerConfig(transport="http", log_level="WARNING", enable_docs=False)
+    app = manager.create_fastapi_app(config)
+    return await manager.create_mcp_server(app, config)
+
+
 async def _call_search_passages(client: Client[Any], arguments: dict[str, Any]) -> dict[str, Any]:
     """Call search_passages and return the envelope body.
 
@@ -71,6 +79,47 @@ async def _call_search_passages(client: Client[Any], arguments: dict[str, Any]) 
     assert result.structured_content["success"] is True
     assert "results" in result.structured_content
     return result.structured_content
+
+
+def _release_snapshot_definition(tool: Any) -> dict[str, Any]:
+    """Project a live FastMCP tool into the router's reviewed snapshot shape."""
+    return {
+        "name": tool.name,
+        "description": tool.description or "",
+        "inputSchema": _canonical_json_schema(
+            tool.parameters or {"type": "object", "properties": {}}
+        ),
+        "outputSchema": _canonical_json_schema(tool.output_schema),
+        "annotations": (
+            tool.annotations.model_dump(mode="json", by_alias=True, exclude_none=False)
+            if tool.annotations is not None
+            else None
+        ),
+        "execution": (
+            tool.execution.model_dump(mode="json", by_alias=True, exclude_none=False)
+            if tool.execution is not None
+            else None
+        ),
+        "tags": sorted(tool.tags or []),
+    }
+
+
+def _canonical_json_schema(value: Any) -> Any:
+    """Match the router snapshot's representation-only schema normalization."""
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "required" and isinstance(item, list):
+                if not item:
+                    continue
+                if all(isinstance(name, str) for name in item):
+                    normalized[key] = sorted(item)
+                    continue
+            normalized[key] = _canonical_json_schema(item)
+        return normalized
+    if isinstance(value, list):
+        return [_canonical_json_schema(item) for item in value]
+    return value
 
 
 @pytest.mark.asyncio
@@ -138,6 +187,74 @@ async def test_mcp_search_passages_output_schema_suppressed_but_fence_on_wire() 
     # the fenced snippet/text carrier is also an untrusted_text object.
     snippet = row.get("snippet")
     assert snippet is not None and snippet["kind"] == "untrusted_text"
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_passages_fits_surface_budget_without_weakening_input_schema() -> None:
+    mcp, _repo = await _build_mcp()
+    tool = next(tool for tool in await mcp.list_tools() if tool.name == "search_passages")
+    properties = tool.parameters["properties"]
+
+    definition = _release_snapshot_definition(tool)
+    assert len(json.dumps(definition)) // 4 <= 1_200
+
+    assert tool.output_schema is None
+    assert tool.parameters["required"] == ["q"]
+    assert set(properties) == {
+        "q",
+        "query",
+        "gene",
+        "nbk_id",
+        "sections",
+        "heading_path_contains",
+        "mode",
+        "limit",
+        "exclude",
+        "include",
+        "snippet_chars",
+        "rerank",
+    }
+    assert all(prop.get("description") for prop in properties.values())
+    assert properties["q"]["examples"] == ["breast cancer surveillance"]
+    assert properties["gene"]["examples"] == ["BRCA1"]
+    assert properties["nbk_id"]["examples"] == ["NBK1247"]
+    assert properties["sections"]["examples"] == [["management"]]
+    assert properties["exclude"]["examples"] == [["score_breakdown"]]
+    assert properties["include"]["examples"] == [["score_breakdown"]]
+    assert properties["sections"]["anyOf"][0]["items"]["enum"] == [
+        "summary",
+        "diagnosis",
+        "clinical_features",
+        "management",
+        "genetic_counseling",
+        "molecular_genetics",
+        "resources",
+        "other",
+        "references",
+    ]
+    assert properties["mode"]["enum"] == ["brief", "full", "ids_only"]
+    assert properties["rerank"]["enum"] == ["rrf", "lexical", "off"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_full_production_registry_fits_surface_budgets() -> None:
+    mcp = await _build_production_mcp()
+    tools = await mcp.list_tools()
+    definitions = [_release_snapshot_definition(tool) for tool in tools]
+
+    assert len(tools) == 13
+    assert all(len(json.dumps(definition)) // 4 <= 1_200 for definition in definitions)
+    assert len(json.dumps(definitions)) // 4 <= 10_000
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_passages_description_qualifies_ids_only_projection() -> None:
+    mcp = await _build_production_mcp()
+    tool = next(tool for tool in await mcp.list_tools() if tool.name == "search_passages")
+
+    assert "highlighted triage snippets" not in tool.description
+    assert "include/exclude do not apply to `ids_only`" in tool.description
+    assert "`ids_only` omits `recommended_citation`" in tool.description
 
 
 @pytest.mark.asyncio

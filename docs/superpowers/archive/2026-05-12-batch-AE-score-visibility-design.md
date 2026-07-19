@@ -1,6 +1,8 @@
 # Batch A+E — Score Visibility & Parameter Ergonomics — Design Spec
 
 **Date:** 2026-05-12 (rev 2 — addresses peer review)
+> Historical record
+
 **Branch target:** new branch off `main` after PR #17 (`feat/mcp-llm-ergonomics-pass3a`) merges.
 **Successor:** Batch B (separate spec) — section-aware ranking + `passage_role`.
 **Related:** Batch C (deferred) — deep section anchors, `next/prev_passage_id`, capability tool.

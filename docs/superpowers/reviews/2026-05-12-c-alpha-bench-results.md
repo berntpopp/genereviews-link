@@ -1,6 +1,8 @@
 # C-alpha Benchmark Results
 
 **Date:** 2026-05-13
+> Historical record
+
 **Bench fixture:** `tests/fixtures/ranking_bench.jsonl` (299 entries: 38 silver-A, 168 silver-B, 88 silver-C, 2 must-not-regress, 3 must-change)
 **Corpus version:** 2026-05-10-r6
 **Code under test:** local dev server at port 8000 running commit e078d99 (feat/ranking-c-alpha, parallel hybrid retrieval with filter-aware RRF)

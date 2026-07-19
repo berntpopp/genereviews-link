@@ -1,5 +1,7 @@
 # Group A API Reliability Implementation Plan
 
+> Historical record
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix Group A issues (#41, #42, #35, #47) by making orchestration entry points repository-first where possible, structurally recoverable on failure, and consistent in corpus-version reporting.

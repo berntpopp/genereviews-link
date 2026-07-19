@@ -1,5 +1,7 @@
 # Bulk Archive Ingest + Postgres RAG Retrieval — Implementation Plan
 
+> Historical record
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace live NCBI scraping as the primary data path with a Postgres + pgvector-backed corpus ingested from `gene_NBK1116.tar.gz`, served via hybrid lexical+dense retrieval with RRF rerank, distributed as CI-built GitHub Release bundles, with the existing `EutilsClient` retained as an opt-in `?fresh=true` fallback.
