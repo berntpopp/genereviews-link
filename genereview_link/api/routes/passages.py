@@ -156,29 +156,16 @@ def _get_corpus_version(request: Request) -> str | None:
     operation_id="search_passages",
     summary="Hybrid lexical + dense RAG search across GeneReviews passages.",
     description=(
-        "Returns ranked passages from the active GeneReviews corpus. "
-        'For intervention/treatment queries, pass sections=["management"]; '
-        'for diagnostic-criteria queries, pass sections=["diagnosis", "clinical_features"]. '
-        "This is the biggest precision lever.\n\n"
-        "**Rerank modes:**\n"
-        "- `rrf` (default): RRF over three-tsquery lexical + BGE-small "
-        "dense cosine. Balanced quality. Use this for general questions.\n"
-        "- `lexical`: skip the dense pass; lexical scoring only. "
-        "Faster - saves the embed + HNSW probe round-trip. Use for "
-        "latency-critical exact-term lookups.\n"
-        "- `off`: lexical-only, NO section_priority tiebreaker. Returns "
-        "rows in the repository's own lexical_rank order. Debugging / "
-        "diagnostic use only.\n\n"
-        "Use `mode='brief'` (default) for triage - returns "
-        "~300-500-char `ts_headline` snippets with **bold** highlights "
-        "around query terms. Switch to `mode='full'` once you've "
-        "picked the row(s) you want to read.\n\n"
-        "Filter with `gene` (HGNC symbol), `nbk_id` (single chapter), "
-        "or `sections` (list; valid values in the sections JSONSchema "
-        "enum). Use `exclude=score_breakdown` or `exclude=heading_path` "
-        "to trim response payload further.\n\n"
-        "Latency: ~27ms p50 (rerank=rrf), ~26ms p50 (rerank=lexical), "
-        "~26ms p50 (rerank=off)."
+        "Search the active GeneReviews corpus. For intervention/treatment queries, pass "
+        'sections=["management"]; for diagnostic criteria, pass '
+        'sections=["diagnosis", "clinical_features"]. This is the main precision filter.\n\n'
+        "Rerank with `rrf` (default) for hybrid retrieval, `lexical` for exact terms, "
+        "or `off` for raw repository order when debugging.\n\n"
+        "Use `brief` (default) for triage snippets, `full` for passage text, "
+        "or `ids_only` for identifiers and ranks. Filter by `gene`, `nbk_id`, or "
+        "`sections`. In `brief`/`full`, use `include` and `exclude` for field projection; "
+        "include/exclude do not apply to `ids_only`, and `ids_only` omits "
+        "`recommended_citation`."
     ),
 )
 async def search_passages(
@@ -243,9 +230,7 @@ async def search_passages(
             description=(
                 'Values: "brief" (default; snippet + IDs, ~3 KB), '
                 '"full" (full text), "ids_only" (lean rows: `passage_id` + '
-                "`rrf_score` + `lexical_rank_position` + `chapter_section`). "
-                "Use ids_only for bulk-triage workflows; include/exclude flags "
-                "and recommended_citation are not emitted in this mode."
+                "`rrf_score` + `lexical_rank_position` + `chapter_section`)."
             ),
         ),
     ] = "brief",
@@ -297,12 +282,9 @@ async def search_passages(
         Literal["rrf", "lexical", "off"],
         Query(
             description=(
-                'Values: "rrf" (default; reciprocal-rank fusion of weighted lexical '
-                "+ dense embedding rank - best for clinical-concept queries), "
-                '"lexical" (weighted lexical score with section-priority tiebreaker - '
-                "best for exact gene-symbol or variant strings; for multi-token "
-                'clinical concept queries, use "rrf"), "off" (raw repository '
-                "order - debugging only; do not rely on ordering)."
+                'Values: "rrf" (default; reciprocal-rank fusion), '
+                '"lexical" (weighted lexical score), '
+                '"off" (raw repository order; debugging only).'
             ),
         ),
     ] = "rrf",
