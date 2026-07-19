@@ -46,6 +46,10 @@ make dev                  # REST on :8000, MCP at /mcp
 claude mcp add --transport http genereview-link http://127.0.0.1:8000/mcp
 ```
 
+The base environment excludes optional embedding accelerators. Use `make install-cpu`
+for CPU embedding development, or `make install-cuda` on the CUDA 13 corpus-build
+workstation. These extras conflict by design; the production container selects CPU.
+
 The live-NCBI tools (`search_genereviews`, `get_abstract`, `get_links`, `get_fulltext`)
 work immediately with no corpus. **Corpus-backed passage search returns HTTP 503 until a
 corpus is loaded** — restore a published bundle, build one locally, or point at a

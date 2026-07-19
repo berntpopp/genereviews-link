@@ -1,4 +1,4 @@
-.PHONY: help install lock upgrade sync format format-check lint lint-ci lint-fix lint-loc lint-readme typecheck typecheck-fast typecheck-stop typecheck-fresh test test-fast test-unit test-integration test-cov test-cov-all test-all check ci-local precommit clean dev mcp-serve mcp-serve-http docker-build docker-up docker-down docker-logs bundle-validate bundle-publish-local cuda-check eval eval-baseline bench-ranking bench-ranking-validate
+.PHONY: help install install-cpu install-cuda lock upgrade sync format format-check lint lint-ci lint-fix lint-loc lint-readme typecheck typecheck-fast typecheck-stop typecheck-fresh test test-fast test-unit test-integration test-cov test-cov-all test-all check ci-local precommit clean dev mcp-serve mcp-serve-http docker-build docker-up docker-down docker-logs bundle-validate bundle-publish-local cuda-check eval eval-baseline bench-ranking bench-ranking-validate
 
 DOCKER_COMPOSE := $(shell if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then echo "docker compose"; elif command -v docker-compose >/dev/null 2>&1; then echo "docker-compose"; else echo "docker compose"; fi)
 
@@ -9,6 +9,12 @@ help: ## Display this help message
 
 install: ## Install project and development dependencies with uv
 	uv sync --group dev
+
+install-cpu: ## Install development dependencies with CPU embedding support
+	uv sync --group dev --extra cpu
+
+install-cuda: ## Install development dependencies with CUDA 13 embedding support
+	uv sync --group dev --extra cu130
 
 sync: install ## Alias for install
 
