@@ -288,7 +288,7 @@ jobs:
           fi
 
       - name: Attest the exact data asset
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v4.1.0
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v4.1.0
         with:
           subject-path: ${{ runner.temp }}/data-release/corpus-bundle.tar.gz
 
