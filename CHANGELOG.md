@@ -2,6 +2,46 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
+## [5.1.1] - 2026-07-30
+
+Consolidated Dependabot sweep. No runtime behaviour change.
+
+### Security
+
+- **`setuptools` 81.0.0 → 83.0.0** (`uv.lock`), closing the repo's only open Dependabot
+  alert (medium). `setuptools < 83.0.0` lets a `MANIFEST.in` exclusion be bypassed when
+  building an sdist: a path that differs only by Unicode NFC/NFD normalization does not
+  match the exclusion pattern, so a file intended to be excluded can still be packaged.
+
+### Fixed
+
+- **Pinned-action version comments named tags the SHAs are not.** Three `uses:` pins
+  documented a version they do not resolve to, so a reader auditing the workflows saw a
+  version that was never what CI ran:
+  - `actions/attest-build-provenance@43d14bc…` was commented `# v4.1.0` but is the
+    annotated **`v3`** tag object (→ commit `977bb373…`, i.e. v3.0.0). Repinned to the
+    real **v4.1.1** (`0f67c3f4…`), which is what the comment always claimed. v4 is a thin
+    wrapper over `actions/attest`; the `subject-path` input this workflow uses is
+    unchanged. (Supersedes Dependabot #118, which moved the pin to `977bb373…` — the same
+    v3 commit the old SHA already dereferenced to, a functional no-op — while keeping the
+    false `# v4.1.0` comment.)
+  - `actions/upload-artifact@043fb46d…` was commented `# v4.6.2`; that SHA is **v7.0.1**.
+  - `actions/download-artifact@3e5f45b2…` was commented `# v4.3.0`; that SHA is **v8.0.1**.
+
+  Only the comments changed for the two artifact actions — both SHAs already are the
+  current major-release tips.
+
+### Changed
+
+- `actions/checkout` 7.0.0 → **7.0.1** (`3d3c42e5…`); all five call sites now carry the
+  precise `# v7.0.1` comment instead of a mix of `# v7` and `# v7.0.0`.
+- `actions/setup-python` v6.3.0 → **v7.0.0** (`5fda3b95…`). v7 drops the `pip-install`
+  input, which this repo never used.
+- Left pinned to their current SHAs on purpose: the two
+  `berntpopp/genefoundry-router/.github/workflows/_container-{ci,release}.yml` reusable
+  workflows (`86b11f7…`). Repinning them onto current router `main` is an operator-gated
+  release-control decision, not a dependency bump.
+
 ## [5.1.0] - 2026-07-15
 
 MCP contract-hardening (issue #106). Behaviour Conformance v1 gate: CONFORMANT
