@@ -68,6 +68,7 @@
       "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/__init__.py"
     ]
   },
+  "data_identity_contract": "unadopted",
   "definitions": {
     "contract": "data-bound"
   },
