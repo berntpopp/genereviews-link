@@ -71,7 +71,7 @@ jobs:
           --health-retries 20
     steps:
       - name: Checkout transformation source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -226,7 +226,7 @@ jobs:
           ( cd "$out" && sha256sum corpus-bundle.tar.gz > SHA256SUMS && cat SHA256SUMS )
 
       - name: Upload immutable build handoff
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: corpus-data-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/data-release
@@ -260,7 +260,7 @@ jobs:
           test -n "$REVIEW"
 
       - name: Download the exact build handoff
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: corpus-data-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/data-release
@@ -288,7 +288,7 @@ jobs:
           fi
 
       - name: Attest the exact data asset
-        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v4.1.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: ${{ runner.temp }}/data-release/corpus-bundle.tar.gz
 
