@@ -2,6 +2,22 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
+## [5.1.2] - 2026-08-10
+
+Consolidated Dependabot maintenance release. No runtime or corpus contract
+behaviour change.
+
+### Security
+
+- Updated locked `cryptography` to 50.0.0, closing CVE-2026-69247 without
+  weakening the container vulnerability policy.
+
+### Changed
+
+- Widened the supported MCP SDK range to `<3.0.0` and resolved MCP 1.29.0.
+- Updated all `astral-sh/setup-uv` consumers to v9.0.0 and both reusable
+  container workflows to the reviewed router v0.7.4 commit.
+
 ## [5.1.1] - 2026-07-30
 
 Consolidated Dependabot sweep. No runtime behaviour change.
