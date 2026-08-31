@@ -196,6 +196,9 @@ so this server composes cleanly behind the `genefoundry-router` gateway under th
 
 ### Fixed
 
+- Corpus packaging now writes deterministic, data-only release directories with canonical metadata
+  and `SHA256SUMS`. Local sealing and rights-bound publish-handoff verification are fail-closed and
+  never contact a release service.
 - `bundle publish-local` and `make bundle-publish-local` now package only an already validated
   local corpus. They no longer ingest, embed, create drafts, upload assets, or invoke GitHub.
 

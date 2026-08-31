@@ -133,6 +133,13 @@ publication is deliberately separate: it requires a complete dated affirmative r
 record bound to an immutable sealed handoff object. Do not draft, upload, or publish without that
 record.
 
+The local output is exactly `corpus.dump`, canonical `manifest.json`, and `SHA256SUMS`; it contains
+data only, never schema, migrations, application code, environment files, or credentials. Verify
+and seal it with `genereview-link bundle seal-handoff --source <directory> --handoff-root <root>`.
+`publish-handoff` only re-verifies a literal object ID and a complete affirmative, dated rights
+record bound to that object; it deliberately has no release-service client. A separately privileged
+automation may act only on that sealed handoff after the rights record exists.
+
 ## Corpus freshness
 
 `chapter_last_updated` is carried on every passage and search hit — surface it so a reader

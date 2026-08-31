@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 import tarfile
 from dataclasses import asdict, dataclass, field
@@ -69,7 +70,15 @@ def pg_dump_to(
     schemas: tuple[str, ...] = ("public", "genereview"),
     extensions: tuple[str, ...] = ("vector",),
 ) -> None:
-    cmd = ["pg_dump", "-Fc", "--no-owner", "-f", str(dump_path)]
+    cmd = [
+        "pg_dump",
+        "-Fc",
+        "--data-only",
+        "--no-owner",
+        "--no-privileges",
+        "-f",
+        str(dump_path),
+    ]
     for extension in extensions:
         cmd.extend(["--extension", extension])
     for schema in schemas:
@@ -87,6 +96,36 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def write_data_only_bundle(*, work_dir: Path, output: Path, manifest: BundleManifest) -> Path:
+    """Write the canonical, data-only release directory without overwriting it.
+
+    The release contract is deliberately small: a PostgreSQL custom-format data
+    dump, stable JSON metadata, and checksums for precisely those two files.
+    Operational timestamps are excluded because they are not artifact identity.
+    """
+    dump = work_dir / "corpus.dump"
+    if not dump.is_file() or dump.is_symlink():
+        raise ValueError("work_dir must contain a regular corpus.dump")
+    if output.exists() or output.is_symlink():
+        raise FileExistsError(f"refusing to overwrite bundle output: {output}")
+    output.mkdir(mode=0o700, parents=True)
+    target_dump = output / "corpus.dump"
+    shutil.copyfile(dump, target_dump)
+    payload = asdict(manifest)
+    payload.pop("created_at", None)
+    payload["manifest_version"] = "3"
+    payload["bundle_format"] = "postgresql-custom-data-only"
+    payload["checksums"] = {"corpus.dump": sha256_file(target_dump)}
+    metadata = output / "manifest.json"
+    metadata.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+    sums = output / "SHA256SUMS"
+    sums.write_text(
+        f"{payload['checksums']['corpus.dump']}  corpus.dump\n"
+        f"{sha256_file(metadata)}  manifest.json\n"
+    )
+    return output
 
 
 def write_bundle(

@@ -19,6 +19,7 @@ Exits non-zero on any violation.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -62,7 +63,19 @@ GENERATED_BLOCK = re.compile(
 
 
 def repo_slug() -> str:
-    return ROOT.name
+    """Return the canonical GitHub repository, even from an isolated worktree."""
+    try:
+        remote = subprocess.run(  # noqa: S603 -- literal git command, no shell
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ROOT.name
+    slug = remote.rstrip("/").removesuffix(".git").rsplit("/", maxsplit=1)[-1]
+    return slug.rsplit(":", maxsplit=1)[-1] or ROOT.name
 
 
 def is_router() -> bool:

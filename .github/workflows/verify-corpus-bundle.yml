@@ -1,12 +1,15 @@
-name: Verify corpus bundle
+name: Verify data-only corpus bundle
 
 on:
   workflow_dispatch:
     inputs:
-      bundle_url:
-        description: "GitHub Release asset URL ending in .tar.gz"
+      release_tag:
+        description: Immutable release tag containing the exact data-only assets
         required: true
         type: string
+
+permissions:
+  contents: read
 
 concurrency:
   group: verify-corpus-bundle
@@ -17,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:0.8.2-pg18
+        image: pgvector/pgvector:0.8.2-pg18@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d
         env:
           POSTGRES_PASSWORD: ci
           POSTGRES_DB: genereview
@@ -31,49 +34,40 @@ jobs:
       DATABASE_URL: postgresql://postgres:ci@localhost:5432/genereview
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-      - run: uv sync --frozen
-      - name: Download bundle and checksum
+        with:
+          enable-cache: false
+      - run: uv sync --group dev --frozen
+      - name: Bounded fresh-directory download_guard and checksum verification
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p dist verify
-          curl -fL "${{ inputs.bundle_url }}" -o dist/bundle.tar.gz
-          curl -fL "${{ inputs.bundle_url }}.sha256" -o dist/bundle.tar.gz.sha256
-          cd dist
-          sha256sum -c bundle.tar.gz.sha256
-      - name: Extract and verify manifest checksums
+          set -euo pipefail
+          umask 077
+          download_guard="release assets are accepted only into this fresh directory"
+          test -n "$download_guard"
+          verify_dir="$(mktemp -d "$RUNNER_TEMP/verify.XXXXXX")"
+          gh release download "${{ inputs.release_tag }}" --repo "$GITHUB_REPOSITORY" \
+            --pattern corpus.dump --pattern manifest.json --pattern SHA256SUMS --dir "$verify_dir"
+          test "$(find "$verify_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+          (cd "$verify_dir" && sha256sum --check SHA256SUMS)
+          uv run python -c 'from pathlib import Path; from genereview_link.corpus.handoff import verify_data_only_bundle; verify_data_only_bundle(Path("'"$verify_dir"'"))'
+          printf 'VERIFY_DIR=%s\n' "$verify_dir" >> "$GITHUB_ENV"
+      - name: Apply reviewed migrations before restoring data
+        run: genereview-link db migrate
+      - name: Restore the data-only archive with transactional fail-closed flags
         run: |
-          tar -xzf dist/bundle.tar.gz -C verify
-          uv run python - <<'PY'
-          import hashlib, json
-          from pathlib import Path
-
-          root = Path("verify")
-          manifest = json.loads((root / "manifest.json").read_text())
-          for relpath, expected in manifest["checksums"].items():
-              h = hashlib.sha256((root / relpath).read_bytes()).hexdigest()
-              if h != expected:
-                  raise SystemExit(f"checksum mismatch for {relpath}: {h} != {expected}")
-          print("manifest checksums passed")
-          PY
-      - name: Restore dump
-        run: pg_restore -j 2 -d "$DATABASE_URL" verify/corpus.dump
-      - name: Validate restored corpus
+          set -euo pipefail
+          pg_restore --data-only --single-transaction --exit-on-error -d "$DATABASE_URL" "$VERIFY_DIR/corpus.dump"
+      - name: Verify counts and HNSW queryability
         run: |
+          set -euo pipefail
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
-          select version, chapter_count, ingest_status, is_active
-            from public.genereview_corpus_version
-           where is_active;
-          select count(*) as chapters from genereview.genereview_chapters;
-          select count(*) as passages from genereview.genereview_passages;
-          select count(*) as embeddings from genereview.genereview_embeddings_bge384;
-          select indexname from pg_indexes
-           where schemaname = 'genereview'
-             and indexname = 'genereview_embeddings_bge384_hnsw_cosine';
+          select count(*) > 0 as has_chapters from genereview.genereview_chapters;
+          select count(*) > 0 as has_passages from genereview.genereview_passages;
+          select indexname = 'genereview_embeddings_bge384_hnsw_cosine' as hnsw_present
+            from pg_indexes where schemaname = 'genereview'
+              and indexname = 'genereview_embeddings_bge384_hnsw_cosine';
           SQL
-      - name: Summary
-        run: |
-          {
-            echo "## Corpus Bundle Verification"
-            echo ""
-            echo "Verified: ${{ inputs.bundle_url }}"
-          } >> "$GITHUB_STEP_SUMMARY"

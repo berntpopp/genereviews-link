@@ -120,7 +120,7 @@ class TestBundleCommands:
     def test_bundle_publish_local_only_runs_the_local_packager(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        built = Path("genereview-corpus-2026-08-30-r1-bge-small-en-v1.5-pg18-pgv0.8.2.tar.gz")
+        built = Path("genereview-corpus-data-2026-08-30-r1")
         calls: list[dict[str, object]] = []
 
         def build_bundle(**kwargs: object) -> Path:
@@ -142,3 +142,10 @@ class TestBundleCommands:
 
         assert result.exit_code != 0
         assert "No such option" in result.output
+
+    def test_handoff_commands_accept_only_local_object_inputs(self) -> None:
+        seal_flags = self._bundle_subcommand_flags("seal-handoff")
+        publish_flags = self._bundle_subcommand_flags("publish-handoff")
+
+        assert seal_flags == {"--source", "--handoff-root"}
+        assert publish_flags == {"--handoff-root", "--object-id", "--rights-record"}

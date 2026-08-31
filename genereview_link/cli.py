@@ -273,29 +273,20 @@ def _build_bundle(
     release_id: str | None,
     skip_validation: bool,
 ) -> Path:
-    """Build a corpus bundle from DATABASE_URL and return the tarball path."""
-    from datetime import UTC, datetime
+    """Build a local data-only corpus directory from DATABASE_URL."""
 
     from genereview_link.config import settings
     from genereview_link.corpus.bundle import (
         BundleManifest,
         pg_dump_to,
-        write_bundle,
+        write_data_only_bundle,
     )
-    from genereview_link.corpus.bundle_metadata import asset_name_for_release
     from genereview_link.corpus.bundle_validation import validate_database_ready
     from genereview_link.db.pool import create_pool
 
     if release_id and output is None:
-        output = Path(
-            asset_name_for_release(
-                release_id,
-                model_slug="bge-small-en-v1.5",
-                postgres_major="pg18",
-                pgvector_version="pgv0.8.2",
-            )
-        )
-    output = output or Path("genereview-corpus.tar.gz")
+        output = Path(f"genereview-corpus-data-{release_id}")
+    output = output or Path("genereview-corpus-data")
 
     async def run() -> Path:
         pool = await create_pool()
@@ -332,11 +323,6 @@ def _build_bundle(
             with tempfile.TemporaryDirectory() as td:
                 td_path = Path(td)
                 pg_dump_to(td_path / "corpus.dump", database_url=settings.DATABASE_URL)
-                sidedata = td_path / "sidedata"
-                sidedata.mkdir()
-                from genereview_link.corpus.pipeline import _download_sidedata
-
-                await _download_sidedata(sidedata)
                 m = BundleManifest(
                     corpus_release_id=release_id or "",
                     corpus_version=row["version"],
@@ -350,11 +336,10 @@ def _build_bundle(
                         "count": int(embedding_count or 0),
                         "expected_count": int(passage_count or 0),
                     },
-                    created_at=datetime.now(UTC).isoformat(),
                     created_by="cli",
                     validation=validation_manifest,
                 )
-                write_bundle(work_dir=td_path, output=output, manifest=m, sidedata_dir=sidedata)
+                write_data_only_bundle(work_dir=td_path, output=output, manifest=m)
                 return output
         finally:
             await pool.close()
@@ -404,20 +389,49 @@ def bundle_publish_local(
     release_id: Annotated[str, typer.Option("--release-id")],
 ) -> None:
     """Package an already validated local corpus without publishing it."""
-    from genereview_link.corpus.bundle_metadata import asset_name_for_release, validate_release_id
+    from genereview_link.corpus.bundle_metadata import validate_release_id
 
     validate_release_id(release_id)
-    output = Path(
-        asset_name_for_release(
-            release_id,
-            model_slug="bge-small-en-v1.5",
-            postgres_major="pg18",
-            pgvector_version="pgv0.8.2",
-        )
-    )
+    output = Path(f"genereview-corpus-data-{release_id}")
 
     built = _build_bundle(output=output, release_id=release_id, skip_validation=False)
     typer.echo(f"local bundle prepared: {built}")
+
+
+@bundle_app.command("seal-handoff")
+def bundle_seal_handoff(
+    source: Annotated[Path, typer.Option("--source")],
+    handoff_root: Annotated[Path, typer.Option("--handoff-root")],
+) -> None:
+    """Seal an exact local data-only bundle; this command never publishes it."""
+    from genereview_link.corpus.handoff import HandoffError, seal_handoff, verify_data_only_bundle
+
+    try:
+        verify_data_only_bundle(source)
+        sealed = seal_handoff(source, handoff_root)
+    except HandoffError as error:
+        typer.echo(f"handoff refused: {error}", err=True)
+        raise typer.Exit(1) from error
+    typer.echo(sealed.object_id)
+
+
+@bundle_app.command("publish-handoff")
+def bundle_publish_handoff(
+    handoff_root: Annotated[Path, typer.Option("--handoff-root")],
+    object_id: Annotated[str, typer.Option("--object-id")],
+    rights_record: Annotated[Path, typer.Option("--rights-record")],
+) -> None:
+    """Reverify a rights-bound object locally; it intentionally does not publish."""
+    from genereview_link.corpus.handoff import HandoffError, prepare_publish_handoff
+
+    try:
+        sealed = prepare_publish_handoff(handoff_root, object_id, rights_record)
+    except HandoffError as error:
+        typer.echo(f"publish handoff refused: {error}", err=True)
+        raise typer.Exit(1) from error
+    typer.echo(
+        f"rights-bound handoff ready for an external privileged publisher: {sealed.object_id}"
+    )
 
 
 corpus_app = typer.Typer(name="corpus", help="Immutable corpus artifact operations.")
