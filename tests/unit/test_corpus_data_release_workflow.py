@@ -59,6 +59,8 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     assert "verify_handoff" in scripts
     assert "gh attestation verify" in scripts
     assert "HTTP 404" in scripts
+    assert "repos/$GH_REPO/immutable-releases" in scripts
+    assert "jq -e '.enabled == true'" in scripts
     assert "gh release delete" not in scripts
     assert "published_noop" in scripts
     assert 'test "$match_count" -le 1' in scripts
@@ -66,7 +68,6 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     assert "uvx --from" not in scripts
     assert "--no-index" in scripts
     assert "--no-deps" in scripts
-    assert "publisher-tool.whl" in scripts
     assert "publisher-dependencies" not in scripts
     assert "pip download" not in scripts
     assert 'chmod 0700 "$handoff_root"' in scripts

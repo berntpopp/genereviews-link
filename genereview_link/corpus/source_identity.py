@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from datetime import date
 from pathlib import PurePosixPath
 
 SIDEDATA_FILES = (
@@ -65,6 +66,12 @@ def validate_source_identity(
     updated = value.get("last_updated")
     if not isinstance(updated, str) or updated != updated.strip() or not updated:
         raise ValueError("source last_updated is invalid")
+    try:
+        date.fromisoformat(updated[:10])
+    except ValueError as error:
+        raise ValueError("source last_updated must begin with an ISO date") from error
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2})?", updated):
+        raise ValueError("source last_updated must use the normalized upstream format")
     tarball = _digest_entry(value.get("tarball"), label="tarball")
     if tarball_sha256 is not None and tarball["sha256"] != tarball_sha256:
         raise ValueError("source tarball SHA-256 does not match the manifest")

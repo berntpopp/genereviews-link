@@ -9,6 +9,29 @@ from typing import Any
 import asyncpg
 
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+EXPECTED_CONTROL_MIGRATIONS = frozenset(
+    {
+        "0001_base",
+        "0002_corpus_version",
+        "0003_refresh_log",
+        "0004_active_embedding",
+        "0005_corpus_source_identity",
+    }
+)
+EXPECTED_DATA_MIGRATIONS = frozenset(
+    {
+        f"{schema}:{version}"
+        for schema in ("genereview",)
+        for version in (
+            "0001_chapters",
+            "0002_passages",
+            "0003_embeddings_bge384",
+            "0004_passage_type_and_tables",
+            "0005_passage_role",
+            "0006_primary_gene_symbols",
+        )
+    }
+)
 
 
 def _quote_ident(value: str) -> str:
@@ -50,6 +73,29 @@ async def validate_database_ready(
     quoted_schema = _quote_ident(schema)
     quoted_embedding_table = _quote_ident(embedding_table)
     async with pool.acquire() as conn:
+        migration_rows = await conn.fetch(
+            "select namespace, version from public.schema_migrations "
+            "where namespace in ('control', 'data')"
+        )
+        applied_control = {
+            str(row["version"]) for row in migration_rows if row["namespace"] == "control"
+        }
+        applied_data = {str(row["version"]) for row in migration_rows if row["namespace"] == "data"}
+        if applied_control != EXPECTED_CONTROL_MIGRATIONS:
+            errors.append("control schema migrations do not match the reviewed migration set")
+        if applied_data != EXPECTED_DATA_MIGRATIONS:
+            errors.append("data schema migrations do not match the reviewed migration set")
+        actual_pg_major = str(
+            int(await conn.fetchval("select current_setting('server_version_num')")) // 10_000
+        )
+        actual_pgvector = str(
+            await conn.fetchval("select extversion from pg_extension where extname = 'vector'")
+            or ""
+        )
+        if actual_pg_major != "18":
+            errors.append(f"PostgreSQL major {actual_pg_major} is not the reviewed major 18")
+        if actual_pgvector != "0.8.2":
+            errors.append(f"pgvector {actual_pgvector!r} is not the reviewed version 0.8.2")
         active_version = await conn.fetchval(
             "select version from public.genereview_corpus_version where is_active"
         )

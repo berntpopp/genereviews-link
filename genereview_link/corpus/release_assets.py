@@ -35,6 +35,8 @@ _DOWNLOAD_HOSTS = frozenset(
         "github-releases.githubusercontent.com",
     }
 )
+_SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_REVISION_RE = re.compile(r"^[0-9a-f]{40,64}$")
 
 
 class ReleaseAssetError(RuntimeError):
@@ -76,18 +78,47 @@ async def _release_assets(repo: str, tag: str, token: str) -> dict[str, str]:
             raise ReleaseAssetError("release metadata could not be read safely") from error
     try:
         release = json.loads(payload)
+        if not isinstance(release, dict):
+            raise TypeError("release metadata is not an object")
         assets = release["assets"]
     except (KeyError, TypeError, json.JSONDecodeError) as error:
         raise ReleaseAssetError("release metadata is malformed") from error
     if not isinstance(assets, list):
         raise ReleaseAssetError("release metadata assets are malformed")
+    release_id = release.get("id")
+    target = release.get("target_commitish")
+    if (
+        type(release_id) is not int
+        or release_id <= 0
+        or release.get("tag_name") != tag
+        or release.get("draft") is not False
+        or release.get("prerelease") is not False
+        or release.get("immutable") is not True
+        or not isinstance(target, str)
+        or not _REVISION_RE.fullmatch(target)
+    ):
+        raise ReleaseAssetError(
+            "source release must be the exact immutable non-draft, non-prerelease release"
+        )
     urls: dict[str, str] = {}
     for asset in assets:
         if not isinstance(asset, dict):
             raise ReleaseAssetError("release asset metadata is malformed")
         name = asset.get("name")
         asset_url = asset.get("browser_download_url")
-        if not isinstance(name, str) or not isinstance(asset_url, str):
+        asset_id = asset.get("id")
+        size = asset.get("size")
+        digest = asset.get("digest")
+        if (
+            not isinstance(name, str)
+            or not isinstance(asset_url, str)
+            or type(asset_id) is not int
+            or asset_id <= 0
+            or type(size) is not int
+            or size <= 0
+            or not isinstance(digest, str)
+            or not _SHA256_RE.fullmatch(digest)
+        ):
             raise ReleaseAssetError("release asset name or URL is invalid")
         if name in urls or name not in ASSET_NAMES:
             raise ReleaseAssetError("release has unexpected or duplicate data assets")

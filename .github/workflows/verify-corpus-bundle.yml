@@ -69,6 +69,8 @@ jobs:
         run: |
           set -euo pipefail
           pg_restore --data-only --no-owner --no-privileges --single-transaction --exit-on-error -d "$DATABASE_URL" "$VERIFY_DIR/corpus.dump"
+      - name: Rebuild HNSW from reviewed code after data-only restore
+        run: genereview-link embed --fake
       - name: Verify exact manifest counts, HNSW, and representative search fixtures
         run: |
           set -euo pipefail
@@ -78,8 +80,27 @@ jobs:
           print(f"EXPECTED_CHAPTER_COUNT={manifest['chapter_count']}")
           print(f"EXPECTED_PASSAGE_COUNT={manifest['passage_count']}")
           print(f"EXPECTED_EMBEDDING_COUNT={manifest['embedding']['count']}")
+          print(f"EXPECTED_PG_MAJOR={manifest['postgres']['major_version']}")
+          print(f"EXPECTED_PGVECTOR={manifest['postgres']['pgvector_version']}")
+          for namespace, versions in manifest['schema_migrations'].items():
+              for version in versions:
+                  print(f"MIGRATION_{namespace}_{version.replace(':', '_')}=1")
           PY
           )"
+          actual_pg_major="$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
+            "select (current_setting('server_version_num')::int / 10000)::text")"
+          actual_pgvector="$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
+            "select extversion from pg_extension where extname = 'vector'")"
+          test "$EXPECTED_PG_MAJOR" = "$actual_pg_major"
+          test "$EXPECTED_PGVECTOR" = "$actual_pgvector"
+          while IFS= read -r migration; do
+            namespace="${migration%%:*}"
+            version="${migration#*:}"
+            if test "$namespace" = "$version"; then version="$namespace"; namespace=control; fi
+            test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 \
+              -v n="$namespace" -v v="$version" -c \
+              "select count(*) from public.schema_migrations where namespace = :'n' and version = :'v'")" = 1
+          done < <(jq -r '.schema_migrations | to_entries[] | .key as $namespace | .value[] | ($namespace + ":" + .)' "$VERIFY_DIR/manifest.json")
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
             -v EXPECTED_CHAPTER_COUNT="$EXPECTED_CHAPTER_COUNT" \
             -v EXPECTED_PASSAGE_COUNT="$EXPECTED_PASSAGE_COUNT" \

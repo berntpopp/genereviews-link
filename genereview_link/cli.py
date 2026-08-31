@@ -312,6 +312,23 @@ def _build_bundle(
                     for error in validation.errors:
                         typer.echo(f"error: {error}", err=True)
                     raise typer.Exit(1)
+                # Bind the manifest to the same post-validation database identity that
+                # was actually checked, closing a concurrent migration/extension race.
+                facts = await collect_database_facts(pool)
+                if facts is None:
+                    typer.echo("no active corpus version after validation; aborting")
+                    raise typer.Exit(1)
+
+            if release_id:
+                from genereview_link.corpus.bundle_metadata import validate_release_id
+
+                validate_release_id(release_id)
+                source_date = facts.tarball_last_updated[:10]
+                if release_id[:10] != source_date:
+                    raise typer.BadParameter(
+                        "must use the normalized upstream source last_updated date",
+                        param_hint="--release-id",
+                    )
 
             from genereview_link import __version__
 
@@ -429,7 +446,7 @@ def bundle_publish_handoff(
     object_id: Annotated[str, typer.Option("--object-id")],
     rights_record: Annotated[Path, typer.Option("--rights-record")],
 ) -> None:
-    """Reverify a rights-bound object locally; it intentionally does not publish."""
+    """Run the privileged rights gate for a sealed handoff before publication."""
     from genereview_link.corpus.handoff import HandoffError, prepare_publish_handoff
 
     try:

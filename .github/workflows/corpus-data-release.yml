@@ -11,15 +11,20 @@ on:
         description: Exact sealed handoff object ID to publish after rights review
         required: false
         type: string
+      handoff_run_id:
+        description: Prior build workflow run containing the reviewed sealed handoff artifact
+        required: false
+        type: string
 
 concurrency:
-  group: corpus-data-${{ github.run_id }}
+  group: corpus-data-${{ github.repository }}
   cancel-in-progress: false
 
 permissions: {}
 
 jobs:
   build:
+    if: ${{ inputs.object_id == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -61,6 +66,14 @@ jobs:
           source_dir="$(mktemp -d "$RUNNER_TEMP/source.XXXXXX")"
           uv run python -m genereview_link.corpus.release_assets \
             --repo "$GITHUB_REPOSITORY" --tag "$SOURCE_TAG" --dest "$source_dir"
+          source_release="$RUNNER_TEMP/source-release.json"
+          timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/tags/$SOURCE_TAG" >"$source_release"
+          source_target="$(jq -er '.target_commitish | select(type == "string" and test("^[0-9a-f]{40,64}$"))' "$source_release")"
+          jq -e --arg tag "$SOURCE_TAG" --arg target "$source_target" \
+            '(.id | type == "number" and . > 0 and floor == .) and
+             (.tag_name == $tag and .draft == false and .prerelease == false and
+             .immutable == true and .target_commitish == $target and
+             (.assets | type == "array" and length == 3))' "$source_release" >/dev/null
           uv run python - "$source_dir/corpus.dump" <<'PY'
           from pathlib import Path
           from genereview_link.db.restore import assert_data_only_archive, read_archive_entries
@@ -71,7 +84,9 @@ jobs:
           from genereview_link.corpus.handoff import verify_data_only_bundle
           verify_data_only_bundle(Path(__import__('sys').argv[1]))
           PY
-          gh attestation verify "$source_dir/corpus.dump" --repo "$GITHUB_REPOSITORY"
+          gh attestation verify "$source_dir/corpus.dump" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/corpus-data-release.yml" \
+            --source-ref refs/heads/main --source-digest "$source_target"
           printf 'SOURCE_DIR=%s\n' "$source_dir" >> "$GITHUB_ENV"
       - name: Restore verified data only and prove the runtime contract
         env:
@@ -82,6 +97,9 @@ jobs:
             --no-owner --no-privileges \
             -d postgresql://genereview:genereview@127.0.0.1:5432/genereview \
             "$SOURCE_DIR/corpus.dump"
+          # Data-only restore never supplies executable index definitions. Rebuild HNSW
+          # from the reviewed migration/code path before making any runtime assertion.
+          uv run genereview-link embed --fake
           test "$(psql -h 127.0.0.1 -U genereview -d genereview -At -v ON_ERROR_STOP=1 -c \
             "select count(*) from pg_indexes where schemaname = 'genereview' and indexname = 'genereview_embeddings_bge384_hnsw_cosine'")" = 1
       - name: Seal the locally verified handoff
@@ -96,7 +114,7 @@ jobs:
       - name: Upload sealed handoff only
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: corpus-sealed-${{ github.run_id }}-${{ github.run_attempt }}
+          name: corpus-sealed-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/handoffs
             ${{ runner.temp }}/object-id
@@ -104,8 +122,7 @@ jobs:
           retention-days: 3
 
   publish:
-    if: ${{ inputs.object_id != '' && github.ref == 'refs/heads/main' }}
-    needs: build
+    if: ${{ inputs.object_id != '' && inputs.handoff_run_id != '' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: data-release
@@ -124,7 +141,9 @@ jobs:
           enable-cache: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: corpus-sealed-${{ github.run_id }}-${{ github.run_attempt }}
+          name: corpus-sealed-${{ inputs.handoff_run_id }}
+          run-id: ${{ inputs.handoff_run_id }}
+          github-token: ${{ github.token }}
           path: ${{ runner.temp }}/sealed
       - name: Reverify exact sealed object and affirmative dated rights
         run: |
@@ -138,11 +157,13 @@ jobs:
           test -d "$handoff_object" && test ! -L "$handoff_object"
           chmod 0700 "$handoff_root"
           chmod 0500 "$handoff_object"
-          for name in corpus.dump manifest.json SHA256SUMS publisher-tool.whl seal-manifest.json; do
+          wheel_name="$(jq -er '.publisher_tool.name | select(test("\\.whl$"))' "$handoff_object/seal-manifest.json")"
+          grep -Eq '^[A-Za-z0-9][A-Za-z0-9._]*-[A-Za-z0-9][A-Za-z0-9._]*(-[A-Za-z0-9][A-Za-z0-9._]*)?-[A-Za-z0-9.]+-[A-Za-z0-9.]+-[A-Za-z0-9.]+\.whl$' <<<"$wheel_name"
+          for name in corpus.dump manifest.json SHA256SUMS "$wheel_name" seal-manifest.json; do
             test -f "$handoff_object/$name" && test ! -L "$handoff_object/$name"
             chmod 0400 "$handoff_object/$name"
           done
-          tool="$handoff_object/publisher-tool.whl"
+          tool="$handoff_object/$wheel_name"
           test -f "$tool" && test ! -L "$tool"
           seal_manifest="$handoff_object/seal-manifest.json"
           test "$(sha256sum "$seal_manifest" | cut -d' ' -f1)" = "$OBJECT_ID"
@@ -150,26 +171,22 @@ jobs:
           publisher_env="$RUNNER_TEMP/publisher-env"
           mkdir -- "$publisher_env"
           uv pip install --target "$publisher_env" --no-index --no-deps "$tool"
-          # This sealed wheel call performs verify_handoff/publish-handoff verification:
-          # every file's no-follow digest/size/mode/source identity and the rights tuple.
-          PYTHONPATH="$publisher_env" python3 - "$RUNNER_TEMP/sealed/handoffs" "$OBJECT_ID" "$RUNNER_TEMP/rights.json" <<'PY'
+          # This is the stdlib-only equivalent of `bundle publish-handoff`: the sealed wheel
+          # performs verify_handoff exact no-follow verification and the rights gate before
+          # the privileged draft-first publisher is reached.  No wheel dependencies are needed.
+          PYTHONPATH="$publisher_env" python3 - "$handoff_root" "$OBJECT_ID" "$RUNNER_TEMP/rights.json" <<'PY'
           import sys
           from pathlib import Path
           from genereview_link.corpus.handoff import prepare_publish_handoff
-          try:
-              sealed = prepare_publish_handoff(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
-          except Exception as error:
-              raise SystemExit(f"publish-handoff refused: {error}") from error
-          print(f"rights-bound handoff ready: {sealed.object_id}")
+          prepare_publish_handoff(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
           PY
           printf 'PUBLISHER_ENV=%s\n' "$publisher_env" >> "$GITHUB_ENV"
-      - name: Attest the exact sealed object before publication
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: ${{ runner.temp }}/sealed/handoffs/${{ inputs.object_id }}/corpus.dump
       - name: Four-state immutable publication gate
         run: |
           set -euo pipefail
+          # The reviewed actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+          # action is represented by the exact gh attestation call below, gated so an
+          # already immutable no-op performs zero attestation or mutation.
           handoff="$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID"
           corpus_release_id="$(jq -er .corpus_release_id "$handoff/manifest.json")"
           build_revision="$(jq -er '.app_git_sha | select(test("^[0-9a-f]{40}$"))' "$handoff/manifest.json")"
@@ -204,6 +221,7 @@ jobs:
 
           verify_remote() {
             release_id="$1"
+            attest="${2:-true}"
             grep -Eq '^[1-9][0-9]{0,18}$' <<<"$release_id"
             release_json="$RUNNER_TEMP/release-$release_id.json"
             remote="$(mktemp -d "$RUNNER_TEMP/remote.XXXXXX")"
@@ -239,10 +257,16 @@ jobs:
           from genereview_link.corpus.handoff import prepare_publish_handoff
           prepare_publish_handoff(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
           PY
-            timeout 2m gh attestation verify "$remote/corpus.dump" --repo "$GH_REPO" \
-              --signer-workflow "$GH_REPO/.github/workflows/corpus-data-release.yml" \
-              --source-ref refs/heads/main --source-digest "$build_revision"
+            if test "$attest" = true; then
+              timeout 2m gh attestation verify "$remote/corpus.dump" --repo "$GH_REPO" \
+                --signer-workflow "$GH_REPO/.github/workflows/corpus-data-release.yml" \
+                --source-ref refs/heads/main --source-digest "$build_revision"
+            fi
           }
+
+          immutable_releases="$RUNNER_TEMP/immutable-releases.json"
+          timeout 60s gh api "repos/$GH_REPO/immutable-releases" >"$immutable_releases"
+          jq -e '.enabled == true' "$immutable_releases" >/dev/null
 
           inventory="$RUNNER_TEMP/release-inventory.jsonl"
           : >"$inventory"
@@ -263,15 +287,27 @@ jobs:
           promote=false
           if test "$match_count" = 1; then
             release_id="$(jq -er '.[0].id | select(type == "number" and . > 0 and floor == .) | tostring' <<<"$matches")"
-            verify_remote "$release_id"
+            verify_remote "$release_id" false
             if test "$(jq -er '.draft | tostring' "$RUNNER_TEMP/release-$release_id.json")" = true; then
+              # A draft is not a no-op: attest the exact remote bytes before promotion.
+              verify_remote "$release_id" true
               promote=true
             else
               require_exact_tag
               echo "published_noop: exact immutable release verified"
             fi
           else
-            ensure_tag
+            # The inventory was read before this branch; recheck the canonical tag
+            # immediately before creating the draft to close an external race.
+            recheck_error="$RUNNER_TEMP/pre-create-tag.error"
+            if timeout 60s gh api "repos/$GH_REPO/git/ref/tags/$tag" >/dev/null 2>"$recheck_error"; then
+              echo "release appeared after inventory; refusing duplicate mutation" >&2
+              exit 1
+            elif ! grep -Fq 'HTTP 404' "$recheck_error"; then
+              cat "$recheck_error" >&2
+              echo "release recheck failed; refusing mutation" >&2
+              exit 1
+            fi
             created="$RUNNER_TEMP/created-release.json"
             timeout 60s gh api --method POST "repos/$GH_REPO/releases" \
               -f tag_name="$tag" -f target_commitish="$build_revision" -f name="$tag" \
@@ -298,12 +334,19 @@ jobs:
                 '.name == $asset and .size == $size and .digest == $digest and
                  (.id | type == "number" and . > 0 and floor == .)' "$upload" >/dev/null
             done
-            verify_remote "$release_id"
+            # The draft and all assets exist before the tag is created/checked.
+            ensure_tag
+            verify_remote "$release_id" true
             promote=true
           fi
 
           if test "$promote" = true; then
-            ensure_tag
+            # Recheck the immutable repository policy, release inventory, and exact tag
+            # immediately before the only mutating promotion call.
+            timeout 60s gh api "repos/$GH_REPO/immutable-releases" >"$immutable_releases"
+            jq -e '.enabled == true' "$immutable_releases" >/dev/null
+            require_exact_tag
+            verify_remote "$release_id" false
             before="$RUNNER_TEMP/pre-promotion-release.json"
             after="$RUNNER_TEMP/post-promotion-release.json"
             timeout 60s gh api "repos/$GH_REPO/releases/$release_id" >"$before"

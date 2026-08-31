@@ -10,36 +10,30 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 MAX_METADATA_BYTES = 1 << 20
 CHUNK_BYTES = 1 << 20
 _SOURCE_FILES = frozenset({"corpus.dump", "manifest.json", "SHA256SUMS"})
-_PUBLISHER_FILE = "publisher-tool.whl"
-_SEALED_FILES = _SOURCE_FILES | {_PUBLISHER_FILE, "seal-manifest.json"}
-_RIGHTS_FIELDS = frozenset(
-    {
-        "artifact_sha256",
-        "object_id",
-        "decision",
-        "authority",
-        "decision_time",
-        "terms_version",
-        "permitted_asset_use",
-        "attribution",
-        "evidence_uri",
-        "source_sha256",
-        "corpus_release_id",
-    }
-)
+_SEAL_MANIFEST_FILE = "seal-manifest.json"
 
 
 class HandoffError(ValueError):
     """The handoff cannot safely be sealed or used."""
+
+
+def _valid_wheel_name(name: str) -> bool:
+    return bool(
+        re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._]*-[A-Za-z0-9][A-Za-z0-9._]*"
+            r"(?:-[A-Za-z0-9][A-Za-z0-9._]*)?-[A-Za-z0-9.]+-[A-Za-z0-9.]+-[A-Za-z0-9.]+\.whl",
+            name,
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -153,12 +147,18 @@ def _parse_sums(path: Path) -> dict[str, str]:
     return sums
 
 
-def _verify_source(source: Path) -> list[dict[str, object]]:
+def _verify_source(source: Path, *, allow_extra: bool = False) -> list[dict[str, object]]:
     if not source.is_dir() or source.is_symlink():
         raise HandoffError("source must be a real directory")
     names = {path.name for path in source.iterdir()}
-    if names != _SOURCE_FILES:
+    if not _SOURCE_FILES.issubset(names) or (not allow_extra and names != _SOURCE_FILES):
         raise HandoffError("source must contain exactly the required regular files")
+    if allow_extra:
+        extras = names - _SOURCE_FILES
+        if any(name != _SEAL_MANIFEST_FILE and not _valid_wheel_name(name) for name in extras):
+            raise HandoffError("source contains an unexpected extra file")
+        for name in extras:
+            _regular_file(source / name)
     checksums = _parse_sums(source / "SHA256SUMS")
     files: list[dict[str, object]] = []
     for name in sorted(_SOURCE_FILES):
@@ -170,14 +170,14 @@ def _verify_source(source: Path) -> list[dict[str, object]]:
     return files
 
 
-def verify_data_only_bundle(bundle: Path) -> dict[str, object]:
+def verify_data_only_bundle(bundle: Path, *, allow_extra: bool = False) -> dict[str, object]:
     """Validate a fresh data-only release directory before restore or sealing.
 
     It accepts no archive expansion, links, side data, or unchecked metadata:
     callers must have already placed the three exact release assets in a fresh
     directory using their bounded downloader.
     """
-    _verify_source(bundle)
+    _verify_source(bundle, allow_extra=allow_extra)
     metadata = _load_json(bundle / "manifest.json")
     from genereview_link.corpus.bundle import BundleManifest
 
@@ -257,10 +257,21 @@ def verify_data_only_bundle(bundle: Path) -> dict[str, object]:
             isinstance(values, list)
             and values
             and all(isinstance(value, str) and value for value in values)
+            and len(values) == len(set(values))
             for values in migrations.values()
         )
     ):
         raise HandoffError("manifest.json schema migration identity is incomplete")
+    from genereview_link.corpus.bundle_validation import (
+        EXPECTED_CONTROL_MIGRATIONS,
+        EXPECTED_DATA_MIGRATIONS,
+    )
+
+    if (
+        set(migrations["control"]) != EXPECTED_CONTROL_MIGRATIONS
+        or set(migrations["data"]) != EXPECTED_DATA_MIGRATIONS
+    ):
+        raise HandoffError("manifest.json schema migrations do not match reviewed migrations")
     postgres = metadata.get("postgres")
     if not (
         isinstance(postgres, dict)
@@ -268,6 +279,8 @@ def verify_data_only_bundle(bundle: Path) -> dict[str, object]:
         and all(isinstance(postgres[name], str) and postgres[name] for name in postgres)
     ):
         raise HandoffError("manifest.json PostgreSQL identity is incomplete")
+    if postgres != {"major_version": "18", "pgvector_version": "0.8.2"}:
+        raise HandoffError("manifest.json PostgreSQL identity does not match reviewed runtime")
     from genereview_link.corpus.source_identity import validate_source_identity
 
     try:
@@ -287,6 +300,17 @@ def verify_data_only_bundle(bundle: Path) -> dict[str, object]:
         validate_release_id(str(metadata["corpus_release_id"]))
     except ValueError as error:
         raise HandoffError("manifest.json corpus_release_id is invalid") from error
+    updated = metadata.get("tarball_last_updated")
+    release_id = str(metadata["corpus_release_id"])
+    if (
+        not isinstance(updated, str)
+        or len(updated) < 10
+        or release_id[:10] != updated[:10]
+        or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", updated[:10])
+    ):
+        raise HandoffError(
+            "manifest.json corpus_release_id date must match upstream last_updated date"
+        )
     checksums = metadata["checksums"]
     if not isinstance(checksums, dict) or set(checksums) != {"corpus.dump"}:
         raise HandoffError("manifest.json checksums must cover exactly corpus.dump")
@@ -322,10 +346,21 @@ def _publisher_wheel(publisher_tool: Path) -> tuple[Path, str, int, int]:
         raise HandoffError("publisher-tool directory is missing") from error
     if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
         raise HandoffError("publisher-tool must be a real directory")
-    wheels = [path for path in publisher_tool.iterdir() if path.name.endswith(".whl")]
-    if len(wheels) != 1 or len(list(publisher_tool.iterdir())) != 1:
+    entries = list(publisher_tool.iterdir())
+    wheels = [path for path in entries if path.name.endswith(".whl")]
+    # uv creates a harmless ignore marker in an output directory; it is not part of the
+    # sealed object and every other extra entry remains forbidden.
+    if len(wheels) != 1 or any(path.name not in {wheels[0].name, ".gitignore"} for path in entries):
         raise HandoffError("publisher-tool must contain exactly one publisher wheel")
+    if any(
+        path.name == ".gitignore" and (path.is_symlink() or not path.is_file()) for path in entries
+    ):
+        raise HandoffError("publisher-tool contains an unsafe ignore marker")
     wheel = wheels[0]
+    # Keep the exact PEP 427 filename.  Renaming a wheel to ``publisher-tool.whl``
+    # makes pip/uv reject it before it can even inspect the sealed bytes.
+    if not _valid_wheel_name(wheel.name):
+        raise HandoffError("publisher wheel filename is not a valid PEP 427 wheel name")
     digest, size, mode = _sha256_facts(wheel)
     return wheel, digest, size, mode
 
@@ -343,17 +378,19 @@ def _assert_handoff_root(handoff_root: Path) -> None:
 
 def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> SealedHandoff:
     """Verify and atomically seal one exact data-only bundle without publishing."""
+    # Capture one complete source snapshot before any copy.  The later digest checks bind
+    # every copied file to this snapshot, while the embedded manifest check binds its
+    # metadata to the same snapshot.
+    source_files = _verify_source(source)
     source_manifest = verify_data_only_bundle(source)
     files = [
         {"name": entry["name"], "sha256": entry["sha256"], "size": entry["size"], "mode": 0o400}
-        for entry in _verify_source(source)
+        for entry in source_files
     ]
     wheel, wheel_digest, wheel_size, wheel_mode = _publisher_wheel(publisher_tool)
     if wheel_mode & 0o111:
         raise HandoffError("publisher wheel must not be executable")
-    files.append(
-        {"name": _PUBLISHER_FILE, "sha256": wheel_digest, "size": wheel_size, "mode": 0o400}
-    )
+    files.append({"name": wheel.name, "sha256": wheel_digest, "size": wheel_size, "mode": 0o400})
     seal = {
         "format": "genereviews-local-handoff-v1",
         "corpus_release_id": source_manifest["corpus_release_id"],
@@ -385,8 +422,10 @@ def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> S
                 or copied_size != expected_source[name]["size"]
             ):
                 raise HandoffError(f"source {name} changed while sealing")
-        _copy_regular(wheel, staging / _PUBLISHER_FILE)
-        copied_digest, copied_size, _ = _sha256_facts(staging / _PUBLISHER_FILE)
+        if _load_json(staging / "manifest.json") != source_manifest:
+            raise HandoffError("source manifest changed while sealing")
+        _copy_regular(wheel, staging / wheel.name)
+        copied_digest, copied_size, _ = _sha256_facts(staging / wheel.name)
         if (copied_digest, copied_size) != (wheel_digest, wheel_size):
             raise HandoffError("publisher wheel changed while sealing")
         manifest = staging / "seal-manifest.json"
@@ -420,11 +459,13 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
     if not target.is_dir() or target.is_symlink():
         raise HandoffError("sealed handoff object is missing or unsafe")
     target_info = target.lstat()
-    if stat.S_IMODE(target_info.st_mode) != 0o500:
-        raise HandoffError("sealed handoff object must be owner-read-only mode 0500")
-    if {path.name for path in target.iterdir()} != _SEALED_FILES:
-        raise HandoffError("sealed handoff object has unexpected files")
+    if target_info.st_uid != os.geteuid() or stat.S_IMODE(target_info.st_mode) != 0o500:
+        raise HandoffError("sealed handoff object must be owned by the invoking user and mode 0500")
     manifest = target / "seal-manifest.json"
+    _, _, manifest_mode = _sha256_facts(manifest)
+    manifest_info = manifest.lstat()
+    if manifest_info.st_uid != os.geteuid() or manifest_mode != 0o400:
+        raise HandoffError("sealed seal-manifest.json must be owner-read-only mode 0400")
     manifest_bytes = _read_capped(manifest)
     if hashlib.sha256(manifest_bytes).hexdigest() != object_id:
         raise HandoffError("sealed handoff object ID does not match its manifest")
@@ -434,47 +475,79 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
         or not isinstance(record.get("corpus_release_id"), str)
         or not isinstance(record.get("source_sha256"), str)
         or not isinstance(record.get("artifact_sha256"), str)
+        or set(record)
+        != {
+            "format",
+            "corpus_release_id",
+            "source_sha256",
+            "artifact_sha256",
+            "publisher_tool",
+            "files",
+        }
     ):
         raise HandoffError("seal manifest lacks source/artifact identity")
     files = record.get("files")
-    if not isinstance(files, list) or {
-        entry.get("name") for entry in files if isinstance(entry, dict)
-    } != _SOURCE_FILES | {_PUBLISHER_FILE}:
-        raise HandoffError("seal manifest has an incomplete file list")
-    expected = {entry["name"]: entry for entry in files if isinstance(entry, dict)}
-    for name in _SOURCE_FILES:
-        path = target / name
-        digest, size, mode = _sha256_facts(path)
-        if mode != 0o400:
-            raise HandoffError(f"sealed {name} must be owner-read-only mode 0400")
-        entry = expected[name]
-        if entry.get("sha256") != digest or entry.get("size") != size:
-            raise HandoffError(f"sealed {name} does not match seal manifest")
-        if name == "corpus.dump" and record["artifact_sha256"] != digest:
-            raise HandoffError("sealed corpus.dump does not match source/artifact identity")
     publisher = record.get("publisher_tool")
     if (
         not isinstance(publisher, dict)
         or set(publisher) != {"name", "sha256"}
         or not isinstance(publisher["name"], str)
-        or not publisher["name"].endswith(".whl")
+        or not _valid_wheel_name(publisher["name"])
         or not isinstance(publisher["sha256"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", publisher["sha256"])
     ):
         raise HandoffError("seal manifest lacks publisher wheel identity")
-    tool_digest, tool_size, tool_mode = _sha256_facts(target / _PUBLISHER_FILE)
-    tool_entry = expected[_PUBLISHER_FILE]
+    publisher_name = publisher["name"]
+    publisher_names = {publisher_name}
     if (
-        publisher["sha256"] != tool_digest
-        or tool_entry.get("sha256") != tool_digest
-        or tool_entry.get("size") != tool_size
-        or tool_mode != 0o400
+        not isinstance(files, list)
+        or {entry.get("name") for entry in files if isinstance(entry, dict)}
+        != _SOURCE_FILES | publisher_names
     ):
+        raise HandoffError("seal manifest has an incomplete file list")
+    if {path.name for path in target.iterdir()} != _SOURCE_FILES | publisher_names | {
+        "seal-manifest.json"
+    }:
+        raise HandoffError("sealed handoff object has unexpected files")
+    expected = {entry["name"]: entry for entry in files if isinstance(entry, dict)}
+    if len(expected) != len(files):
+        raise HandoffError("seal manifest has duplicate file entries")
+    for name, entry in expected.items():
+        if set(entry) != {"name", "sha256", "size", "mode"}:
+            raise HandoffError("seal manifest file entry has missing or extra fields")
+        if (
+            not isinstance(entry["sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", entry["sha256"])
+            or type(entry["size"]) is not int
+            or entry["size"] <= 0
+            or entry["mode"] != 0o400
+        ):
+            raise HandoffError("seal manifest file entry has invalid digest, size, or mode")
+        path = target / name
+        digest, size, mode = _sha256_facts(path)
+        info = path.lstat()
+        if info.st_uid != os.geteuid() or mode != 0o400:
+            raise HandoffError(f"sealed {name} must be owned by the invoking user and mode 0400")
+        if entry["sha256"] != digest or entry["size"] != size:
+            label = "publisher wheel" if name in publisher_names else name
+            raise HandoffError(f"sealed {label} does not match seal manifest")
+        if name == "corpus.dump" and record["artifact_sha256"] != digest:
+            raise HandoffError("sealed corpus.dump does not match source/artifact identity")
+    if publisher["sha256"] != expected[publisher_name]["sha256"]:
         raise HandoffError("sealed publisher wheel does not match seal manifest")
     checksums = _parse_sums(target / "SHA256SUMS")
     for name, digest in checksums.items():
         actual, _ = _sha256(target / name)
         if actual != digest:
             raise HandoffError(f"checksum mismatch for {name}")
+    # The seal's source/release tuple must agree with the embedded manifest, so a
+    # valid file from bundle A can never be paired with identity from bundle B.
+    embedded = verify_data_only_bundle(target, allow_extra=True)
+    if (
+        record["source_sha256"] != embedded["tarball_source_sha256"]
+        or record["corpus_release_id"] != embedded["corpus_release_id"]
+    ):
+        raise HandoffError("sealed source/release identity does not match embedded manifest")
     return SealedHandoff(object_id=object_id, path=target, manifest=manifest)
 
 
@@ -482,30 +555,22 @@ def verify_rights_record(
     rights_path: Path, object_id: str, *, sealed: SealedHandoff | None = None
 ) -> dict[str, object]:
     """Accept only a complete affirmative rights decision bound to ``object_id``."""
-    record = _load_json(rights_path)
-    if set(record) != _RIGHTS_FIELDS or not all(
-        isinstance(value, str) and value for value in record.values()
-    ):
-        raise HandoffError("rights record must contain exactly the complete required fields")
-    if record["object_id"] != object_id:
-        raise HandoffError("rights record is not bound to this handoff object")
-    if record["decision"] != "affirmative":
-        raise HandoffError("rights record decision must be affirmative")
-    decision_time = str(record["decision_time"])
-    if not decision_time.endswith("Z"):
-        raise HandoffError("rights record decision_time must be dated UTC")
-    try:
-        datetime.fromisoformat(f"{decision_time[:-1]}+00:00")
-    except ValueError as error:
-        raise HandoffError(
-            "rights record decision_time must be an ISO-8601 UTC timestamp"
-        ) from error
+    from genereview_link.corpus.rights import RightsError
+    from genereview_link.corpus.rights import verify_rights_record as verify
+
+    sealed_values: dict[str, str] | None = None
     if sealed is not None:
         seal = _load_json(sealed.manifest)
+        sealed_values = {}
         for name in ("source_sha256", "artifact_sha256", "corpus_release_id"):
-            if record[name] != seal[name]:
-                raise HandoffError(f"rights record is not bound to sealed {name}")
-    return record
+            value = seal.get(name)
+            if not isinstance(value, str):
+                raise HandoffError(f"sealed manifest is missing string {name}")
+            sealed_values[name] = value
+    try:
+        return verify(rights_path, object_id, sealed_values=sealed_values)
+    except RightsError as error:
+        raise HandoffError(str(error)) from error
 
 
 def prepare_publish_handoff(handoff_root: Path, object_id: str, rights_path: Path) -> SealedHandoff:

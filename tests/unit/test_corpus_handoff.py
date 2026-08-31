@@ -49,8 +49,21 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
         },
         postgres={"major_version": "18", "pgvector_version": "0.8.2"},
         schema_migrations={
-            "control": ["0001_base"],
-            "data": ["genereview:0001_chapters"],
+            "control": [
+                "0001_base",
+                "0002_corpus_version",
+                "0003_refresh_log",
+                "0004_active_embedding",
+                "0005_corpus_source_identity",
+            ],
+            "data": [
+                "genereview:0001_chapters",
+                "genereview:0002_passages",
+                "genereview:0003_embeddings_bge384",
+                "genereview:0004_passage_type_and_tables",
+                "genereview:0005_passage_role",
+                "genereview:0006_primary_gene_symbols",
+            ],
         },
         app_git_sha="b" * 40,
         app_version="5.1.5",
@@ -99,11 +112,11 @@ def test_seal_binds_exactly_one_publisher_wheel_into_object_identity(tmp_path: P
 
     sealed = seal_handoff(_source(tmp_path), tmp_path / "handoffs", publisher_tool=tool)
 
-    assert (sealed.path / "publisher-tool.whl").read_bytes() == b"sealed wheel"
+    assert (sealed.path / wheel.name).read_bytes() == b"sealed wheel"
     manifest = json.loads(sealed.manifest.read_text())
     entries = {entry["name"]: entry for entry in manifest["files"]}
-    assert entries["publisher-tool.whl"]["sha256"] == hashlib.sha256(b"sealed wheel").hexdigest()
-    assert entries["publisher-tool.whl"]["size"] == len(b"sealed wheel")
+    assert entries[wheel.name]["sha256"] == hashlib.sha256(b"sealed wheel").hexdigest()
+    assert entries[wheel.name]["size"] == len(b"sealed wheel")
     assert all(entry["mode"] == 0o400 for entry in entries.values())
     assert verify_handoff(tmp_path / "handoffs", sealed.object_id).object_id == sealed.object_id
 
@@ -132,7 +145,8 @@ def test_verify_rejects_publisher_wheel_tampering(tmp_path: Path) -> None:
     sealed = seal_handoff(
         _source(tmp_path), tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path)
     )
-    wheel = sealed.path / "publisher-tool.whl"
+    wheel_name = json.loads(sealed.manifest.read_text())["publisher_tool"]["name"]
+    wheel = sealed.path / wheel_name
     wheel.chmod(0o600)
     wheel.write_bytes(b"tampered wheel")
     wheel.chmod(0o400)
@@ -169,7 +183,8 @@ def test_rights_record_binds_affirmative_decision_to_exact_object(tmp_path: Path
     record = {
         "object_id": sealed.object_id,
         "decision": "affirmative",
-        "authority": "reviewer@example.org",
+        "responsible_reviewer": "reviewer@example.org",
+        "rights_authority": "rights@example.org",
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
         "permitted_asset_use": "immutable research corpus artifact",
@@ -276,7 +291,8 @@ def test_rights_record_must_bind_source_and_artifact_identity(tmp_path: Path) ->
     incomplete = {
         "object_id": sealed.object_id,
         "decision": "affirmative",
-        "authority": "reviewer@example.org",
+        "responsible_reviewer": "reviewer@example.org",
+        "rights_authority": "rights@example.org",
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
         "permitted_asset_use": "immutable research corpus artifact",
@@ -297,7 +313,8 @@ def test_publisher_rejects_a_rights_record_for_a_different_source(tmp_path: Path
     record = {
         "object_id": sealed.object_id,
         "decision": "affirmative",
-        "authority": "reviewer@example.org",
+        "responsible_reviewer": "reviewer@example.org",
+        "rights_authority": "rights@example.org",
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
         "permitted_asset_use": "immutable research corpus artifact",
@@ -344,6 +361,32 @@ def test_data_only_verifier_rejects_invalid_release_identity(tmp_path: Path) -> 
         verify_data_only_bundle(source)
 
 
+def test_data_only_verifier_rejects_release_date_different_from_source(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "corpus.dump").write_bytes(b"PGDMP-data")
+    source = write_data_only_bundle(
+        work_dir=work,
+        output=tmp_path / "source",
+        manifest=_verified_manifest("2026-08-31-r1"),
+    )
+
+    with pytest.raises(HandoffError, match="date must match"):
+        verify_data_only_bundle(source)
+
+
+def test_data_only_verifier_rejects_duplicate_migration_identity(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "corpus.dump").write_bytes(b"PGDMP-data")
+    manifest = _verified_manifest()
+    manifest.schema_migrations["control"].append("0001_base")
+    source = write_data_only_bundle(work_dir=work, output=tmp_path / "source", manifest=manifest)
+
+    with pytest.raises(HandoffError, match="migration identity"):
+        verify_data_only_bundle(source)
+
+
 def test_data_only_verifier_rejects_incomplete_release_provenance(tmp_path: Path) -> None:
     work = tmp_path / "work"
     work.mkdir()
@@ -358,3 +401,82 @@ def test_data_only_verifier_rejects_incomplete_release_provenance(tmp_path: Path
 
     with pytest.raises(HandoffError, match="application Git revision"):
         verify_data_only_bundle(source)
+
+
+def test_sealed_handoff_preserves_installable_wheel_filename(tmp_path: Path) -> None:
+    tool = tmp_path / "publisher-tool"
+    tool.mkdir()
+    wheel = tool / "genereviews_link-5.1.4-py3-none-any.whl"
+    wheel.write_bytes(b"sealed wheel")
+
+    sealed = seal_handoff(_source(tmp_path), tmp_path / "handoffs", publisher_tool=tool)
+
+    assert (sealed.path / wheel.name).is_file()
+    manifest = json.loads(sealed.manifest.read_text())
+    assert manifest["publisher_tool"]["name"] == wheel.name
+    assert wheel.name in {entry["name"] for entry in manifest["files"]}
+
+
+def test_verify_handoff_rejects_nonexact_seal_manifest_mode(tmp_path: Path) -> None:
+    sealed = seal_handoff(
+        _source(tmp_path), tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path)
+    )
+    manifest = sealed.manifest
+    manifest.chmod(0o600)
+    with pytest.raises(HandoffError, match="mode 0400"):
+        verify_handoff(tmp_path / "handoffs", sealed.object_id)
+
+
+def test_rights_record_requires_durable_evidence_and_distinct_reviewers(tmp_path: Path) -> None:
+    sealed = seal_handoff(
+        _source(tmp_path), tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path)
+    )
+    record = {
+        "object_id": sealed.object_id,
+        "decision": "affirmative",
+        "responsible_reviewer": "reviewer@example.org",
+        "rights_authority": "rights@example.org",
+        "decision_time": "2026-08-30T12:00:00Z",
+        "terms_version": "2026-08",
+        "permitted_asset_use": "immutable research corpus artifact",
+        "attribution": "GeneReviews",
+        "evidence_uri": "/var/lib/genereviews/rights-record.json",
+        "source_sha256": "a" * 64,
+        "artifact_sha256": hashlib.sha256(
+            sealed.path.joinpath("corpus.dump").read_bytes()
+        ).hexdigest(),
+        "corpus_release_id": "2026-08-30-r1",
+    }
+    rights = tmp_path / "rights.json"
+    rights.write_text(json.dumps(record))
+    assert verify_rights_record(rights, sealed.object_id)["decision"] == "affirmative"
+
+
+def test_rights_record_rejects_future_decision_and_relative_evidence(tmp_path: Path) -> None:
+    sealed = seal_handoff(
+        _source(tmp_path), tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path)
+    )
+    record = {
+        "object_id": sealed.object_id,
+        "decision": "affirmative",
+        "responsible_reviewer": "reviewer@example.org",
+        "rights_authority": "rights@example.org",
+        "decision_time": "2999-08-30T12:00:00Z",
+        "terms_version": "2026-08",
+        "permitted_asset_use": "immutable research corpus artifact",
+        "attribution": "GeneReviews",
+        "evidence_uri": "rights-record.json",
+        "source_sha256": "a" * 64,
+        "artifact_sha256": hashlib.sha256(
+            sealed.path.joinpath("corpus.dump").read_bytes()
+        ).hexdigest(),
+        "corpus_release_id": "2026-08-30-r1",
+    }
+    rights = tmp_path / "rights.json"
+    rights.write_text(json.dumps(record))
+    with pytest.raises(HandoffError, match="durable"):
+        verify_rights_record(rights, sealed.object_id)
+    record["evidence_uri"] = "/var/lib/rights-record.json"
+    rights.write_text(json.dumps(record))
+    with pytest.raises(HandoffError, match="future"):
+        verify_rights_record(rights, sealed.object_id)
