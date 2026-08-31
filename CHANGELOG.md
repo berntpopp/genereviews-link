@@ -2,6 +2,10 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
+## [5.1.3] - 2026-08-31
+
+- Re-pinned the Python base image and all CI workflow dependencies to reviewed immutable revisions.
+
 ## [5.1.2] - 2026-08-10
 
 Consolidated Dependabot maintenance release. No runtime or corpus contract

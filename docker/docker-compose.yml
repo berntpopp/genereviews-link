@@ -58,7 +58,7 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
-    restart: on-failure
+    restart: unless-stopped
     networks:
       - genereview_internal
     deploy:
@@ -186,7 +186,7 @@ services:
           cpus: "1.0"
           pids: 256
 
-    restart: on-failure
+    restart: unless-stopped
 
     logging:
       driver: json-file
