@@ -272,10 +272,18 @@ async def test_download_sidedata_passes_its_explicit_deadline(
     read = AsyncMock(return_value=b"content")
     monkeypatch.setattr(pipeline, "read_capped", read)
 
-    await pipeline._download_sidedata(tmp_path)
+    identity = await pipeline._download_sidedata(tmp_path)
 
     assert read.await_count == 3
     assert all(
         call.kwargs["deadline_seconds"] == pipeline.SIDEDATA_DOWNLOAD_DEADLINE_SECONDS
         for call in read.await_args_list
     )
+    assert identity == {
+        name: {"sha256": hashlib.sha256(b"content").hexdigest(), "size_bytes": 7}
+        for name in (
+            "GRtitle_shortname_NBKid.txt",
+            "NBKid_shortname_genesymbol.txt",
+            "NBKid_shortname_OMIM.txt",
+        )
+    }

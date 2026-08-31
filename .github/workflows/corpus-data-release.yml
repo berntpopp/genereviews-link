@@ -21,6 +21,7 @@ permissions: {}
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: read
     services:
@@ -89,12 +90,6 @@ jobs:
           rm -rf -- "$RUNNER_TEMP/publisher-tool"
           mkdir -- "$RUNNER_TEMP/publisher-tool"
           uv build --wheel --out-dir "$RUNNER_TEMP/publisher-tool"
-          uv export --no-dev --no-emit-project --format requirements.txt \
-            --output-file "$RUNNER_TEMP/publisher-requirements.txt"
-          mkdir -- "$RUNNER_TEMP/publisher-dependencies"
-          python3 -m pip download --require-hashes --only-binary=:all: \
-            --dest "$RUNNER_TEMP/publisher-dependencies" \
-            --requirement "$RUNNER_TEMP/publisher-requirements.txt"
           object_id="$(uv run genereview-link bundle seal-handoff --source "$SOURCE_DIR" --handoff-root "$root" --publisher-tool "$RUNNER_TEMP/publisher-tool")"
           printf '%s\n' "$object_id" > "$RUNNER_TEMP/object-id"
       - name: Upload sealed handoff only
@@ -104,14 +99,14 @@ jobs:
           path: |
             ${{ runner.temp }}/handoffs
             ${{ runner.temp }}/object-id
-            ${{ runner.temp }}/publisher-dependencies
           if-no-files-found: error
           retention-days: 3
 
   publish:
-    if: ${{ inputs.object_id != '' }}
+    if: ${{ inputs.object_id != '' && github.ref == 'refs/heads/main' }}
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     environment: data-release
     permissions:
       contents: write
@@ -136,16 +131,23 @@ jobs:
           test -n "$GENEREVIEWS_RIGHTS_RECORD_JSON"
           test "$(cat "$RUNNER_TEMP/sealed/object-id")" = "$OBJECT_ID"
           printf '%s' "$GENEREVIEWS_RIGHTS_RECORD_JSON" > "$RUNNER_TEMP/rights.json"
-          tool="$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID/publisher-tool.whl"
+          handoff_root="$RUNNER_TEMP/sealed/handoffs"
+          handoff_object="$handoff_root/$OBJECT_ID"
+          test -d "$handoff_root" && test ! -L "$handoff_root"
+          test -d "$handoff_object" && test ! -L "$handoff_object"
+          chmod 0700 "$handoff_root"
+          chmod 0500 "$handoff_object"
+          for name in corpus.dump manifest.json SHA256SUMS publisher-tool.whl seal-manifest.json; do
+            test -f "$handoff_object/$name" && test ! -L "$handoff_object/$name"
+            chmod 0400 "$handoff_object/$name"
+          done
+          tool="$handoff_object/publisher-tool.whl"
           test -f "$tool" && test ! -L "$tool"
-          seal_manifest="$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID/seal-manifest.json"
+          seal_manifest="$handoff_object/seal-manifest.json"
           test "$(sha256sum "$seal_manifest" | cut -d' ' -f1)" = "$OBJECT_ID"
           test "$(sha256sum "$tool" | cut -d' ' -f1)" = "$(jq -r '.publisher_tool.sha256' "$seal_manifest")"
           publisher_env="$RUNNER_TEMP/publisher-env"
           mkdir -- "$publisher_env"
-          for dependency in "$RUNNER_TEMP"/sealed/publisher-dependencies/*.whl; do
-            uv pip install --target "$publisher_env" --no-index --no-deps "$dependency"
-          done
           uv pip install --target "$publisher_env" --no-index --no-deps "$tool"
           # This sealed wheel call performs verify_handoff/publish-handoff verification:
           # every file's no-follow digest/size/mode/source identity and the rights tuple.
@@ -168,43 +170,144 @@ jobs:
         run: |
           set -euo pipefail
           handoff="$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID"
-          release_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["corpus_release_id"])' "$handoff/manifest.json")"
-          tag="corpus-data-$release_id"
-          verify_existing() {
-            existing="$(mktemp -d "$RUNNER_TEMP/existing.XXXXXX")"
-            PYTHONPATH="$PUBLISHER_ENV" python3 -m genereview_link.corpus.release_assets \
-              --repo "$GH_REPO" --tag "$tag" --dest "$existing"
+          corpus_release_id="$(jq -er .corpus_release_id "$handoff/manifest.json")"
+          build_revision="$(jq -er '.app_git_sha | select(test("^[0-9a-f]{40}$"))' "$handoff/manifest.json")"
+          test "$build_revision" = "$GITHUB_SHA"
+          grep -Eq '^20[0-9]{2}-[0-9]{2}-[0-9]{2}-r[1-9][0-9]*$' <<<"$corpus_release_id"
+          tag="corpus-data-$corpus_release_id"
+
+          ensure_tag() {
+            response="$RUNNER_TEMP/tag-ref.json"
+            error="$RUNNER_TEMP/tag-ref.error"
+            if timeout 60s gh api "repos/$GH_REPO/git/ref/tags/$tag" >"$response" 2>"$error"; then
+              jq -e --arg expected "$build_revision" \
+                '.object.type == "commit" and .object.sha == $expected' "$response" >/dev/null
+            elif grep -Fq 'HTTP 404' "$error"; then
+              timeout 60s gh api --method POST "repos/$GH_REPO/git/refs" \
+                -f ref="refs/tags/$tag" -f sha="$build_revision" \
+                | jq -e --arg ref "refs/tags/$tag" --arg expected "$build_revision" \
+                    '.ref == $ref and .object.type == "commit" and .object.sha == $expected' >/dev/null
+            else
+              cat "$error" >&2
+              echo "tag lookup failed; refusing mutation" >&2
+              exit 1
+            fi
+          }
+
+          verify_remote() {
+            release_id="$1"
+            grep -Eq '^[1-9][0-9]{0,18}$' <<<"$release_id"
+            release_json="$RUNNER_TEMP/release-$release_id.json"
+            remote="$(mktemp -d "$RUNNER_TEMP/remote.XXXXXX")"
+            timeout 60s gh api "repos/$GH_REPO/releases/$release_id" >"$release_json"
+            jq -e --argjson id "$release_id" --arg tag "$tag" --arg revision "$build_revision" \
+              '.id == $id and .tag_name == $tag and .target_commitish == $revision and
+               .prerelease == false and
+               ((.draft == true and .immutable == false and .published_at == null) or
+                (.draft == false and .immutable == true and (.published_at | type == "string"))) and
+               ([.assets[].name] | sort == ["SHA256SUMS", "corpus.dump", "manifest.json"])' \
+              "$release_json" >/dev/null
+            asset_ids="$(jq -cer '[.assets[].id] | select(length == 3 and (unique | length) == 3)' "$release_json")"
+            jq -e 'all(.[]; type == "number" and . > 0 and floor == .)' <<<"$asset_ids" >/dev/null
+            for asset in corpus.dump manifest.json SHA256SUMS; do
+              asset_id="$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .id | select(type == "number" and . > 0 and floor == .)' "$release_json")"
+              size="$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .size | select(type == "number" and . > 0 and floor == .)' "$release_json")"
+              digest="$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$release_json")"
+              if test "$asset" = corpus.dump; then limit=$((2 * 1024 * 1024 * 1024)); else limit=$((1024 * 1024)); fi
+              test "$size" -le "$limit"
+              timeout 45m curl --fail --silent --show-error --location \
+                --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 2700 \
+                --max-filesize "$size" --header 'Accept: application/octet-stream' \
+                --header "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/$GH_REPO/releases/assets/$asset_id" \
+                --output "$remote/$asset"
+              test "$(stat -c %s "$remote/$asset")" = "$size"
+              test "sha256:$(sha256sum "$remote/$asset" | cut -d' ' -f1)" = "$digest"
+              cmp -- "$handoff/$asset" "$remote/$asset"
+            done
             PYTHONPATH="$PUBLISHER_ENV" python3 - "$RUNNER_TEMP/sealed/handoffs" "$OBJECT_ID" "$RUNNER_TEMP/rights.json" <<'PY'
           import sys
           from pathlib import Path
           from genereview_link.corpus.handoff import prepare_publish_handoff
           prepare_publish_handoff(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
           PY
-            gh attestation verify "$existing/corpus.dump" --repo "$GH_REPO"
-            for asset in corpus.dump manifest.json SHA256SUMS; do
-              test -f "$existing/$asset" && test ! -L "$existing/$asset"
-              cmp -- "$handoff/$asset" "$existing/$asset"
-            done
+            timeout 2m gh attestation verify "$remote/corpus.dump" --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/corpus-data-release.yml" \
+              --source-ref refs/heads/main --source-digest "$build_revision"
           }
-          state=collision
-          release_json="$(mktemp "$RUNNER_TEMP/release.XXXXXX")"
-          release_error="$(mktemp "$RUNNER_TEMP/release-error.XXXXXX")"
-          if gh api "repos/$GH_REPO/releases/tags/$tag" >"$release_json" 2>"$release_error"; then
-            if test "$(jq -r .draft <"$release_json")" = false; then
-              state=published_noop
+
+          inventory="$RUNNER_TEMP/release-inventory.jsonl"
+          : >"$inventory"
+          complete=false
+          for page in $(seq 1 10); do
+            page_json="$RUNNER_TEMP/release-page-$page.json"
+            timeout 60s gh api "repos/$GH_REPO/releases?per_page=100&page=$page" >"$page_json"
+            jq -e 'type == "array" and length <= 100' "$page_json" >/dev/null
+            count="$(jq -er length "$page_json")"
+            jq -c '.[] | {id, tag_name}' "$page_json" >>"$inventory"
+            if test "$count" -lt 100; then complete=true; break; fi
+          done
+          test "$complete" = true
+          matches="$(jq -sc --arg tag "$tag" '[.[] | select(.tag_name == $tag)]' "$inventory")"
+          match_count="$(jq -er length <<<"$matches")"
+          test "$match_count" -le 1
+
+          promote=false
+          if test "$match_count" = 1; then
+            release_id="$(jq -er '.[0].id | select(type == "number" and . > 0 and floor == .) | tostring' <<<"$matches")"
+            verify_remote "$release_id"
+            if test "$(jq -er '.draft | tostring' "$RUNNER_TEMP/release-$release_id.json")" = true; then
+              promote=true
             else
-              state=draft_publish_existing
+              echo "published_noop: exact immutable release verified"
             fi
-          elif grep -Fq 'HTTP 404' "$release_error"; then
-            state=create
           else
-            cat "$release_error" >&2
-            echo "release lookup failed; refusing to create" >&2
-            exit 1
+            ensure_tag
+            created="$RUNNER_TEMP/created-release.json"
+            timeout 60s gh api --method POST "repos/$GH_REPO/releases" \
+              -f tag_name="$tag" -f target_commitish="$build_revision" -f name="$tag" \
+              -f body="Immutable GeneReviews research corpus; publication requires recorded redistribution rights." \
+              -F draft=true -F prerelease=false -F generate_release_notes=false >"$created"
+            release_id="$(jq -er --arg tag "$tag" --arg revision "$build_revision" \
+              'select(.tag_name == $tag and .target_commitish == $revision and
+                      .draft == true and .immutable == false and .published_at == null and
+                      .prerelease == false and (.assets | type == "array" and length == 0)) |
+               .id | select(type == "number" and . > 0 and floor == .) | tostring' "$created")"
+            grep -Eq '^[1-9][0-9]{0,18}$' <<<"$release_id"
+            for asset in corpus.dump manifest.json SHA256SUMS; do
+              size="$(stat -c %s "$handoff/$asset")"
+              digest="sha256:$(sha256sum "$handoff/$asset" | cut -d' ' -f1)"
+              upload="$RUNNER_TEMP/upload-$asset.json"
+              timeout 45m curl --fail --silent --show-error \
+                --proto '=https' --connect-timeout 15 --max-time 2700 \
+                --request POST --header 'Accept: application/vnd.github+json' \
+                --header "Authorization: Bearer $GH_TOKEN" \
+                --header 'Content-Type: application/octet-stream' --data-binary "@$handoff/$asset" \
+                "https://uploads.github.com/repos/$GH_REPO/releases/$release_id/assets?name=$asset" \
+                --output "$upload"
+              jq -e --arg asset "$asset" --arg digest "$digest" --argjson size "$size" \
+                '.name == $asset and .size == $size and .digest == $digest and
+                 (.id | type == "number" and . > 0 and floor == .)' "$upload" >/dev/null
+            done
+            verify_remote "$release_id"
+            promote=true
           fi
-          case "$state" in
-            published_noop) verify_existing; echo "published_noop: exact immutable release verified" ;;
-            draft_publish_existing) verify_existing; gh release edit "$tag" --draft=false ;;
-            create) gh release create "$tag" --draft --title "$tag" "$handoff/corpus.dump" "$handoff/manifest.json" "$handoff/SHA256SUMS" && verify_existing && gh release edit "$tag" --draft=false ;;
-            collision) echo "collision: refusing unknown release state" >&2; exit 1 ;;
-          esac
+
+          if test "$promote" = true; then
+            ensure_tag
+            before="$RUNNER_TEMP/pre-promotion-release.json"
+            after="$RUNNER_TEMP/post-promotion-release.json"
+            timeout 60s gh api "repos/$GH_REPO/releases/$release_id" >"$before"
+            jq -c '[.assets[] | {id, name, size, digest}] | sort_by(.name)' "$before" \
+              >"$RUNNER_TEMP/pre-promotion-assets.json"
+            timeout 60s gh api --method PATCH "repos/$GH_REPO/releases/$release_id" \
+              -F draft=false >"$after"
+            jq -e --argjson id "$release_id" --arg tag "$tag" --arg revision "$build_revision" \
+              '.id == $id and .tag_name == $tag and .target_commitish == $revision and
+               .draft == false and .immutable == true and (.published_at | type == "string") and
+               .prerelease == false' "$after" >/dev/null
+            jq -c '[.assets[] | {id, name, size, digest}] | sort_by(.name)' "$after" \
+              >"$RUNNER_TEMP/post-promotion-assets.json"
+            cmp -- "$RUNNER_TEMP/pre-promotion-assets.json" "$RUNNER_TEMP/post-promotion-assets.json"
+            verify_remote "$release_id"
+          fi

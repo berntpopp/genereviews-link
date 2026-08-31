@@ -142,14 +142,22 @@ record bound to that object, its source SHA-256, corpus-dump SHA-256, and releas
 has no release-service client. The handoff root is owner-only (`0700`), and sealed objects/files are
 checked with no-follow file descriptors, exact digest/size/mode manifests, and immutable object IDs.
 The sealed publisher wheel name and digest are part of that object identity; the privileged workflow
-installs it and its lockfile-derived dependency wheels with no index and no dependency resolution.
+installs only that wheel with no index and no dependency resolution. Its handoff verifier uses only
+the Python standard library, so no separately transferred code can shadow it in the credentialed job.
 A separately privileged automation may act only on that sealed handoff after the rights record exists.
+
+The corpus manifest binds the exact upstream listing path and `last_updated` value, archive digest
+and byte size, and digest/size identity for each of the three side-data files. These fields are
+captured during ingest and stored with the active corpus row; packaging refuses older database rows
+that lack the complete identity.
 
 The privileged workflow downloads only the three named assets through byte- and deadline-bounded
 allowlisted streams, verifies the source/release attestation, reads the PostgreSQL archive TOC before
 restore, and accepts only data rows for reviewed tables. It applies reviewed migrations first, restores
 as a non-owner without privileges in one transaction, and compares the restored chapter, passage, and
 embedding counts exactly with the sealed manifest before representative GeneReviews search fixtures run.
+Release publication inventories drafts as well as published releases and mutates only the exact numeric
+release ID after verifying its tag, source revision, asset IDs, sizes, digests, and closed lifecycle state.
 
 ## Corpus freshness
 

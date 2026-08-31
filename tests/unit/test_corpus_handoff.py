@@ -60,8 +60,14 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
             "exists": True,
         },
         source={
-            "file_list_etag": "2026-08-30 02:41:04",
-            "tarball_size_bytes": 123,
+            "listing_relpath": "ca/84/gene_NBK1116.tar.gz",
+            "last_updated": "2026-08-30 02:41:04",
+            "tarball": {"sha256": "a" * 64, "size_bytes": 123},
+            "side_data": {
+                "GRtitle_shortname_NBKid.txt": {"sha256": "b" * 64, "size_bytes": 10},
+                "NBKid_shortname_genesymbol.txt": {"sha256": "c" * 64, "size_bytes": 11},
+                "NBKid_shortname_OMIM.txt": {"sha256": "d" * 64, "size_bytes": 12},
+            },
         },
         validation={"status": "passed", "smoke_queries": []},
     )
@@ -98,7 +104,28 @@ def test_seal_binds_exactly_one_publisher_wheel_into_object_identity(tmp_path: P
     entries = {entry["name"]: entry for entry in manifest["files"]}
     assert entries["publisher-tool.whl"]["sha256"] == hashlib.sha256(b"sealed wheel").hexdigest()
     assert entries["publisher-tool.whl"]["size"] == len(b"sealed wheel")
+    assert all(entry["mode"] == 0o400 for entry in entries.values())
     assert verify_handoff(tmp_path / "handoffs", sealed.object_id).object_id == sealed.object_id
+
+
+def test_seal_rejects_a_source_file_changed_during_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source(tmp_path)
+    original_copy = handoff._copy_regular
+    changed = False
+
+    def change_then_copy(source_path: Path, destination: Path) -> None:
+        nonlocal changed
+        if source_path == source / "corpus.dump" and not changed:
+            changed = True
+            source_path.write_bytes(b"PGDMP-attacker")
+        original_copy(source_path, destination)
+
+    monkeypatch.setattr(handoff, "_copy_regular", change_then_copy)
+
+    with pytest.raises(HandoffError, match="changed while sealing"):
+        seal_handoff(source, tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path))
 
 
 def test_verify_rejects_publisher_wheel_tampering(tmp_path: Path) -> None:

@@ -12,7 +12,6 @@ from pathlib import Path
 
 import asyncpg
 
-RELEASE_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-r[1-9]\d*$")
 GIT_REVISION_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
@@ -24,6 +23,8 @@ class BundleDatabaseFacts:
     tarball_source_sha256: str
     tarball_last_updated: str
     tarball_size_bytes: int
+    listing_relpath: str
+    side_data: dict[str, dict[str, str | int]]
     chapter_count: int
     passage_count: int
     embedding_count: int
@@ -34,10 +35,21 @@ class BundleDatabaseFacts:
 
     @property
     def source(self) -> dict[str, object]:
-        return {
-            "file_list_etag": self.tarball_last_updated,
-            "tarball_size_bytes": self.tarball_size_bytes,
-        }
+        from genereview_link.corpus.source_identity import validate_source_identity
+
+        return validate_source_identity(
+            {
+                "listing_relpath": self.listing_relpath,
+                "last_updated": self.tarball_last_updated,
+                "tarball": {
+                    "sha256": self.tarball_source_sha256,
+                    "size_bytes": self.tarball_size_bytes,
+                },
+                "side_data": self.side_data,
+            },
+            tarball_sha256=self.tarball_source_sha256,
+            last_updated=self.tarball_last_updated,
+        )
 
     @property
     def postgres(self) -> dict[str, object]:
@@ -61,7 +73,10 @@ def resolve_app_git_sha(
 ) -> str:
     """Resolve the exact clean source revision used by the bundle producer."""
     current_env = os.environ if env is None else env
-    if github_sha := current_env.get("GITHUB_SHA"):
+    if current_env.get("GITHUB_ACTIONS") == "true":
+        github_sha = current_env.get("GITHUB_SHA")
+        if github_sha is None:
+            raise ValueError("application Git revision is missing in GitHub Actions")
         return _validated_git_revision(github_sha)
 
     git = shutil.which("git")
@@ -94,7 +109,12 @@ async def collect_database_facts(pool: asyncpg.Pool) -> BundleDatabaseFacts | No
     """Collect complete, fail-closed provenance for the one active corpus."""
     row = await pool.fetchrow(
         """
-        select version, file_list_etag, tarball_sha256, tarball_size_bytes, chapter_count
+        select version, listing_relpath, file_list_etag,
+               tarball_sha256, tarball_size_bytes,
+               sidedata_title_sha256, sidedata_title_size_bytes,
+               sidedata_genes_sha256, sidedata_genes_size_bytes,
+               sidedata_omim_sha256, sidedata_omim_size_bytes,
+               chapter_count
           from public.genereview_corpus_version
          where is_active and ingest_status = 'completed'
         """
@@ -156,11 +176,28 @@ async def collect_database_facts(pool: asyncpg.Pool) -> BundleDatabaseFacts | No
     if not pgvector_version:
         raise ValueError("pgvector extension version is missing")
 
+    side_data: dict[str, dict[str, str | int]] = {
+        "GRtitle_shortname_NBKid.txt": {
+            "sha256": str(row["sidedata_title_sha256"]),
+            "size_bytes": int(row["sidedata_title_size_bytes"] or 0),
+        },
+        "NBKid_shortname_genesymbol.txt": {
+            "sha256": str(row["sidedata_genes_sha256"]),
+            "size_bytes": int(row["sidedata_genes_size_bytes"] or 0),
+        },
+        "NBKid_shortname_OMIM.txt": {
+            "sha256": str(row["sidedata_omim_sha256"]),
+            "size_bytes": int(row["sidedata_omim_size_bytes"] or 0),
+        },
+    }
+
     return BundleDatabaseFacts(
         corpus_version=str(row["version"]),
         tarball_source_sha256=source_sha256,
         tarball_last_updated=str(row["file_list_etag"]),
         tarball_size_bytes=source_size,
+        listing_relpath=str(row["listing_relpath"]),
+        side_data=side_data,
         chapter_count=int(row["chapter_count"] or 0),
         passage_count=passage_count,
         embedding_count=embedding_count,
@@ -173,9 +210,9 @@ async def collect_database_facts(pool: asyncpg.Pool) -> BundleDatabaseFacts | No
 
 def validate_release_id(release_id: str) -> str:
     """Validate the release id component used in corpus release tags."""
-    if not RELEASE_ID_RE.fullmatch(release_id):
-        raise ValueError("release_id must use YYYY-MM-DD-rN, for example 2026-05-12-r1")
-    return release_id
+    from genereview_link.corpus.source_identity import validate_release_id as validate
+
+    return validate(release_id)
 
 
 def asset_name_for_release(

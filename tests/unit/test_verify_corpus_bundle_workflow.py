@@ -14,6 +14,7 @@ def test_verifier_uses_exact_assets_and_rebuilds_schema_before_restore() -> None
     assert isinstance(workflow, dict)
     verify = workflow["jobs"]["verify"]
     assert isinstance(verify, dict)
+    assert verify["timeout-minutes"] == 90
     service = verify["services"]["postgres"]
     assert "@sha256:" in service["image"]
     scripts = "\n".join(str(step.get("run", "")) for step in verify["steps"])
@@ -36,3 +37,6 @@ def test_verifier_uses_exact_assets_and_rebuilds_schema_before_restore() -> None
     assert "\\quit 1" in scripts
     assert "hnsw_present" in scripts
     assert "\\gset" in scripts
+    assert '-v EXPECTED_CHAPTER_COUNT="$EXPECTED_CHAPTER_COUNT"' in scripts
+    assert '-v EXPECTED_PASSAGE_COUNT="$EXPECTED_PASSAGE_COUNT"' in scripts
+    assert '-v EXPECTED_EMBEDDING_COUNT="$EXPECTED_EMBEDDING_COUNT"' in scripts

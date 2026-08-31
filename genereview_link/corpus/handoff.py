@@ -268,21 +268,20 @@ def verify_data_only_bundle(bundle: Path) -> dict[str, object]:
         and all(isinstance(postgres[name], str) and postgres[name] for name in postgres)
     ):
         raise HandoffError("manifest.json PostgreSQL identity is incomplete")
-    source = metadata.get("source")
-    if not (
-        isinstance(source, dict)
-        and set(source) == {"file_list_etag", "tarball_size_bytes"}
-        and isinstance(source.get("file_list_etag"), str)
-        and bool(source["file_list_etag"])
-        and type(source.get("tarball_size_bytes")) is int
-        and source["tarball_size_bytes"] > 0
-        and metadata.get("tarball_last_updated") == source["file_list_etag"]
-    ):
-        raise HandoffError("manifest.json upstream source identity is incomplete")
+    from genereview_link.corpus.source_identity import validate_source_identity
+
+    try:
+        validate_source_identity(
+            metadata.get("source"),
+            tarball_sha256=source_sha256,
+            last_updated=str(metadata.get("tarball_last_updated")),
+        )
+    except ValueError as error:
+        raise HandoffError("manifest.json upstream source identity is incomplete") from error
     validation = metadata.get("validation")
     if not isinstance(validation, dict) or validation.get("status") != "passed":
         raise HandoffError("manifest.json lacks a passing candidate validation")
-    from genereview_link.corpus.bundle_metadata import validate_release_id
+    from genereview_link.corpus.source_identity import validate_release_id
 
     try:
         validate_release_id(str(metadata["corpus_release_id"]))
@@ -345,7 +344,10 @@ def _assert_handoff_root(handoff_root: Path) -> None:
 def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> SealedHandoff:
     """Verify and atomically seal one exact data-only bundle without publishing."""
     source_manifest = verify_data_only_bundle(source)
-    files = _verify_source(source)
+    files = [
+        {"name": entry["name"], "sha256": entry["sha256"], "size": entry["size"], "mode": 0o400}
+        for entry in _verify_source(source)
+    ]
     wheel, wheel_digest, wheel_size, wheel_mode = _publisher_wheel(publisher_tool)
     if wheel_mode & 0o111:
         raise HandoffError("publisher wheel must not be executable")
@@ -372,8 +374,17 @@ def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> S
 
     staging = Path(tempfile.mkdtemp(prefix=".seal-", dir=handoff_root))
     try:
+        expected_source = {
+            entry["name"]: entry for entry in files if entry["name"] in _SOURCE_FILES
+        }
         for name in sorted(_SOURCE_FILES):
             _copy_regular(source / name, staging / name)
+            copied_digest, copied_size, _ = _sha256_facts(staging / name)
+            if (
+                copied_digest != expected_source[name]["sha256"]
+                or copied_size != expected_source[name]["size"]
+            ):
+                raise HandoffError(f"source {name} changed while sealing")
         _copy_regular(wheel, staging / _PUBLISHER_FILE)
         copied_digest, copied_size, _ = _sha256_facts(staging / _PUBLISHER_FILE)
         if (copied_digest, copied_size) != (wheel_digest, wheel_size):

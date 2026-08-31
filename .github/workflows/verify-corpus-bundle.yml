@@ -18,6 +18,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     services:
       postgres:
         image: pgvector/pgvector:0.8.2-pg18@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d
@@ -78,7 +79,10 @@ jobs:
           print(f"EXPECTED_EMBEDDING_COUNT={manifest['embedding']['count']}")
           PY
           )"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -v EXPECTED_CHAPTER_COUNT="$EXPECTED_CHAPTER_COUNT" \
+            -v EXPECTED_PASSAGE_COUNT="$EXPECTED_PASSAGE_COUNT" \
+            -v EXPECTED_EMBEDDING_COUNT="$EXPECTED_EMBEDDING_COUNT" <<'SQL'
           select count(*) = :'EXPECTED_CHAPTER_COUNT'::bigint as chapter_count from genereview.genereview_chapters \gset
           \if :chapter_count
           \else

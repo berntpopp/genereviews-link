@@ -6,7 +6,9 @@ Stage 7 (embeddings) is in retrieval/embeddings.py + ingest/orchestrator.py.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +21,7 @@ from genereview_link.corpus.nxml import extract_primary_gene_symbols
 from genereview_link.corpus.parallel import copy_chapters, copy_passages, parse_pipeline
 from genereview_link.corpus.records import ChapterRecord, PassageRecord
 from genereview_link.corpus.sidedata import load_sidedata
+from genereview_link.corpus.source_identity import SIDEDATA_FILES, validate_source_identity
 from genereview_link.db.identifiers import quote_pg_identifier
 from genereview_link.db.migrate import apply_data_migrations
 from genereview_link.download_guard import (
@@ -56,9 +59,26 @@ async def prepare_staging(pool: asyncpg.Pool) -> None:
 
 
 async def record_corpus_version_start(
-    pool: asyncpg.Pool, *, listing: ArchiveListing, tarball_sha256: str, size: int
+    pool: asyncpg.Pool,
+    *,
+    listing: ArchiveListing,
+    tarball_sha256: str,
+    size: int,
+    side_data: Mapping[str, Mapping[str, str | int]],
 ) -> str:
     """Insert a new corpus_version row; return the chosen version string."""
+    source = validate_source_identity(
+        {
+            "listing_relpath": listing.relpath,
+            "last_updated": listing.last_updated,
+            "tarball": {"sha256": tarball_sha256, "size_bytes": size},
+            "side_data": side_data,
+        },
+        tarball_sha256=tarball_sha256,
+        last_updated=listing.last_updated,
+    )
+    exact_side_data = source["side_data"]
+    assert isinstance(exact_side_data, dict)
     base = listing.last_updated.split(" ")[0]  # "2026-05-10"
     async with pool.acquire() as conn:
         # pick next free -rN suffix for same-day re-ingest
@@ -77,14 +97,26 @@ async def record_corpus_version_start(
         await conn.execute(
             """
             insert into public.genereview_corpus_version
-                (version, file_list_etag, tarball_sha256, tarball_size_bytes,
+                (version, listing_relpath, file_list_etag,
+                 tarball_sha256, tarball_size_bytes,
+                 sidedata_title_sha256, sidedata_title_size_bytes,
+                 sidedata_genes_sha256, sidedata_genes_size_bytes,
+                 sidedata_omim_sha256, sidedata_omim_size_bytes,
                  ingest_started_at, ingest_status, is_active)
-            values ($1, $2, $3, $4, $5, 'in_progress', false)
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                    'in_progress', false)
             """,
             version,
+            source["listing_relpath"],
             listing.last_updated,
             tarball_sha256,
             size,
+            exact_side_data[SIDEDATA_FILES[0]]["sha256"],
+            exact_side_data[SIDEDATA_FILES[0]]["size_bytes"],
+            exact_side_data[SIDEDATA_FILES[1]]["sha256"],
+            exact_side_data[SIDEDATA_FILES[1]]["size_bytes"],
+            exact_side_data[SIDEDATA_FILES[2]]["sha256"],
+            exact_side_data[SIDEDATA_FILES[2]]["size_bytes"],
             datetime.now(UTC),
         )
     return version
@@ -189,7 +221,7 @@ async def run_full_ingest(
         # sidedata: download the three files alongside
         sidedata_dir = td_path / "sidedata"
         sidedata_dir.mkdir()
-        await _download_sidedata(sidedata_dir)
+        side_data_identity = await _download_sidedata(sidedata_dir)
         sidedata = load_sidedata(sidedata_dir)
 
         await prepare_staging(pool)
@@ -198,6 +230,7 @@ async def run_full_ingest(
             listing=listing,
             tarball_sha256=sha,
             size=tarball.stat().st_size,
+            side_data=side_data_identity,
         )
 
         chapter_count = 0
@@ -262,22 +295,18 @@ async def _flush(
         await copy_passages(conn, passages, corpus_version=version)
 
 
-async def _download_sidedata(target: Path) -> None:
+async def _download_sidedata(target: Path) -> dict[str, dict[str, str | int]]:
     import httpx
 
     base = "https://ftp.ncbi.nlm.nih.gov/pub/GeneReviews"
-    files = (
-        "GRtitle_shortname_NBKid.txt",
-        "NBKid_shortname_genesymbol.txt",
-        "NBKid_shortname_OMIM.txt",
-    )
+    identity: dict[str, dict[str, str | int]] = {}
     hosts = build_host_allowlist(base)
     async with httpx.AsyncClient(
         timeout=STREAM_TIMEOUT,
         follow_redirects=False,
         event_hooks={"request": [make_url_guard(hosts)]},
     ) as client:
-        for name in files:
+        for name in SIDEDATA_FILES:
             body = await read_capped(
                 client,
                 f"{base}/{name}",
@@ -285,3 +314,8 @@ async def _download_sidedata(target: Path) -> None:
                 deadline_seconds=SIDEDATA_DOWNLOAD_DEADLINE_SECONDS,
             )
             (target / name).write_bytes(body)
+            identity[name] = {
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "size_bytes": len(body),
+            }
+    return identity

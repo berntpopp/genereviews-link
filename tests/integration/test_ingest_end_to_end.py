@@ -64,6 +64,11 @@ async def test_full_ingest_against_mini_tarball(pool: asyncpg.Pool) -> None:
         listing=listing,
         tarball_sha256="deadbeef" * 8,
         size=FIXTURE_TARBALL.stat().st_size,
+        side_data={
+            "GRtitle_shortname_NBKid.txt": {"sha256": "a" * 64, "size_bytes": 1},
+            "NBKid_shortname_genesymbol.txt": {"sha256": "b" * 64, "size_bytes": 1},
+            "NBKid_shortname_OMIM.txt": {"sha256": "c" * 64, "size_bytes": 1},
+        },
     )
 
     sidedata = load_sidedata(FIXTURE_SIDEDATA)

@@ -2,6 +2,17 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
+## [5.1.6] - 2026-08-31
+
+- Bound every corpus bundle to the exact upstream listing path, archive digest and size, and all
+  three GeneReviews side-data digests and sizes recorded during ingest.
+- Closed handoff copy races and made the sealed file-mode manifest match the immutable object.
+- Hardened the rights-gated publisher around exact numeric GitHub release IDs, draft-inclusive
+  inventory, exact tag/source ownership, bounded asset verification, and immutable promotion.
+- Restored sealed-object permissions after artifact transfer and removed unsealed publisher
+  dependencies from the credentialed job. Corpus publication remains blocked without affirmative
+  dated redistribution evidence.
+
 ## [5.1.5] - 2026-08-31
 
 - Preserved the current NCBI GeneReviews corpus when a malformed trailing `colspan`

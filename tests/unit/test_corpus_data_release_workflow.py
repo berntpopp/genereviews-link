@@ -19,6 +19,7 @@ def test_data_release_build_is_data_only_and_unprivileged() -> None:
     workflow = _workflow()
     build = workflow["jobs"]["build"]
     assert isinstance(build, dict)
+    assert build["timeout-minutes"] == 90
     assert build["permissions"] == {"contents": "read"}
     service = build["services"]["postgres"]
     assert "@sha256:" in service["image"]
@@ -40,11 +41,13 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     workflow = _workflow()
     publish = workflow["jobs"]["publish"]
     assert isinstance(publish, dict)
+    assert publish["timeout-minutes"] == 90
     assert publish["permissions"] == {
         "contents": "write",
         "id-token": "write",
         "attestations": "write",
     }
+    assert "github.ref == 'refs/heads/main'" in str(publish["if"])
     steps = publish["steps"]
     assert not any(str(step.get("uses", "")).startswith("actions/checkout@") for step in steps)
     scripts = "\n".join(str(step.get("run", "")) for step in steps)
@@ -54,19 +57,22 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     assert "gh attestation verify" in scripts
     assert "HTTP 404" in scripts
     assert "gh release delete" not in scripts
-    assert "draft_publish_existing" in scripts
     assert "published_noop" in scripts
-    assert "collision" in scripts
+    assert 'test "$match_count" -le 1' in scripts
     assert 'find "$RUNNER_TEMP/sealed/publisher-tool"' not in scripts
     assert "uvx --from" not in scripts
     assert "--no-index" in scripts
     assert "--no-deps" in scripts
     assert "publisher-tool.whl" in scripts
-    assert "publisher-dependencies" in scripts
+    assert "publisher-dependencies" not in scripts
+    assert "pip download" not in scripts
+    assert 'chmod 0700 "$handoff_root"' in scripts
+    assert 'chmod 0500 "$handoff_object"' in scripts
+    assert 'chmod 0400 "$handoff_object/$name"' in scripts
     build = workflow["jobs"]["build"]
     assert isinstance(build, dict)
     build_scripts = "\n".join(str(step.get("run", "")) for step in build["steps"])
-    assert "pip download --require-hashes" in build_scripts
+    assert "pip download" not in build_scripts
     assert "PUBLISHER_ENV" in scripts
 
 
@@ -79,14 +85,21 @@ def test_publisher_uses_protected_secret_not_repository_variable() -> None:
     assert "vars.GENEREVIEWS_RIGHTS_RECORD_JSON" not in str(publish)
 
 
-def test_each_promotion_path_reverifies_remote_release_before_unseal() -> None:
+def test_each_promotion_path_uses_exact_release_and_tag_identities() -> None:
     steps = _workflow()["jobs"]["publish"]["steps"]
     gate = next(
         step for step in steps if step.get("name") == "Four-state immutable publication gate"
     )
     script = gate["run"]
-    assert script.count('gh release edit "$tag" --draft=false') == 2
-    assert script.count("verify_existing") >= 3
-    assert "draft_publish_existing) verify_existing; gh release edit" in script
-    assert "create) gh release create" in script
-    assert "create) gh release create" in script and "&& verify_existing &&" in script
+    assert "releases/tags/" not in script
+    assert "gh release create" not in script
+    assert "gh release edit" not in script
+    assert "releases?per_page=100&page=$page" in script
+    assert "repos/$GH_REPO/releases/$release_id" in script
+    assert '--method PATCH "repos/$GH_REPO/releases/$release_id"' in script
+    assert "uploads.github.com/repos/$GH_REPO/releases/$release_id/assets" in script
+    assert "repos/$GH_REPO/git/ref/tags/$tag" in script
+    assert "refs/tags/$tag" in script
+    assert ".draft == true and .immutable == false and .published_at == null" in script
+    assert '.draft == false and .immutable == true and (.published_at | type == "string")' in script
+    assert script.count("verify_remote") >= 3

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -46,9 +49,16 @@ async def test_collect_database_facts_binds_complete_release_provenance() -> Non
     pool.fetchrow = AsyncMock(
         return_value={
             "version": "2026-08-31-r3",
+            "listing_relpath": "ca/84/gene_NBK1116.tar.gz",
             "file_list_etag": "2026-08-31 02:41:04",
             "tarball_sha256": "a" * 64,
             "tarball_size_bytes": 636_755_427,
+            "sidedata_title_sha256": "b" * 64,
+            "sidedata_title_size_bytes": 53_028,
+            "sidedata_genes_sha256": "c" * 64,
+            "sidedata_genes_size_bytes": 53_750,
+            "sidedata_omim_sha256": "d" * 64,
+            "sidedata_omim_size_bytes": 96_486,
             "chapter_count": 890,
         }
     )
@@ -67,8 +77,17 @@ async def test_collect_database_facts_binds_complete_release_provenance() -> Non
     assert facts.tarball_source_sha256 == "a" * 64
     assert facts.tarball_last_updated == "2026-08-31 02:41:04"
     assert facts.source == {
-        "file_list_etag": "2026-08-31 02:41:04",
-        "tarball_size_bytes": 636_755_427,
+        "listing_relpath": "ca/84/gene_NBK1116.tar.gz",
+        "last_updated": "2026-08-31 02:41:04",
+        "tarball": {"sha256": "a" * 64, "size_bytes": 636_755_427},
+        "side_data": {
+            "GRtitle_shortname_NBKid.txt": {"sha256": "b" * 64, "size_bytes": 53_028},
+            "NBKid_shortname_genesymbol.txt": {
+                "sha256": "c" * 64,
+                "size_bytes": 53_750,
+            },
+            "NBKid_shortname_OMIM.txt": {"sha256": "d" * 64, "size_bytes": 96_486},
+        },
     }
     assert facts.schema_migrations == {
         "control": ["0001_base"],
@@ -84,9 +103,16 @@ async def test_collect_database_facts_rejects_unknown_migration_namespace() -> N
     pool.fetchrow = AsyncMock(
         return_value={
             "version": "2026-08-31-r3",
+            "listing_relpath": "ca/84/gene_NBK1116.tar.gz",
             "file_list_etag": "etag",
             "tarball_sha256": "a" * 64,
             "tarball_size_bytes": 1,
+            "sidedata_title_sha256": "b" * 64,
+            "sidedata_title_size_bytes": 1,
+            "sidedata_genes_sha256": "c" * 64,
+            "sidedata_genes_size_bytes": 1,
+            "sidedata_omim_sha256": "d" * 64,
+            "sidedata_omim_size_bytes": 1,
             "chapter_count": 890,
         }
     )
@@ -98,10 +124,44 @@ async def test_collect_database_facts_rejects_unknown_migration_namespace() -> N
 
 
 def test_resolve_app_git_sha_accepts_exact_ci_revision() -> None:
-    assert resolve_app_git_sha(env={"GITHUB_SHA": "b" * 40}) == "b" * 40
+    assert resolve_app_git_sha(env={"GITHUB_ACTIONS": "true", "GITHUB_SHA": "b" * 40}) == "b" * 40
 
 
 @pytest.mark.parametrize("revision", ["main", "B" * 40])
 def test_resolve_app_git_sha_rejects_invalid_ci_revision(revision: str) -> None:
     with pytest.raises(ValueError, match="Git revision"):
-        resolve_app_git_sha(env={"GITHUB_SHA": revision})
+        resolve_app_git_sha(env={"GITHUB_ACTIONS": "true", "GITHUB_SHA": revision})
+
+
+def test_resolve_app_git_sha_ignores_a_stray_non_ci_environment_revision(tmp_path: Path) -> None:
+    git = shutil.which("git")
+    assert git is not None
+    subprocess.run([git, "init", "--quiet", str(tmp_path)], check=True)  # noqa: S603
+    (tmp_path / "source.txt").write_text("reviewed\n", encoding="utf-8")
+    subprocess.run(  # noqa: S603
+        [git, "-C", str(tmp_path), "add", "source.txt"], check=True
+    )
+    subprocess.run(  # noqa: S603
+        [
+            git,
+            "-C",
+            str(tmp_path),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "test",
+        ],
+        check=True,
+    )
+    expected = subprocess.run(  # noqa: S603
+        [git, "-C", str(tmp_path), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    assert resolve_app_git_sha(env={"GITHUB_SHA": "b" * 40}, repo_root=tmp_path) == expected
