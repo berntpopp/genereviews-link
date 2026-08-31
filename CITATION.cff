@@ -13,7 +13,7 @@ authors:
   given-names: Bernt
   email: bernt.popp@charite.de
   affiliation: Charité – Universitätsmedizin Berlin
-version: 5.1.2
+version: 5.1.3
 license: MIT
 repository-code: https://github.com/berntpopp/genereviews-link
 url: https://genefoundry.org
