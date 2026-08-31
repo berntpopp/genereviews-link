@@ -278,7 +278,7 @@ async def ensure_restore_role(pool: Any, role: str, restore_url: str) -> None:
 
     Reviewed migrations run as the database owner. The untrusted artifact is loaded by a
     role that is explicitly ``NOSUPERUSER`` / ``NOCREATEDB`` / ``NOCREATEROLE`` and holds
-    write rights on the exact corpus tables only -- so even an entry that somehow slipped
+    insert rights on the exact corpus tables only -- so even an entry that somehow slipped
     past the archive policy would have no rights to create objects, reach other databases,
     or execute server-side code.
 
@@ -296,6 +296,12 @@ async def ensure_restore_role(pool: Any, role: str, restore_url: str) -> None:
                 role,
             )
             await connection.execute(statement)
+        statement = await connection.fetchval(
+            "select format('alter role %I login nosuperuser nocreatedb nocreaterole "
+            "noreplication nobypassrls', $1::text)",
+            role,
+        )
+        await connection.execute(statement)
         if password:
             statement = await connection.fetchval(
                 "select format('alter role %I with password %L', $1::text, $2::text)",
@@ -311,7 +317,14 @@ async def ensure_restore_role(pool: Any, role: str, restore_url: str) -> None:
         for table in sorted(CORPUS_TABLES):
             schema, name = table.split(".", 1)
             statement = await connection.fetchval(
-                "select format('grant select, insert, update, delete on %I.%I to %I', $1::text, $2::text, $3::text)",
+                "select format('revoke all on %I.%I from %I', $1::text, $2::text, $3::text)",
+                schema,
+                name,
+                role,
+            )
+            await connection.execute(statement)
+            statement = await connection.fetchval(
+                "select format('grant insert on %I.%I to %I', $1::text, $2::text, $3::text)",
                 schema,
                 name,
                 role,

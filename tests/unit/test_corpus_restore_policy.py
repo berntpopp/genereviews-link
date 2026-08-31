@@ -14,12 +14,14 @@ import io
 import json
 import tarfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from genereview_link.db.restore import (
     ArchivePolicyError,
     assert_data_only_archive,
+    ensure_restore_role,
     extract_bundle,
     read_archive_entries,
 )
@@ -76,6 +78,47 @@ def test_an_unparseable_entry_is_rejected() -> None:
 def test_an_empty_archive_is_rejected() -> None:
     with pytest.raises(ArchivePolicyError, match="no data entries"):
         assert_data_only_archive([])
+
+
+@pytest.mark.asyncio
+async def test_restore_role_is_reduced_to_insert_only_table_rights() -> None:
+    formatted: list[str] = []
+
+    class Connection:
+        async def fetchval(self, query: str, *args: object) -> object:
+            if query.startswith("select 1 from pg_roles"):
+                return 1
+            formatted.append(query)
+            return f"statement-{len(formatted)}"
+
+        async def execute(self, statement: str) -> None:
+            assert statement.startswith("statement-")
+
+    class Acquire:
+        async def __aenter__(self) -> Connection:
+            return Connection()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    class Pool:
+        def acquire(self) -> Any:
+            return Acquire()
+
+    await ensure_restore_role(
+        Pool(),
+        "genereview_restore",
+        "postgresql://genereview_restore:secret@postgres/genereview",
+    )
+
+    scripts = "\n".join(formatted)
+    assert (
+        "alter role %I login nosuperuser nocreatedb nocreaterole noreplication nobypassrls"
+        in scripts
+    )
+    assert "revoke all on %I.%I from %I" in scripts
+    assert "grant insert on %I.%I to %I" in scripts
+    assert "grant select, insert, update, delete" not in scripts
 
 
 def test_plain_sql_is_never_opened_as_an_archive(tmp_path: Path) -> None:
