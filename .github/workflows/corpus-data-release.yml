@@ -50,18 +50,26 @@ jobs:
           set -euo pipefail
           uv sync --group dev --frozen
           uv run genereview-link db migrate
-      - name: Download exact three-asset source into a fresh directory
+      - name: Bounded download and attest exact three-asset source into a fresh directory
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           umask 077
           source_dir="$(mktemp -d "$RUNNER_TEMP/source.XXXXXX")"
-          gh release download "${{ inputs.source_tag }}" --repo "$GITHUB_REPOSITORY" \
-            --pattern corpus.dump --pattern manifest.json --pattern SHA256SUMS --dir "$source_dir"
-          test "$(find "$source_dir" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
-          (cd "$source_dir" && sha256sum --check SHA256SUMS)
-          uv run python -c 'from pathlib import Path; from genereview_link.corpus.handoff import verify_data_only_bundle; verify_data_only_bundle(Path("'"$source_dir"'"))'
+          uv run python -m genereview_link.corpus.release_assets \
+            --repo "$GITHUB_REPOSITORY" --tag "${{ inputs.source_tag }}" --dest "$source_dir"
+          uv run python - "$source_dir/corpus.dump" <<'PY'
+          from pathlib import Path
+          from genereview_link.db.restore import assert_data_only_archive, read_archive_entries
+          assert_data_only_archive(read_archive_entries(Path(__import__('sys').argv[1])))
+          PY
+          uv run python - "$source_dir" <<'PY'
+          from pathlib import Path
+          from genereview_link.corpus.handoff import verify_data_only_bundle
+          verify_data_only_bundle(Path(__import__('sys').argv[1]))
+          PY
+          gh attestation verify "$source_dir/corpus.dump" --repo "$GITHUB_REPOSITORY"
           printf 'SOURCE_DIR=%s\n' "$source_dir" >> "$GITHUB_ENV"
       - name: Restore verified data only and prove the runtime contract
         env:
@@ -69,6 +77,7 @@ jobs:
         run: |
           set -euo pipefail
           pg_restore --data-only --single-transaction --exit-on-error \
+            --no-owner --no-privileges \
             -d postgresql://genereview:genereview@127.0.0.1:5432/genereview \
             "$SOURCE_DIR/corpus.dump"
           psql -h 127.0.0.1 -U genereview -d genereview -v ON_ERROR_STOP=1 -c \
@@ -79,6 +88,7 @@ jobs:
           root="$RUNNER_TEMP/handoffs"
           object_id="$(uv run genereview-link bundle seal-handoff --source "$SOURCE_DIR" --handoff-root "$root")"
           printf '%s\n' "$object_id" > "$RUNNER_TEMP/object-id"
+          uv build --wheel --out-dir "$RUNNER_TEMP/publisher-tool"
       - name: Upload sealed handoff only
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -86,6 +96,7 @@ jobs:
           path: |
             ${{ runner.temp }}/handoffs
             ${{ runner.temp }}/object-id
+            ${{ runner.temp }}/publisher-tool
           if-no-files-found: error
           retention-days: 3
 
@@ -104,6 +115,9 @@ jobs:
       OBJECT_ID: ${{ inputs.object_id }}
       GENEREVIEWS_RIGHTS_RECORD_JSON: ${{ vars.GENEREVIEWS_RIGHTS_RECORD_JSON }}
     steps:
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: corpus-sealed-${{ github.run_id }}-${{ github.run_attempt }}
@@ -112,58 +126,59 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$GENEREVIEWS_RIGHTS_RECORD_JSON"
+          test "$(cat "$RUNNER_TEMP/sealed/object-id")" = "$OBJECT_ID"
           printf '%s' "$GENEREVIEWS_RIGHTS_RECORD_JSON" > "$RUNNER_TEMP/rights.json"
-          # publish-handoff is deliberately object-bound: a publisher has no checkout.
-          python3 - "$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID" "$RUNNER_TEMP/rights.json" "$OBJECT_ID" <<'PY'
-          import hashlib, json, stat, sys
-          from datetime import datetime
-          root, rights, object_id = map(__import__('pathlib').Path, sys.argv[1:])
-          required = {'object_id','decision','authority','decision_time','terms_version','permitted_asset_use','attribution','evidence_uri'}
-          record = json.loads(rights.read_bytes())
-          if set(record) != required or record.get('object_id') != object_id or record.get('decision') != 'affirmative' or not record.get('decision_time','').endswith('Z'):
-              raise SystemExit('rights record is not complete, affirmative, dated, and object-bound')
-          try:
-              datetime.fromisoformat(record['decision_time'][:-1] + '+00:00')
-          except ValueError:
-              raise SystemExit('rights record timestamp is not ISO-8601 UTC')
-          manifest = root / 'seal-manifest.json'
-          if hashlib.sha256(manifest.read_bytes()).hexdigest() != object_id:
-              raise SystemExit('sealed object does not match requested ID')
-          if {p.name for p in root.iterdir()} != {'corpus.dump','manifest.json','SHA256SUMS','seal-manifest.json'} or any(p.is_symlink() or not stat.S_ISREG(p.lstat().st_mode) for p in root.iterdir()):
-              raise SystemExit('sealed object has unsafe or unexpected assets')
-          PY
+          tool="$(find "$RUNNER_TEMP/sealed/publisher-tool" -type f -name '*.whl' -print -quit)"
+          test -n "$tool"
+          # This central command calls verify_handoff, validates every file's
+          # no-follow digest/size/mode/source identity, then verifies the rights tuple.
+          uvx --from "$tool" genereview-link bundle publish-handoff \
+            --handoff-root "$RUNNER_TEMP/sealed/handoffs" \
+            --object-id "$OBJECT_ID" --rights-record "$RUNNER_TEMP/rights.json"
+          printf 'PUBLISHER_TOOL=%s\n' "$tool" >> "$GITHUB_ENV"
       - name: Attest the exact sealed object before publication
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v3.0.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: ${{ runner.temp }}/sealed/handoffs/${{ inputs.object_id }}/seal-manifest.json
+          subject-path: ${{ runner.temp }}/sealed/handoffs/${{ inputs.object_id }}/corpus.dump
       - name: Four-state immutable publication gate
         run: |
           set -euo pipefail
           handoff="$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID"
+          tool="$PUBLISHER_TOOL"
           release_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["corpus_release_id"])' "$handoff/manifest.json")"
           tag="corpus-data-$release_id"
           verify_existing() {
             existing="$(mktemp -d "$RUNNER_TEMP/existing.XXXXXX")"
-            gh release download "$tag" --dir "$existing"
-            test "$(find "$existing" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 3
+            uv run --with "$tool" python -m genereview_link.corpus.release_assets \
+              --repo "$GH_REPO" --tag "$tag" --dest "$existing"
+            uvx --from "$tool" genereview-link bundle publish-handoff \
+              --handoff-root "$RUNNER_TEMP/sealed/handoffs" \
+              --object-id "$OBJECT_ID" --rights-record "$RUNNER_TEMP/rights.json"
+            gh attestation verify "$existing/corpus.dump" --repo "$GH_REPO"
             for asset in corpus.dump manifest.json SHA256SUMS; do
               test -f "$existing/$asset" && test ! -L "$existing/$asset"
               cmp -- "$handoff/$asset" "$existing/$asset"
             done
           }
           state=collision
-          if existing="$(gh release view "$tag" --json isDraft 2>/dev/null)"; then
-            if test "$(jq -r .isDraft <<<"$existing")" = false; then
+          release_json="$(mktemp "$RUNNER_TEMP/release.XXXXXX")"
+          release_error="$(mktemp "$RUNNER_TEMP/release-error.XXXXXX")"
+          if gh api "repos/$GH_REPO/releases/tags/$tag" >"$release_json" 2>"$release_error"; then
+            if test "$(jq -r .draft <"$release_json")" = false; then
               state=published_noop
             else
               state=draft_publish_existing
             fi
-          else
+          elif grep -Fq 'HTTP 404' "$release_error"; then
             state=create
+          else
+            cat "$release_error" >&2
+            echo "release lookup failed; refusing to create" >&2
+            exit 1
           fi
           case "$state" in
             published_noop) verify_existing; echo "published_noop: exact immutable release verified" ;;
             draft_publish_existing) verify_existing; gh release edit "$tag" --draft=false ;;
-            create) gh release create "$tag" --draft --title "$tag" "$handoff/corpus.dump" "$handoff/manifest.json" "$handoff/SHA256SUMS" && gh release edit "$tag" --draft=false ;;
+            create) gh release create "$tag" --draft --title "$tag" "$handoff/corpus.dump" "$handoff/manifest.json" "$handoff/SHA256SUMS" && gh attestation verify "$handoff/corpus.dump" --repo "$GH_REPO" && gh release edit "$tag" --draft=false ;;
             collision) echo "collision: refusing unknown release state" >&2; exit 1 ;;
           esac

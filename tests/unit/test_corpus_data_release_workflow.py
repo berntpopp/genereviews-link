@@ -25,12 +25,15 @@ def test_data_release_build_is_data_only_and_unprivileged() -> None:
     steps = build["steps"]
     scripts = "\n".join(str(step.get("run", "")) for step in steps)
     assert "--data-only" in scripts
+    assert "--no-owner" in scripts
+    assert "--no-privileges" in scripts
     assert "--single-transaction" in scripts
     assert "--exit-on-error" in scripts
-    assert "pg_restore --no-owner" not in scripts
+    assert "read_archive_entries" in scripts
+    assert "assert_data_only_archive" in scripts
     assert "pg_restore" in scripts and "|| true" not in scripts
-    assert "curl -fL" not in scripts
-    assert "SHA256SUMS" in scripts and "manifest.json" in scripts
+    assert "release_assets" in scripts
+    assert "gh release download" not in scripts
 
 
 def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> None:
@@ -47,6 +50,9 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     scripts = "\n".join(str(step.get("run", "")) for step in steps)
     assert "GENEREVIEWS_RIGHTS_RECORD_JSON" in scripts
     assert "publish-handoff" in scripts
+    assert "verify_handoff" in scripts
+    assert "gh attestation verify" in scripts
+    assert "HTTP 404" in scripts
     assert "gh release delete" not in scripts
     assert "draft_publish_existing" in scripts
     assert "published_noop" in scripts

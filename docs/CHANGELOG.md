@@ -8,6 +8,17 @@ as phase tags where a semver release has not yet been cut.
 
 ---
 
+## Unreleased
+
+### Security
+
+- Data-only corpus release workflows now use bounded exact-asset retrieval, release attestation,
+  archive-TOC allowlisting, non-owner transactional restores, and exact restored-count/search checks.
+  Handoff revalidation is no-follow, owner/mode checked, and binds the affirmative rights record to
+  the sealed source, artifact, and release identity. No corpus publication is enabled by this change.
+
+---
+
 ## 5.0.1 — Error-message sanitation (upstream error-path text leak)
 
 Security (defense in depth): the MCP error path no longer echoes upstream

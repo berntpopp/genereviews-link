@@ -22,6 +22,7 @@ _SOURCE_FILES = frozenset({"corpus.dump", "manifest.json", "SHA256SUMS"})
 _SEALED_FILES = _SOURCE_FILES | {"seal-manifest.json"}
 _RIGHTS_FIELDS = frozenset(
     {
+        "artifact_sha256",
         "object_id",
         "decision",
         "authority",
@@ -30,6 +31,8 @@ _RIGHTS_FIELDS = frozenset(
         "permitted_asset_use",
         "attribution",
         "evidence_uri",
+        "source_sha256",
+        "corpus_release_id",
     }
 )
 
@@ -57,25 +60,57 @@ def _regular_file(path: Path) -> os.stat_result:
     return info
 
 
+def _open_regular(path: Path) -> tuple[int, os.stat_result]:
+    """Open one regular file without a pathname-following race."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as error:
+        raise HandoffError(f"unsafe or missing required file: {path.name}") from error
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
+        os.close(fd)
+        raise HandoffError(f"{path.name} must be a regular file")
+    return fd, info
+
+
 def _read_capped(path: Path, *, limit: int = MAX_METADATA_BYTES) -> bytes:
-    _regular_file(path)
-    if path.stat().st_size > limit:
-        raise HandoffError(f"{path.name} exceeds {limit} byte limit")
-    with path.open("rb") as file:
-        value = file.read(limit + 1)
+    fd, info = _open_regular(path)
+    try:
+        if info.st_size > limit:
+            raise HandoffError(f"{path.name} exceeds {limit} byte limit")
+        chunks: list[bytes] = []
+        remaining = limit + 1
+        while remaining:
+            chunk = os.read(fd, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    finally:
+        os.close(fd)
+    value = b"".join(chunks)
     if len(value) > limit:
         raise HandoffError(f"{path.name} exceeds {limit} byte limit")
     return value
 
 
 def _sha256(path: Path) -> tuple[str, int]:
+    digest, size, _ = _sha256_facts(path)
+    return digest, size
+
+
+def _sha256_facts(path: Path) -> tuple[str, int, int]:
+    """Digest one no-follow regular file and return its current file mode too."""
     digest = hashlib.sha256()
     size = 0
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(CHUNK_BYTES), b""):
+    fd, info = _open_regular(path)
+    try:
+        while chunk := os.read(fd, CHUNK_BYTES):
             digest.update(chunk)
             size += len(chunk)
-    return digest.hexdigest(), size
+    finally:
+        os.close(fd)
+    return digest.hexdigest(), size, stat.S_IMODE(info.st_mode)
 
 
 def _canonical_json(value: object) -> bytes:
@@ -127,13 +162,10 @@ def _verify_source(source: Path) -> list[dict[str, object]]:
     files: list[dict[str, object]] = []
     for name in sorted(_SOURCE_FILES):
         path = source / name
-        info = _regular_file(path)
-        digest, size = _sha256(path)
+        digest, size, mode = _sha256_facts(path)
         if name in checksums and checksums[name] != digest:
             raise HandoffError(f"checksum mismatch for {name}")
-        files.append(
-            {"name": name, "sha256": digest, "size": size, "mode": stat.S_IMODE(info.st_mode)}
-        )
+        files.append({"name": name, "sha256": digest, "size": size, "mode": mode})
     return files
 
 
@@ -160,6 +192,43 @@ def verify_data_only_bundle(bundle: Path) -> dict[str, object]:
         or metadata["bundle_format"] != "postgresql-custom-data-only"
     ):
         raise HandoffError("manifest.json is not a v3 data-only bundle")
+    source_sha256 = metadata.get("tarball_source_sha256")
+    if not (
+        isinstance(source_sha256, str)
+        and len(source_sha256) == 64
+        and all(char in "0123456789abcdef" for char in source_sha256)
+    ):
+        raise HandoffError("manifest.json tarball_source_sha256 must be a lowercase SHA-256")
+    embedding = metadata.get("embedding")
+    if not isinstance(embedding, dict) or set(embedding) != {
+        "model_name",
+        "dimension",
+        "distance_metric",
+        "active_table",
+        "count",
+        "expected_count",
+    }:
+        raise HandoffError("manifest.json embedding identity is incomplete")
+    if any(
+        type(embedding[name]) is not expected_type
+        for name, expected_type in {
+            "model_name": str,
+            "dimension": int,
+            "distance_metric": str,
+            "active_table": str,
+            "count": int,
+            "expected_count": int,
+        }.items()
+    ):
+        raise HandoffError("manifest.json embedding identity has invalid types")
+    if (
+        embedding["count"] != metadata["passage_count"]
+        or embedding["expected_count"] != metadata["passage_count"]
+    ):
+        raise HandoffError("manifest.json embedding count does not match passage_count")
+    validation = metadata.get("validation")
+    if not isinstance(validation, dict) or validation.get("status") != "passed":
+        raise HandoffError("manifest.json lacks a passing candidate validation")
     from genereview_link.corpus.bundle_metadata import validate_release_id
 
     try:
@@ -178,10 +247,14 @@ def verify_data_only_bundle(bundle: Path) -> dict[str, object]:
 def _copy_regular(source: Path, destination: Path) -> None:
     source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
+        if not stat.S_ISREG(os.fstat(source_fd).st_mode):
+            raise HandoffError(f"{source.name} must be a regular file")
         destination_fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
         try:
             while chunk := os.read(source_fd, CHUNK_BYTES):
-                os.write(destination_fd, chunk)
+                view = memoryview(chunk)
+                while view:
+                    view = view[os.write(destination_fd, view) :]
             os.fsync(destination_fd)
         finally:
             os.close(destination_fd)
@@ -189,22 +262,34 @@ def _copy_regular(source: Path, destination: Path) -> None:
         os.close(source_fd)
 
 
+def _assert_handoff_root(handoff_root: Path) -> None:
+    try:
+        info = handoff_root.lstat()
+    except FileNotFoundError as error:
+        raise HandoffError("handoff root is missing") from error
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise HandoffError("handoff root must be a real directory")
+    if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+        raise HandoffError("handoff root must be owner-only mode 0700")
+
+
 def seal_handoff(source: Path, handoff_root: Path) -> SealedHandoff:
     """Verify and atomically seal one exact data-only bundle without publishing."""
+    source_manifest = verify_data_only_bundle(source)
     files = _verify_source(source)
-    source_manifest = _load_json(source / "manifest.json")
-    if not isinstance(source_manifest.get("corpus_release_id"), str):
-        raise HandoffError("manifest.json lacks corpus_release_id")
     seal = {
         "format": "genereviews-local-handoff-v1",
         "corpus_release_id": source_manifest["corpus_release_id"],
+        "source_sha256": source_manifest["tarball_source_sha256"],
+        "artifact_sha256": next(
+            entry["sha256"] for entry in files if entry["name"] == "corpus.dump"
+        ),
         "files": files,
     }
     seal_bytes = _canonical_json(seal)
     object_id = hashlib.sha256(seal_bytes).hexdigest()
     handoff_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if handoff_root.is_symlink() or not handoff_root.is_dir():
-        raise HandoffError("handoff root must be a real directory")
+    _assert_handoff_root(handoff_root)
     target = handoff_root / object_id
     if target.exists() or target.is_symlink():
         raise HandoffError(f"handoff object already exists: {object_id}")
@@ -239,9 +324,13 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
     """Reverify a sealed object before any privileged action is considered."""
     if len(object_id) != 64 or any(char not in "0123456789abcdef" for char in object_id):
         raise HandoffError("object_id must be a lowercase SHA-256")
+    _assert_handoff_root(handoff_root)
     target = handoff_root / object_id
     if not target.is_dir() or target.is_symlink():
         raise HandoffError("sealed handoff object is missing or unsafe")
+    target_info = target.lstat()
+    if stat.S_IMODE(target_info.st_mode) != 0o500:
+        raise HandoffError("sealed handoff object must be owner-read-only mode 0500")
     if {path.name for path in target.iterdir()} != _SEALED_FILES:
         raise HandoffError("sealed handoff object has unexpected files")
     manifest = target / "seal-manifest.json"
@@ -249,6 +338,13 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
     if hashlib.sha256(manifest_bytes).hexdigest() != object_id:
         raise HandoffError("sealed handoff object ID does not match its manifest")
     record = _load_json(manifest)
+    if (
+        record.get("format") != "genereviews-local-handoff-v1"
+        or not isinstance(record.get("corpus_release_id"), str)
+        or not isinstance(record.get("source_sha256"), str)
+        or not isinstance(record.get("artifact_sha256"), str)
+    ):
+        raise HandoffError("seal manifest lacks source/artifact identity")
     files = record.get("files")
     if (
         not isinstance(files, list)
@@ -258,13 +354,14 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
     expected = {entry["name"]: entry for entry in files if isinstance(entry, dict)}
     for name in _SOURCE_FILES:
         path = target / name
-        info = _regular_file(path)
-        if stat.S_IMODE(info.st_mode) & 0o022:
-            raise HandoffError(f"sealed {name} is writable")
-        digest, size = _sha256(path)
+        digest, size, mode = _sha256_facts(path)
+        if mode != 0o400:
+            raise HandoffError(f"sealed {name} must be owner-read-only mode 0400")
         entry = expected[name]
         if entry.get("sha256") != digest or entry.get("size") != size:
             raise HandoffError(f"sealed {name} does not match seal manifest")
+        if name == "corpus.dump" and record["artifact_sha256"] != digest:
+            raise HandoffError("sealed corpus.dump does not match source/artifact identity")
     checksums = _parse_sums(target / "SHA256SUMS")
     for name, digest in checksums.items():
         actual, _ = _sha256(target / name)
@@ -273,7 +370,9 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
     return SealedHandoff(object_id=object_id, path=target, manifest=manifest)
 
 
-def verify_rights_record(rights_path: Path, object_id: str) -> dict[str, object]:
+def verify_rights_record(
+    rights_path: Path, object_id: str, *, sealed: SealedHandoff | None = None
+) -> dict[str, object]:
     """Accept only a complete affirmative rights decision bound to ``object_id``."""
     record = _load_json(rights_path)
     if set(record) != _RIGHTS_FIELDS or not all(
@@ -293,11 +392,16 @@ def verify_rights_record(rights_path: Path, object_id: str) -> dict[str, object]
         raise HandoffError(
             "rights record decision_time must be an ISO-8601 UTC timestamp"
         ) from error
+    if sealed is not None:
+        seal = _load_json(sealed.manifest)
+        for name in ("source_sha256", "artifact_sha256", "corpus_release_id"):
+            if record[name] != seal[name]:
+                raise HandoffError(f"rights record is not bound to sealed {name}")
     return record
 
 
 def prepare_publish_handoff(handoff_root: Path, object_id: str, rights_path: Path) -> SealedHandoff:
     """Reverify an object and rights record; intentionally performs no publication."""
     sealed = verify_handoff(handoff_root, object_id)
-    verify_rights_record(rights_path, sealed.object_id)
+    verify_rights_record(rights_path, sealed.object_id, sealed=sealed)
     return sealed

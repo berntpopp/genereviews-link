@@ -17,12 +17,19 @@ def test_verifier_uses_exact_assets_and_rebuilds_schema_before_restore() -> None
     service = verify["services"]["postgres"]
     assert "@sha256:" in service["image"]
     scripts = "\n".join(str(step.get("run", "")) for step in verify["steps"])
-    assert "download_guard" in scripts
-    assert "SHA256SUMS" in scripts and "manifest.json" in scripts
-    assert ".sha256" not in scripts
+    assert "release_assets" in scripts
+    assert "gh release download" not in scripts
     assert "genereview-link db migrate" in scripts
     assert "--data-only" in scripts
+    assert "--no-owner" in scripts
+    assert "--no-privileges" in scripts
     assert "--single-transaction" in scripts
     assert "--exit-on-error" in scripts
+    assert "read_archive_entries" in scripts
+    assert "assert_data_only_archive" in scripts
+    assert "gh release download" not in scripts
     assert "pg_restore" in scripts and "|| true" not in scripts
     assert "genereview_embeddings_bge384_hnsw_cosine" in scripts
+    assert "chapter_count" in scripts
+    assert "passage_count" in scripts
+    assert "representative" in scripts
