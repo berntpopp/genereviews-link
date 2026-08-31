@@ -135,11 +135,14 @@ record.
 
 The local output is exactly `corpus.dump`, canonical `manifest.json`, and `SHA256SUMS`; it contains
 data only, never schema, migrations, application code, environment files, or credentials. Verify
-and seal it with `genereview-link bundle seal-handoff --source <directory> --handoff-root <root>`.
+and seal it with `genereview-link bundle seal-handoff --source <directory> --handoff-root <root> \
+--publisher-tool <directory-containing-exactly-one-wheel>`.
 `publish-handoff` only re-verifies a literal object ID and a complete affirmative, dated rights
 record bound to that object, its source SHA-256, corpus-dump SHA-256, and release ID; it deliberately
 has no release-service client. The handoff root is owner-only (`0700`), and sealed objects/files are
 checked with no-follow file descriptors, exact digest/size/mode manifests, and immutable object IDs.
+The sealed publisher wheel name and digest are part of that object identity; the privileged workflow
+installs it and its lockfile-derived dependency wheels with no index and no dependency resolution.
 A separately privileged automation may act only on that sealed handoff after the rights record exists.
 
 The privileged workflow downloads only the three named assets through byte- and deadline-bounded

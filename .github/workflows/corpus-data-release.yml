@@ -80,15 +80,23 @@ jobs:
             --no-owner --no-privileges \
             -d postgresql://genereview:genereview@127.0.0.1:5432/genereview \
             "$SOURCE_DIR/corpus.dump"
-          psql -h 127.0.0.1 -U genereview -d genereview -v ON_ERROR_STOP=1 -c \
-            "select indexname from pg_indexes where indexname = 'genereview_embeddings_bge384_hnsw_cosine'"
+          test "$(psql -h 127.0.0.1 -U genereview -d genereview -At -v ON_ERROR_STOP=1 -c \
+            "select count(*) from pg_indexes where schemaname = 'genereview' and indexname = 'genereview_embeddings_bge384_hnsw_cosine'")" = 1
       - name: Seal the locally verified handoff
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/handoffs"
-          object_id="$(uv run genereview-link bundle seal-handoff --source "$SOURCE_DIR" --handoff-root "$root")"
-          printf '%s\n' "$object_id" > "$RUNNER_TEMP/object-id"
+          rm -rf -- "$RUNNER_TEMP/publisher-tool"
+          mkdir -- "$RUNNER_TEMP/publisher-tool"
           uv build --wheel --out-dir "$RUNNER_TEMP/publisher-tool"
+          uv export --no-dev --no-emit-project --format requirements.txt \
+            --output-file "$RUNNER_TEMP/publisher-requirements.txt"
+          mkdir -- "$RUNNER_TEMP/publisher-dependencies"
+          python3 -m pip download --require-hashes --only-binary=:all: \
+            --dest "$RUNNER_TEMP/publisher-dependencies" \
+            --requirement "$RUNNER_TEMP/publisher-requirements.txt"
+          object_id="$(uv run genereview-link bundle seal-handoff --source "$SOURCE_DIR" --handoff-root "$root" --publisher-tool "$RUNNER_TEMP/publisher-tool")"
+          printf '%s\n' "$object_id" > "$RUNNER_TEMP/object-id"
       - name: Upload sealed handoff only
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -96,7 +104,7 @@ jobs:
           path: |
             ${{ runner.temp }}/handoffs
             ${{ runner.temp }}/object-id
-            ${{ runner.temp }}/publisher-tool
+            ${{ runner.temp }}/publisher-dependencies
           if-no-files-found: error
           retention-days: 3
 
@@ -128,14 +136,30 @@ jobs:
           test -n "$GENEREVIEWS_RIGHTS_RECORD_JSON"
           test "$(cat "$RUNNER_TEMP/sealed/object-id")" = "$OBJECT_ID"
           printf '%s' "$GENEREVIEWS_RIGHTS_RECORD_JSON" > "$RUNNER_TEMP/rights.json"
-          tool="$(find "$RUNNER_TEMP/sealed/publisher-tool" -type f -name '*.whl' -print -quit)"
-          test -n "$tool"
-          # This central command calls verify_handoff, validates every file's
-          # no-follow digest/size/mode/source identity, then verifies the rights tuple.
-          uvx --from "$tool" genereview-link bundle publish-handoff \
-            --handoff-root "$RUNNER_TEMP/sealed/handoffs" \
-            --object-id "$OBJECT_ID" --rights-record "$RUNNER_TEMP/rights.json"
-          printf 'PUBLISHER_TOOL=%s\n' "$tool" >> "$GITHUB_ENV"
+          tool="$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID/publisher-tool.whl"
+          test -f "$tool" && test ! -L "$tool"
+          seal_manifest="$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID/seal-manifest.json"
+          test "$(sha256sum "$seal_manifest" | cut -d' ' -f1)" = "$OBJECT_ID"
+          test "$(sha256sum "$tool" | cut -d' ' -f1)" = "$(jq -r '.publisher_tool.sha256' "$seal_manifest")"
+          publisher_env="$RUNNER_TEMP/publisher-env"
+          mkdir -- "$publisher_env"
+          for dependency in "$RUNNER_TEMP"/sealed/publisher-dependencies/*.whl; do
+            uv pip install --target "$publisher_env" --no-index --no-deps "$dependency"
+          done
+          uv pip install --target "$publisher_env" --no-index --no-deps "$tool"
+          # This sealed wheel call performs verify_handoff/publish-handoff verification:
+          # every file's no-follow digest/size/mode/source identity and the rights tuple.
+          PYTHONPATH="$publisher_env" python3 - "$RUNNER_TEMP/sealed/handoffs" "$OBJECT_ID" "$RUNNER_TEMP/rights.json" <<'PY'
+          import sys
+          from pathlib import Path
+          from genereview_link.corpus.handoff import prepare_publish_handoff
+          try:
+              sealed = prepare_publish_handoff(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
+          except Exception as error:
+              raise SystemExit(f"publish-handoff refused: {error}") from error
+          print(f"rights-bound handoff ready: {sealed.object_id}")
+          PY
+          printf 'PUBLISHER_ENV=%s\n' "$publisher_env" >> "$GITHUB_ENV"
       - name: Attest the exact sealed object before publication
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -144,16 +168,18 @@ jobs:
         run: |
           set -euo pipefail
           handoff="$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID"
-          tool="$PUBLISHER_TOOL"
           release_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["corpus_release_id"])' "$handoff/manifest.json")"
           tag="corpus-data-$release_id"
           verify_existing() {
             existing="$(mktemp -d "$RUNNER_TEMP/existing.XXXXXX")"
-            uv run --with "$tool" python -m genereview_link.corpus.release_assets \
+            PYTHONPATH="$PUBLISHER_ENV" python3 -m genereview_link.corpus.release_assets \
               --repo "$GH_REPO" --tag "$tag" --dest "$existing"
-            uvx --from "$tool" genereview-link bundle publish-handoff \
-              --handoff-root "$RUNNER_TEMP/sealed/handoffs" \
-              --object-id "$OBJECT_ID" --rights-record "$RUNNER_TEMP/rights.json"
+            PYTHONPATH="$PUBLISHER_ENV" python3 - "$RUNNER_TEMP/sealed/handoffs" "$OBJECT_ID" "$RUNNER_TEMP/rights.json" <<'PY'
+          import sys
+          from pathlib import Path
+          from genereview_link.corpus.handoff import prepare_publish_handoff
+          prepare_publish_handoff(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
+          PY
             gh attestation verify "$existing/corpus.dump" --repo "$GH_REPO"
             for asset in corpus.dump manifest.json SHA256SUMS; do
               test -f "$existing/$asset" && test ! -L "$existing/$asset"

@@ -59,23 +59,78 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
     )
 
 
+def _publisher_tool(tmp_path: Path) -> Path:
+    tool = tmp_path / "publisher-tool"
+    tool.mkdir(exist_ok=True)
+    (tool / "genereviews_link-5.1.4-py3-none-any.whl").write_bytes(b"sealed wheel")
+    return tool
+
+
 def test_seal_is_content_addressed_read_only_and_reverifiable(tmp_path: Path) -> None:
-    sealed = seal_handoff(_source(tmp_path), tmp_path / "handoffs")
+    tool = tmp_path / "publisher-tool"
+    tool.mkdir()
+    (tool / "genereviews_link-5.1.4-py3-none-any.whl").write_bytes(b"sealed wheel")
+    sealed = seal_handoff(_source(tmp_path), tmp_path / "handoffs", publisher_tool=tool)
 
     assert sealed.object_id == hashlib.sha256(sealed.manifest.read_bytes()).hexdigest()
     assert verify_handoff(tmp_path / "handoffs", sealed.object_id).object_id == sealed.object_id
     assert all(not path.is_symlink() for path in sealed.path.rglob("*"))
 
 
+def test_seal_binds_exactly_one_publisher_wheel_into_object_identity(tmp_path: Path) -> None:
+    tool = tmp_path / "publisher-tool"
+    tool.mkdir()
+    wheel = tool / "genereviews_link-5.1.4-py3-none-any.whl"
+    wheel.write_bytes(b"sealed wheel")
+
+    sealed = seal_handoff(_source(tmp_path), tmp_path / "handoffs", publisher_tool=tool)
+
+    assert (sealed.path / "publisher-tool.whl").read_bytes() == b"sealed wheel"
+    manifest = json.loads(sealed.manifest.read_text())
+    entries = {entry["name"]: entry for entry in manifest["files"]}
+    assert entries["publisher-tool.whl"]["sha256"] == hashlib.sha256(b"sealed wheel").hexdigest()
+    assert entries["publisher-tool.whl"]["size"] == len(b"sealed wheel")
+    assert verify_handoff(tmp_path / "handoffs", sealed.object_id).object_id == sealed.object_id
+
+
+def test_verify_rejects_publisher_wheel_tampering(tmp_path: Path) -> None:
+    sealed = seal_handoff(
+        _source(tmp_path), tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path)
+    )
+    wheel = sealed.path / "publisher-tool.whl"
+    wheel.chmod(0o600)
+    wheel.write_bytes(b"tampered wheel")
+    wheel.chmod(0o400)
+
+    with pytest.raises(HandoffError, match="publisher wheel"):
+        verify_handoff(tmp_path / "handoffs", sealed.object_id)
+
+
+def test_seal_rejects_zero_or_multiple_publisher_wheels(tmp_path: Path) -> None:
+    tool = tmp_path / "publisher-tool"
+    tool.mkdir()
+    with pytest.raises(HandoffError, match="exactly one publisher wheel"):
+        seal_handoff(_source(tmp_path), tmp_path / "handoffs", publisher_tool=tool)
+    (tool / "first.whl").write_bytes(b"first")
+    (tool / "second.whl").write_bytes(b"second")
+    with pytest.raises(HandoffError, match="exactly one publisher wheel"):
+        seal_handoff(tmp_path / "source", tmp_path / "handoffs-2", publisher_tool=tool)
+
+
 def test_seal_rejects_symlink_and_existing_object_substitution(tmp_path: Path) -> None:
     source = _source(tmp_path)
     (source / "unsafe").symlink_to("corpus.dump")
     with pytest.raises(HandoffError, match="regular"):
-        seal_handoff(source, tmp_path / "handoffs")
+        tool = tmp_path / "publisher-tool"
+        tool.mkdir()
+        (tool / "tool.whl").write_bytes(b"wheel")
+        seal_handoff(source, tmp_path / "handoffs", publisher_tool=tool)
 
 
 def test_rights_record_binds_affirmative_decision_to_exact_object(tmp_path: Path) -> None:
-    sealed = seal_handoff(_source(tmp_path), tmp_path / "handoffs")
+    sealed = seal_handoff(
+        _source(tmp_path), tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path)
+    )
     record = {
         "object_id": sealed.object_id,
         "decision": "affirmative",
@@ -106,7 +161,7 @@ def test_handoff_root_must_be_owner_only(tmp_path: Path) -> None:
     root.chmod(0o755)
 
     with pytest.raises(HandoffError, match="owner-only"):
-        seal_handoff(_source(tmp_path), root)
+        seal_handoff(_source(tmp_path), root, publisher_tool=_publisher_tool(tmp_path))
 
 
 def test_handoff_root_must_be_owned_by_the_invoking_user(
@@ -117,7 +172,7 @@ def test_handoff_root_must_be_owned_by_the_invoking_user(
     monkeypatch.setattr(handoff.os, "geteuid", lambda: root.stat().st_uid + 1)
 
     with pytest.raises(HandoffError, match="owner-only"):
-        seal_handoff(_source(tmp_path), root)
+        seal_handoff(_source(tmp_path), root, publisher_tool=_publisher_tool(tmp_path))
 
 
 def test_capped_read_rejects_a_file_replaced_by_a_symlink_before_open(
@@ -163,7 +218,9 @@ def test_digest_rejects_a_file_replaced_by_a_symlink_before_open(
 def test_handoff_rejects_a_file_mode_changed_before_the_digest_open(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sealed = seal_handoff(_source(tmp_path), tmp_path / "handoffs")
+    sealed = seal_handoff(
+        _source(tmp_path), tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path)
+    )
     victim = sealed.path / "corpus.dump"
     original_open = handoff.os.open
 
@@ -178,7 +235,9 @@ def test_handoff_rejects_a_file_mode_changed_before_the_digest_open(
 
 
 def test_rights_record_must_bind_source_and_artifact_identity(tmp_path: Path) -> None:
-    sealed = seal_handoff(_source(tmp_path), tmp_path / "handoffs")
+    sealed = seal_handoff(
+        _source(tmp_path), tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path)
+    )
     incomplete = {
         "object_id": sealed.object_id,
         "decision": "affirmative",
@@ -197,7 +256,9 @@ def test_rights_record_must_bind_source_and_artifact_identity(tmp_path: Path) ->
 
 
 def test_publisher_rejects_a_rights_record_for_a_different_source(tmp_path: Path) -> None:
-    sealed = seal_handoff(_source(tmp_path), tmp_path / "handoffs")
+    sealed = seal_handoff(
+        _source(tmp_path), tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path)
+    )
     record = {
         "object_id": sealed.object_id,
         "decision": "affirmative",

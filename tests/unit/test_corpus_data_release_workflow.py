@@ -57,3 +57,14 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     assert "draft_publish_existing" in scripts
     assert "published_noop" in scripts
     assert "collision" in scripts
+    assert 'find "$RUNNER_TEMP/sealed/publisher-tool"' not in scripts
+    assert "uvx --from" not in scripts
+    assert "--no-index" in scripts
+    assert "--no-deps" in scripts
+    assert "publisher-tool.whl" in scripts
+    assert "publisher-dependencies" in scripts
+    build = workflow["jobs"]["build"]
+    assert isinstance(build, dict)
+    build_scripts = "\n".join(str(step.get("run", "")) for step in build["steps"])
+    assert "pip download --require-hashes" in build_scripts
+    assert "PUBLISHER_ENV" in scripts

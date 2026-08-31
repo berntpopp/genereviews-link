@@ -212,6 +212,9 @@ so this server composes cleanly behind the `genefoundry-router` gateway under th
   never contact a release service.
 - `bundle publish-local` and `make bundle-publish-local` now package only an already validated
   local corpus. They no longer ingest, embed, create drafts, upload assets, or invoke GitHub.
+- Privileged corpus publication now uses a statically allowlisted release downloader, a sealed
+  publisher wheel whose identity is part of the handoff, offline hash-checked installation, and
+  fail-closed SQL count/index assertions.
 
 ### Breaking changes
 

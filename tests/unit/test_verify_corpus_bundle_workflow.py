@@ -33,3 +33,6 @@ def test_verifier_uses_exact_assets_and_rebuilds_schema_before_restore() -> None
     assert "chapter_count" in scripts
     assert "passage_count" in scripts
     assert "representative" in scripts
+    assert "\\quit 1" in scripts
+    assert "hnsw_present" in scripts
+    assert "\\gset" in scripts

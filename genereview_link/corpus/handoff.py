@@ -19,7 +19,8 @@ from pathlib import Path
 MAX_METADATA_BYTES = 1 << 20
 CHUNK_BYTES = 1 << 20
 _SOURCE_FILES = frozenset({"corpus.dump", "manifest.json", "SHA256SUMS"})
-_SEALED_FILES = _SOURCE_FILES | {"seal-manifest.json"}
+_PUBLISHER_FILE = "publisher-tool.whl"
+_SEALED_FILES = _SOURCE_FILES | {_PUBLISHER_FILE, "seal-manifest.json"}
 _RIGHTS_FIELDS = frozenset(
     {
         "artifact_sha256",
@@ -262,6 +263,22 @@ def _copy_regular(source: Path, destination: Path) -> None:
         os.close(source_fd)
 
 
+def _publisher_wheel(publisher_tool: Path) -> tuple[Path, str, int, int]:
+    """Return the sole regular wheel in a fresh publisher-tool directory."""
+    try:
+        info = publisher_tool.lstat()
+    except FileNotFoundError as error:
+        raise HandoffError("publisher-tool directory is missing") from error
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+        raise HandoffError("publisher-tool must be a real directory")
+    wheels = [path for path in publisher_tool.iterdir() if path.name.endswith(".whl")]
+    if len(wheels) != 1 or len(list(publisher_tool.iterdir())) != 1:
+        raise HandoffError("publisher-tool must contain exactly one publisher wheel")
+    wheel = wheels[0]
+    digest, size, mode = _sha256_facts(wheel)
+    return wheel, digest, size, mode
+
+
 def _assert_handoff_root(handoff_root: Path) -> None:
     try:
         info = handoff_root.lstat()
@@ -273,10 +290,16 @@ def _assert_handoff_root(handoff_root: Path) -> None:
         raise HandoffError("handoff root must be owner-only mode 0700")
 
 
-def seal_handoff(source: Path, handoff_root: Path) -> SealedHandoff:
+def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> SealedHandoff:
     """Verify and atomically seal one exact data-only bundle without publishing."""
     source_manifest = verify_data_only_bundle(source)
     files = _verify_source(source)
+    wheel, wheel_digest, wheel_size, wheel_mode = _publisher_wheel(publisher_tool)
+    if wheel_mode & 0o111:
+        raise HandoffError("publisher wheel must not be executable")
+    files.append(
+        {"name": _PUBLISHER_FILE, "sha256": wheel_digest, "size": wheel_size, "mode": 0o400}
+    )
     seal = {
         "format": "genereviews-local-handoff-v1",
         "corpus_release_id": source_manifest["corpus_release_id"],
@@ -284,6 +307,7 @@ def seal_handoff(source: Path, handoff_root: Path) -> SealedHandoff:
         "artifact_sha256": next(
             entry["sha256"] for entry in files if entry["name"] == "corpus.dump"
         ),
+        "publisher_tool": {"name": wheel.name, "sha256": wheel_digest},
         "files": files,
     }
     seal_bytes = _canonical_json(seal)
@@ -298,6 +322,10 @@ def seal_handoff(source: Path, handoff_root: Path) -> SealedHandoff:
     try:
         for name in sorted(_SOURCE_FILES):
             _copy_regular(source / name, staging / name)
+        _copy_regular(wheel, staging / _PUBLISHER_FILE)
+        copied_digest, copied_size, _ = _sha256_facts(staging / _PUBLISHER_FILE)
+        if (copied_digest, copied_size) != (wheel_digest, wheel_size):
+            raise HandoffError("publisher wheel changed while sealing")
         manifest = staging / "seal-manifest.json"
         manifest.write_bytes(seal_bytes)
         with manifest.open("rb") as file:
@@ -346,10 +374,9 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
     ):
         raise HandoffError("seal manifest lacks source/artifact identity")
     files = record.get("files")
-    if (
-        not isinstance(files, list)
-        or {entry.get("name") for entry in files if isinstance(entry, dict)} != _SOURCE_FILES
-    ):
+    if not isinstance(files, list) or {
+        entry.get("name") for entry in files if isinstance(entry, dict)
+    } != _SOURCE_FILES | {_PUBLISHER_FILE}:
         raise HandoffError("seal manifest has an incomplete file list")
     expected = {entry["name"]: entry for entry in files if isinstance(entry, dict)}
     for name in _SOURCE_FILES:
@@ -362,6 +389,24 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
             raise HandoffError(f"sealed {name} does not match seal manifest")
         if name == "corpus.dump" and record["artifact_sha256"] != digest:
             raise HandoffError("sealed corpus.dump does not match source/artifact identity")
+    publisher = record.get("publisher_tool")
+    if (
+        not isinstance(publisher, dict)
+        or set(publisher) != {"name", "sha256"}
+        or not isinstance(publisher["name"], str)
+        or not publisher["name"].endswith(".whl")
+        or not isinstance(publisher["sha256"], str)
+    ):
+        raise HandoffError("seal manifest lacks publisher wheel identity")
+    tool_digest, tool_size, tool_mode = _sha256_facts(target / _PUBLISHER_FILE)
+    tool_entry = expected[_PUBLISHER_FILE]
+    if (
+        publisher["sha256"] != tool_digest
+        or tool_entry.get("sha256") != tool_digest
+        or tool_entry.get("size") != tool_size
+        or tool_mode != 0o400
+    ):
+        raise HandoffError("sealed publisher wheel does not match seal manifest")
     checksums = _parse_sums(target / "SHA256SUMS")
     for name, digest in checksums.items():
         actual, _ = _sha256(target / name)

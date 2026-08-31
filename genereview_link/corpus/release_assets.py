@@ -119,9 +119,11 @@ async def download_release_assets(
                 timeout=STREAM_TIMEOUT,
                 follow_redirects=True,
                 max_redirects=5,
-                event_hooks={
-                    "request": [make_url_guard(build_host_allowlist(url) | _DOWNLOAD_HOSTS)]
-                },
+                # browser_download_url is release-controlled input.  Never add its
+                # host to this reviewed set: the hook runs for the initial URL and
+                # every redirect before any request (and therefore before auth headers
+                # can leave the process).
+                event_hooks={"request": [make_url_guard(_DOWNLOAD_HOSTS)]},
             ) as client:
                 await stream_to_file(
                     client, url, target, max_bytes=limit, deadline_seconds=deadline

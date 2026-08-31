@@ -147,5 +147,5 @@ class TestBundleCommands:
         seal_flags = self._bundle_subcommand_flags("seal-handoff")
         publish_flags = self._bundle_subcommand_flags("publish-handoff")
 
-        assert seal_flags == {"--source", "--handoff-root"}
+        assert seal_flags == {"--source", "--handoff-root", "--publisher-tool"}
         assert publish_flags == {"--handoff-root", "--object-id", "--rights-record"}

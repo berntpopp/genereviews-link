@@ -402,13 +402,14 @@ def bundle_publish_local(
 def bundle_seal_handoff(
     source: Annotated[Path, typer.Option("--source")],
     handoff_root: Annotated[Path, typer.Option("--handoff-root")],
+    publisher_tool: Annotated[Path, typer.Option("--publisher-tool")],
 ) -> None:
     """Seal an exact local data-only bundle; this command never publishes it."""
     from genereview_link.corpus.handoff import HandoffError, seal_handoff, verify_data_only_bundle
 
     try:
         verify_data_only_bundle(source)
-        sealed = seal_handoff(source, handoff_root)
+        sealed = seal_handoff(source, handoff_root, publisher_tool=publisher_tool)
     except HandoffError as error:
         typer.echo(f"handoff refused: {error}", err=True)
         raise typer.Exit(1) from error

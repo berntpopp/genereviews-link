@@ -82,29 +82,33 @@ jobs:
           select count(*) = :'EXPECTED_CHAPTER_COUNT'::bigint as chapter_count from genereview.genereview_chapters \gset
           \if :chapter_count
           \else
-          \quit
+          \quit 1
           \endif
           select count(*) = :'EXPECTED_PASSAGE_COUNT'::bigint as passage_count from genereview.genereview_passages \gset
           \if :passage_count
           \else
-          \quit
+          \quit 1
           \endif
           select count(*) = :'EXPECTED_EMBEDDING_COUNT'::bigint as embedding_count from genereview.genereview_embeddings_bge384 where model_name = 'BAAI/bge-small-en-v1.5' \gset
           \if :embedding_count
           \else
-          \quit
+          \quit 1
           \endif
-          select indexname = 'genereview_embeddings_bge384_hnsw_cosine' as hnsw_present
+          select count(*) = 1 as hnsw_present
             from pg_indexes where schemaname = 'genereview'
-              and indexname = 'genereview_embeddings_bge384_hnsw_cosine';
+              and indexname = 'genereview_embeddings_bge384_hnsw_cosine' \gset
+          \if :hnsw_present
+          \else
+          \quit 1
+          \endif
           select exists (select 1 from genereview.genereview_chapters where 'BRCA1' = any(gene_symbols)) as representative_gene_fixture \gset
           \if :representative_gene_fixture
           \else
-          \quit
+          \quit 1
           \endif
           select exists (select 1 from genereview.genereview_passages where search_vector @@ plainto_tsquery('english', 'BRCA1')) as representative_search_fixture \gset
           \if :representative_search_fixture
           \else
-          \quit
+          \quit 1
           \endif
           SQL
