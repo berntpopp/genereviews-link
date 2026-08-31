@@ -56,7 +56,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     GENEREVIEW_LINK_PORT=8000 \
     TMPDIR=/tmp
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update \
+    && apt-get install -y --only-upgrade --no-install-recommends \
+    openssl \
+    libssl3t64 \
+    openssl-provider-legacy \
+    && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     postgresql-client \

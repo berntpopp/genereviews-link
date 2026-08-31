@@ -11,6 +11,10 @@ def test_release_dependencies_use_reviewed_immutable_pins() -> None:
         in (ROOT / "docker/Dockerfile").read_text()
     )
     assert (
+        "apt-get install -y --only-upgrade --no-install-recommends"
+        in (ROOT / "docker/Dockerfile").read_text()
+    )
+    assert (
         "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
         in (ROOT / ".github/workflows/ci.yml").read_text()
     )
@@ -22,3 +26,10 @@ def test_release_dependencies_use_reviewed_immutable_pins() -> None:
         "_container-release.yml@db47bd3357cebf33e6722615c4f0e7419a64857e"
         in (ROOT / ".github/workflows/container-release.yml").read_text()
     )
+
+
+def test_production_compose_uses_the_approved_restart_policy() -> None:
+    compose = (ROOT / "docker/docker-compose.prod.yml").read_text()
+    assert "restart: unless-stopped" in compose
+    assert "restart: on-failure" not in compose
+    assert "restart: on-failure" not in (ROOT / "docker/docker-compose.yml").read_text()
