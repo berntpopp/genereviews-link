@@ -1,8 +1,12 @@
 """Tests for the Typer-based CLI."""
 
+from pathlib import Path
+
+import pytest
 from typer.main import get_command
 from typer.testing import CliRunner
 
+from genereview_link import cli
 from genereview_link.cli import LogLevel, Transport, app, build_config
 from genereview_link.config import ServerConfig
 
@@ -109,6 +113,39 @@ class TestBundleCommands:
     def test_bundle_publish_local_command_registered(self) -> None:
         flags = self._bundle_subcommand_flags("publish-local")
         assert "--release-id" in flags
-        assert "--device" in flags
-        assert "--repo" in flags
-        assert "--draft" in flags
+        assert "--upload" not in flags
+        assert "--repo" not in flags
+        assert "--draft" not in flags
+
+    def test_bundle_publish_local_only_runs_the_local_packager(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        built = Path("genereview-corpus-data-2026-08-30-r1")
+        calls: list[dict[str, object]] = []
+
+        def build_bundle(**kwargs: object) -> Path:
+            calls.append(kwargs)
+            return built
+
+        monkeypatch.setattr(cli, "_build_bundle", build_bundle)
+        result = runner.invoke(app, ["bundle", "publish-local", "--release-id", "2026-08-30-r1"])
+
+        assert result.exit_code == 0, result.output
+        assert calls == [{"output": built, "release_id": "2026-08-30-r1", "skip_validation": False}]
+        assert "local bundle prepared" in result.output
+
+    def test_bundle_publish_local_rejects_upload_option(self) -> None:
+        result = runner.invoke(
+            app,
+            ["bundle", "publish-local", "--release-id", "2026-08-30-r1", "--upload"],
+        )
+
+        assert result.exit_code != 0
+        assert "No such option" in result.output
+
+    def test_handoff_commands_accept_only_local_object_inputs(self) -> None:
+        seal_flags = self._bundle_subcommand_flags("seal-handoff")
+        publish_flags = self._bundle_subcommand_flags("publish-handoff")
+
+        assert seal_flags == {"--source", "--handoff-root", "--publisher-tool"}
+        assert publish_flags == {"--handoff-root", "--object-id", "--rights-record"}

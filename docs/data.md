@@ -117,18 +117,39 @@ make db-reset       # DROP and recreate the genereview schemas (dev only)
 Migrations are split into **control** (corpus version, refresh log, active embedding) and
 **data** (chapters, passages, embeddings, tables, roles, gene symbols) sets.
 
-## Publishing a corpus bundle (maintainer)
+## Packaging a local corpus (maintainer)
 
-The bundle is built locally by the maintainer **on CUDA** — not in CI — and published as a
-GitHub Release asset that Docker consumes at startup.
+Ingest and embedding are explicit prior operations. This command packages the already-ingested,
+already-embedded, validated database locally; it never uploads, creates a draft, or contacts a
+release service.
 
 ```bash
-make cuda-check                                   # verify local PyTorch CUDA availability
 make bundle-validate                              # active corpus is bundle-ready
 RELEASE_ID=2026-05-12-r1 make bundle-publish-local
 ```
 
-`make bundle` builds a release bundle from the active corpus without publishing it.
+`make bundle` builds a release bundle from the active corpus without publishing it. Rights-gated
+publication is deliberately separate: it requires a complete dated affirmative redistribution
+record bound to an immutable sealed handoff object. Do not draft, upload, or publish without that
+record.
+
+The local output is exactly `corpus.dump`, canonical `manifest.json`, and `SHA256SUMS`; it contains
+data only, never schema, migrations, application code, environment files, or credentials. Verify
+and seal it with `genereview-link bundle seal-handoff --source <directory> --handoff-root <root> \
+--publisher-tool <directory-containing-exactly-one-wheel>`.
+`publish-handoff` only re-verifies a literal object ID and a complete affirmative, dated rights
+record bound to that object, its source SHA-256, corpus-dump SHA-256, and release ID; it deliberately
+has no release-service client. The handoff root is owner-only (`0700`), and sealed objects/files are
+checked with no-follow file descriptors, exact digest/size/mode manifests, and immutable object IDs.
+The sealed publisher wheel name and digest are part of that object identity; the privileged workflow
+installs it and its lockfile-derived dependency wheels with no index and no dependency resolution.
+A separately privileged automation may act only on that sealed handoff after the rights record exists.
+
+The privileged workflow downloads only the three named assets through byte- and deadline-bounded
+allowlisted streams, verifies the source/release attestation, reads the PostgreSQL archive TOC before
+restore, and accepts only data rows for reviewed tables. It applies reviewed migrations first, restores
+as a non-owner without privileges in one transaction, and compares the restored chapter, passage, and
+embedding counts exactly with the sealed manifest before representative GeneReviews search fixtures run.
 
 ## Corpus freshness
 

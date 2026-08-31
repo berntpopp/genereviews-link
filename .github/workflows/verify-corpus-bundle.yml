@@ -1,12 +1,15 @@
-name: Verify corpus bundle
+name: Verify data-only corpus bundle
 
 on:
   workflow_dispatch:
     inputs:
-      bundle_url:
-        description: "GitHub Release asset URL ending in .tar.gz"
+      release_tag:
+        description: Immutable release tag containing the exact data-only assets
         required: true
         type: string
+
+permissions:
+  contents: read
 
 concurrency:
   group: verify-corpus-bundle
@@ -17,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:0.8.2-pg18
+        image: pgvector/pgvector:0.8.2-pg18@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d
         env:
           POSTGRES_PASSWORD: ci
           POSTGRES_DB: genereview
@@ -31,49 +34,81 @@ jobs:
       DATABASE_URL: postgresql://postgres:ci@localhost:5432/genereview
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-      - run: uv sync --frozen
-      - name: Download bundle and checksum
+        with:
+          enable-cache: false
+      - run: uv sync --group dev --frozen
+      - name: Bounded fresh-directory download_guard, archive-policy, and attestation verification
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p dist verify
-          curl -fL "${{ inputs.bundle_url }}" -o dist/bundle.tar.gz
-          curl -fL "${{ inputs.bundle_url }}.sha256" -o dist/bundle.tar.gz.sha256
-          cd dist
-          sha256sum -c bundle.tar.gz.sha256
-      - name: Extract and verify manifest checksums
-        run: |
-          tar -xzf dist/bundle.tar.gz -C verify
-          uv run python - <<'PY'
-          import hashlib, json
+          set -euo pipefail
+          umask 077
+          verify_dir="$(mktemp -d "$RUNNER_TEMP/verify.XXXXXX")"
+          uv run python -m genereview_link.corpus.release_assets \
+            --repo "$GITHUB_REPOSITORY" --tag "${{ inputs.release_tag }}" --dest "$verify_dir"
+          uv run python - "$verify_dir/corpus.dump" <<'PY'
           from pathlib import Path
-
-          root = Path("verify")
-          manifest = json.loads((root / "manifest.json").read_text())
-          for relpath, expected in manifest["checksums"].items():
-              h = hashlib.sha256((root / relpath).read_bytes()).hexdigest()
-              if h != expected:
-                  raise SystemExit(f"checksum mismatch for {relpath}: {h} != {expected}")
-          print("manifest checksums passed")
+          from genereview_link.db.restore import assert_data_only_archive, read_archive_entries
+          assert_data_only_archive(read_archive_entries(Path(__import__('sys').argv[1])))
           PY
-      - name: Restore dump
-        run: pg_restore -j 2 -d "$DATABASE_URL" verify/corpus.dump
-      - name: Validate restored corpus
+          uv run python - "$verify_dir" <<'PY'
+          from pathlib import Path
+          from genereview_link.corpus.handoff import verify_data_only_bundle
+          verify_data_only_bundle(Path(__import__('sys').argv[1]))
+          PY
+          gh attestation verify "$verify_dir/corpus.dump" --repo "$GITHUB_REPOSITORY"
+          printf 'VERIFY_DIR=%s\n' "$verify_dir" >> "$GITHUB_ENV"
+      - name: Apply reviewed migrations before restoring data
+        run: genereview-link db migrate
+      - name: Restore the data-only archive with transactional fail-closed flags
         run: |
+          set -euo pipefail
+          pg_restore --data-only --no-owner --no-privileges --single-transaction --exit-on-error -d "$DATABASE_URL" "$VERIFY_DIR/corpus.dump"
+      - name: Verify exact manifest counts, HNSW, and representative search fixtures
+        run: |
+          set -euo pipefail
+          eval "$(uv run python - "$VERIFY_DIR/manifest.json" <<'PY'
+          import json, sys
+          manifest = json.load(open(sys.argv[1]))
+          print(f"EXPECTED_CHAPTER_COUNT={manifest['chapter_count']}")
+          print(f"EXPECTED_PASSAGE_COUNT={manifest['passage_count']}")
+          print(f"EXPECTED_EMBEDDING_COUNT={manifest['embedding']['count']}")
+          PY
+          )"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
-          select version, chapter_count, ingest_status, is_active
-            from public.genereview_corpus_version
-           where is_active;
-          select count(*) as chapters from genereview.genereview_chapters;
-          select count(*) as passages from genereview.genereview_passages;
-          select count(*) as embeddings from genereview.genereview_embeddings_bge384;
-          select indexname from pg_indexes
-           where schemaname = 'genereview'
-             and indexname = 'genereview_embeddings_bge384_hnsw_cosine';
+          select count(*) = :'EXPECTED_CHAPTER_COUNT'::bigint as chapter_count from genereview.genereview_chapters \gset
+          \if :chapter_count
+          \else
+          \quit 1
+          \endif
+          select count(*) = :'EXPECTED_PASSAGE_COUNT'::bigint as passage_count from genereview.genereview_passages \gset
+          \if :passage_count
+          \else
+          \quit 1
+          \endif
+          select count(*) = :'EXPECTED_EMBEDDING_COUNT'::bigint as embedding_count from genereview.genereview_embeddings_bge384 where model_name = 'BAAI/bge-small-en-v1.5' \gset
+          \if :embedding_count
+          \else
+          \quit 1
+          \endif
+          select count(*) = 1 as hnsw_present
+            from pg_indexes where schemaname = 'genereview'
+              and indexname = 'genereview_embeddings_bge384_hnsw_cosine' \gset
+          \if :hnsw_present
+          \else
+          \quit 1
+          \endif
+          select exists (select 1 from genereview.genereview_chapters where 'BRCA1' = any(gene_symbols)) as representative_gene_fixture \gset
+          \if :representative_gene_fixture
+          \else
+          \quit 1
+          \endif
+          select exists (select 1 from genereview.genereview_passages where search_vector @@ plainto_tsquery('english', 'BRCA1')) as representative_search_fixture \gset
+          \if :representative_search_fixture
+          \else
+          \quit 1
+          \endif
           SQL
-      - name: Summary
-        run: |
-          {
-            echo "## Corpus Bundle Verification"
-            echo ""
-            echo "Verified: ${{ inputs.bundle_url }}"
-          } >> "$GITHUB_STEP_SUMMARY"

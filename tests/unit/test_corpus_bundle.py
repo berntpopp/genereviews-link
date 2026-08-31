@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict
 from pathlib import Path
@@ -13,6 +14,7 @@ from genereview_link.corpus.bundle import (
     pg_dump_to,
     sha256_file,
     write_bundle,
+    write_data_only_bundle,
 )
 
 
@@ -111,6 +113,30 @@ def test_write_bundle_manifest_checksums(tmp_path: Path) -> None:
     assert "sidedata/test.txt" in data["checksums"]
 
 
+def test_data_only_bundle_has_canonical_metadata_and_exact_checksum_set(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "corpus.dump").write_bytes(b"data-only-pgdump")
+    manifest = BundleManifest(corpus_release_id="2026-08-30-r1", created_at="volatile")
+
+    result = write_data_only_bundle(work_dir=work, output=tmp_path / "release", manifest=manifest)
+
+    assert result == tmp_path / "release"
+    assert {path.name for path in result.iterdir()} == {
+        "corpus.dump",
+        "manifest.json",
+        "SHA256SUMS",
+    }
+    metadata = json.loads((result / "manifest.json").read_text())
+    assert "created_at" not in metadata
+    assert metadata["bundle_format"] == "postgresql-custom-data-only"
+    assert metadata["checksums"] == {"corpus.dump": hashlib.sha256(b"data-only-pgdump").hexdigest()}
+    assert (result / "SHA256SUMS").read_text() == (
+        f"{metadata['checksums']['corpus.dump']}  corpus.dump\n"
+        f"{hashlib.sha256((result / 'manifest.json').read_bytes()).hexdigest()}  manifest.json\n"
+    )
+
+
 def test_pg_dump_to_calls_subprocess(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     called_with: list[list[str]] = []
 
@@ -119,14 +145,14 @@ def test_pg_dump_to_calls_subprocess(tmp_path: Path, monkeypatch: pytest.MonkeyP
     def fake_run(cmd: list[str], **kwargs: object) -> object:
         called_with.append(cmd)
         # create empty dump file so write_bundle won't fail
-        dump_path = Path(cmd[3])
+        dump_path = Path(cmd[cmd.index("-f") + 1])
         dump_path.write_bytes(b"")
         return None
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     dump_path = tmp_path / "corpus.dump"
     pg_dump_to(dump_path, database_url="postgresql://user:pass@localhost/db")
-    assert called_with[0][:3] == ["pg_dump", "-Fc", "--no-owner"]
+    assert called_with[0][:5] == ["pg_dump", "-Fc", "--data-only", "--no-owner", "--no-privileges"]
     assert called_with[0][-1] == "postgresql://user:pass@localhost/db"
     assert "--extension" in called_with[0]
     assert "vector" in called_with[0]

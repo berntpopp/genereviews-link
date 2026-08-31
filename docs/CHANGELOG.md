@@ -8,6 +8,17 @@ as phase tags where a semver release has not yet been cut.
 
 ---
 
+## Unreleased
+
+### Security
+
+- Data-only corpus release workflows now use bounded exact-asset retrieval, release attestation,
+  archive-TOC allowlisting, non-owner transactional restores, and exact restored-count/search checks.
+  Handoff revalidation is no-follow, owner/mode checked, and binds the affirmative rights record to
+  the sealed source, artifact, and release identity. No corpus publication is enabled by this change.
+
+---
+
 ## 5.0.1 — Error-message sanitation (upstream error-path text leak)
 
 Security (defense in depth): the MCP error path no longer echoes upstream
@@ -193,6 +204,17 @@ so this server composes cleanly behind the `genefoundry-router` gateway under th
 ---
 
 ## Unreleased
+
+### Fixed
+
+- Corpus packaging now writes deterministic, data-only release directories with canonical metadata
+  and `SHA256SUMS`. Local sealing and rights-bound publish-handoff verification are fail-closed and
+  never contact a release service.
+- `bundle publish-local` and `make bundle-publish-local` now package only an already validated
+  local corpus. They no longer ingest, embed, create drafts, upload assets, or invoke GitHub.
+- Privileged corpus publication now uses a statically allowlisted release downloader, a sealed
+  publisher wheel whose identity is part of the handoff, offline hash-checked installation, and
+  fail-closed SQL count/index assertions.
 
 ### Breaking changes
 

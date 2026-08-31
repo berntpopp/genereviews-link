@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import subprocess
 import sys
 import tempfile
 from enum import StrEnum
@@ -269,42 +267,26 @@ bundle_app = typer.Typer(name="bundle", help="Build and verify release bundles."
 app.add_typer(bundle_app)
 
 
-def _run_gh(args: list[str]) -> None:
-    try:
-        subprocess.run(["gh", *args], check=True)  # noqa: S603, S607
-    except FileNotFoundError as exc:
-        raise RuntimeError("GitHub CLI 'gh' is required for upload") from exc
-
-
 def _build_bundle(
     *,
     output: Path | None,
     release_id: str | None,
     skip_validation: bool,
 ) -> Path:
-    """Build a corpus bundle from DATABASE_URL and return the tarball path."""
-    from datetime import UTC, datetime
+    """Build a local data-only corpus directory from DATABASE_URL."""
 
     from genereview_link.config import settings
     from genereview_link.corpus.bundle import (
         BundleManifest,
         pg_dump_to,
-        write_bundle,
+        write_data_only_bundle,
     )
-    from genereview_link.corpus.bundle_metadata import asset_name_for_release
     from genereview_link.corpus.bundle_validation import validate_database_ready
     from genereview_link.db.pool import create_pool
 
     if release_id and output is None:
-        output = Path(
-            asset_name_for_release(
-                release_id,
-                model_slug="bge-small-en-v1.5",
-                postgres_major="pg18",
-                pgvector_version="pgv0.8.2",
-            )
-        )
-    output = output or Path("genereview-corpus.tar.gz")
+        output = Path(f"genereview-corpus-data-{release_id}")
+    output = output or Path("genereview-corpus-data")
 
     async def run() -> Path:
         pool = await create_pool()
@@ -341,11 +323,6 @@ def _build_bundle(
             with tempfile.TemporaryDirectory() as td:
                 td_path = Path(td)
                 pg_dump_to(td_path / "corpus.dump", database_url=settings.DATABASE_URL)
-                sidedata = td_path / "sidedata"
-                sidedata.mkdir()
-                from genereview_link.corpus.pipeline import _download_sidedata
-
-                await _download_sidedata(sidedata)
                 m = BundleManifest(
                     corpus_release_id=release_id or "",
                     corpus_version=row["version"],
@@ -359,11 +336,10 @@ def _build_bundle(
                         "count": int(embedding_count or 0),
                         "expected_count": int(passage_count or 0),
                     },
-                    created_at=datetime.now(UTC).isoformat(),
                     created_by="cli",
                     validation=validation_manifest,
                 )
-                write_bundle(work_dir=td_path, output=output, manifest=m, sidedata_dir=sidedata)
+                write_data_only_bundle(work_dir=td_path, output=output, manifest=m)
                 return output
         finally:
             await pool.close()
@@ -411,64 +387,52 @@ def bundle_build(
 @bundle_app.command("publish-local")
 def bundle_publish_local(
     release_id: Annotated[str, typer.Option("--release-id")],
-    device: Annotated[str, typer.Option("--device")] = "cuda",
-    repo: Annotated[str, typer.Option("--repo")] = "berntpopp/genereviews-link",
-    draft: Annotated[bool, typer.Option("--draft/--no-draft")] = True,
-    upload: Annotated[bool, typer.Option("--upload/--no-upload")] = True,
 ) -> None:
-    """Build a local CUDA corpus bundle and optionally upload it to GitHub Releases."""
-    from genereview_link.corpus.bundle_metadata import asset_name_for_release, validate_release_id
-    from genereview_link.corpus.pipeline import run_full_ingest
-    from genereview_link.db.migrate import apply_control_migrations
-    from genereview_link.db.pool import create_pool
-    from genereview_link.ingest.orchestrator import backfill_embeddings, build_hnsw_index
-    from genereview_link.retrieval.embeddings import SentenceTransformerEmbeddingProvider
+    """Package an already validated local corpus without publishing it."""
+    from genereview_link.corpus.bundle_metadata import validate_release_id
 
     validate_release_id(release_id)
-    if device.startswith("cuda"):
-        import torch
+    output = Path(f"genereview-corpus-data-{release_id}")
 
-        if not torch.cuda.is_available():
-            typer.echo("CUDA requested but torch.cuda.is_available() is false", err=True)
-            raise typer.Exit(1)
-
-    output = Path(
-        asset_name_for_release(
-            release_id,
-            model_slug="bge-small-en-v1.5",
-            postgres_major="pg18",
-            pgvector_version="pgv0.8.2",
-        )
-    )
-
-    async def run() -> None:
-        pool = await create_pool()
-        try:
-            await apply_control_migrations(pool)
-            await run_full_ingest(pool)
-            os.environ["INGEST_EMBED_DEVICE"] = device
-            provider = SentenceTransformerEmbeddingProvider(device=device)
-            embedded = await backfill_embeddings(pool, provider)
-            typer.echo(f"embedded {embedded} passages")
-            await build_hnsw_index(pool)
-        finally:
-            await pool.close()
-
-    asyncio.run(run())
     built = _build_bundle(output=output, release_id=release_id, skip_validation=False)
+    typer.echo(f"local bundle prepared: {built}")
 
-    if upload:
-        tag = f"corpus-{release_id}"
-        release_args = ["release", "create", tag, str(built), f"{built}.sha256", "--repo", repo]
-        if draft:
-            release_args.append("--draft")
-        release_args.extend(
-            ["--title", tag, "--notes", f"Precomputed GeneReviews corpus bundle {release_id}"]
-        )
-        _run_gh(release_args)
-        typer.echo(f"uploaded {built} to {repo} release {tag}")
-    else:
-        typer.echo(f"built {built}; upload skipped")
+
+@bundle_app.command("seal-handoff")
+def bundle_seal_handoff(
+    source: Annotated[Path, typer.Option("--source")],
+    handoff_root: Annotated[Path, typer.Option("--handoff-root")],
+    publisher_tool: Annotated[Path, typer.Option("--publisher-tool")],
+) -> None:
+    """Seal an exact local data-only bundle; this command never publishes it."""
+    from genereview_link.corpus.handoff import HandoffError, seal_handoff, verify_data_only_bundle
+
+    try:
+        verify_data_only_bundle(source)
+        sealed = seal_handoff(source, handoff_root, publisher_tool=publisher_tool)
+    except HandoffError as error:
+        typer.echo(f"handoff refused: {error}", err=True)
+        raise typer.Exit(1) from error
+    typer.echo(sealed.object_id)
+
+
+@bundle_app.command("publish-handoff")
+def bundle_publish_handoff(
+    handoff_root: Annotated[Path, typer.Option("--handoff-root")],
+    object_id: Annotated[str, typer.Option("--object-id")],
+    rights_record: Annotated[Path, typer.Option("--rights-record")],
+) -> None:
+    """Reverify a rights-bound object locally; it intentionally does not publish."""
+    from genereview_link.corpus.handoff import HandoffError, prepare_publish_handoff
+
+    try:
+        sealed = prepare_publish_handoff(handoff_root, object_id, rights_record)
+    except HandoffError as error:
+        typer.echo(f"publish handoff refused: {error}", err=True)
+        raise typer.Exit(1) from error
+    typer.echo(
+        f"rights-bound handoff ready for an external privileged publisher: {sealed.object_id}"
+    )
 
 
 corpus_app = typer.Typer(name="corpus", help="Immutable corpus artifact operations.")
