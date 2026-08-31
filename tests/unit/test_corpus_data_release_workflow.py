@@ -68,3 +68,25 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     build_scripts = "\n".join(str(step.get("run", "")) for step in build["steps"])
     assert "pip download --require-hashes" in build_scripts
     assert "PUBLISHER_ENV" in scripts
+
+
+def test_publisher_uses_protected_secret_not_repository_variable() -> None:
+    workflow = _workflow()
+    publish = workflow["jobs"]["publish"]
+    assert isinstance(publish, dict)
+    text = str(publish.get("env", {}).get("GENEREVIEWS_RIGHTS_RECORD_JSON", ""))
+    assert text == "${{ secrets.GENEREVIEWS_RIGHTS_RECORD_JSON }}"
+    assert "vars.GENEREVIEWS_RIGHTS_RECORD_JSON" not in str(publish)
+
+
+def test_each_promotion_path_reverifies_remote_release_before_unseal() -> None:
+    steps = _workflow()["jobs"]["publish"]["steps"]
+    gate = next(
+        step for step in steps if step.get("name") == "Four-state immutable publication gate"
+    )
+    script = gate["run"]
+    assert script.count('gh release edit "$tag" --draft=false') == 2
+    assert script.count("verify_existing") >= 3
+    assert "draft_publish_existing) verify_existing; gh release edit" in script
+    assert "create) gh release create" in script
+    assert "create) gh release create" in script and "&& verify_existing &&" in script

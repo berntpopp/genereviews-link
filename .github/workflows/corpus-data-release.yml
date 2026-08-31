@@ -121,7 +121,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
       OBJECT_ID: ${{ inputs.object_id }}
-      GENEREVIEWS_RIGHTS_RECORD_JSON: ${{ vars.GENEREVIEWS_RIGHTS_RECORD_JSON }}
+      GENEREVIEWS_RIGHTS_RECORD_JSON: ${{ secrets.GENEREVIEWS_RIGHTS_RECORD_JSON }}
     steps:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
@@ -205,6 +205,6 @@ jobs:
           case "$state" in
             published_noop) verify_existing; echo "published_noop: exact immutable release verified" ;;
             draft_publish_existing) verify_existing; gh release edit "$tag" --draft=false ;;
-            create) gh release create "$tag" --draft --title "$tag" "$handoff/corpus.dump" "$handoff/manifest.json" "$handoff/SHA256SUMS" && gh attestation verify "$handoff/corpus.dump" --repo "$GH_REPO" && gh release edit "$tag" --draft=false ;;
+            create) gh release create "$tag" --draft --title "$tag" "$handoff/corpus.dump" "$handoff/manifest.json" "$handoff/SHA256SUMS" && verify_existing && gh release edit "$tag" --draft=false ;;
             collision) echo "collision: refusing unknown release state" >&2; exit 1 ;;
           esac
