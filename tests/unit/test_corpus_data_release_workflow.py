@@ -35,6 +35,9 @@ def test_data_release_build_is_data_only_and_unprivileged() -> None:
     assert "pg_restore" in scripts and "|| true" not in scripts
     assert "release_assets" in scripts
     assert "gh release download" not in scripts
+    assert "${{ inputs.source_tag }}" not in scripts
+    download = next(step for step in steps if "Bounded download" in str(step.get("name", "")))
+    assert download["env"]["SOURCE_TAG"] == "${{ inputs.source_tag }}"
 
 
 def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> None:
@@ -103,3 +106,5 @@ def test_each_promotion_path_uses_exact_release_and_tag_identities() -> None:
     assert ".draft == true and .immutable == false and .published_at == null" in script
     assert '.draft == false and .immutable == true and (.published_at | type == "string")' in script
     assert script.count("verify_remote") >= 3
+    assert "require_exact_tag" in script
+    assert "published_noop: exact immutable release verified" in script

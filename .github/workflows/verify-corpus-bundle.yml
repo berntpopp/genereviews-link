@@ -44,12 +44,13 @@ jobs:
       - name: Bounded fresh-directory download_guard, archive-policy, and attestation verification
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           umask 077
           verify_dir="$(mktemp -d "$RUNNER_TEMP/verify.XXXXXX")"
           uv run python -m genereview_link.corpus.release_assets \
-            --repo "$GITHUB_REPOSITORY" --tag "${{ inputs.release_tag }}" --dest "$verify_dir"
+            --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" --dest "$verify_dir"
           uv run python - "$verify_dir/corpus.dump" <<'PY'
           from pathlib import Path
           from genereview_link.db.restore import assert_data_only_archive, read_archive_entries

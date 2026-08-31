@@ -54,12 +54,13 @@ jobs:
       - name: Bounded download and attest exact three-asset source into a fresh directory
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_TAG: ${{ inputs.source_tag }}
         run: |
           set -euo pipefail
           umask 077
           source_dir="$(mktemp -d "$RUNNER_TEMP/source.XXXXXX")"
           uv run python -m genereview_link.corpus.release_assets \
-            --repo "$GITHUB_REPOSITORY" --tag "${{ inputs.source_tag }}" --dest "$source_dir"
+            --repo "$GITHUB_REPOSITORY" --tag "$SOURCE_TAG" --dest "$source_dir"
           uv run python - "$source_dir/corpus.dump" <<'PY'
           from pathlib import Path
           from genereview_link.db.restore import assert_data_only_archive, read_archive_entries
@@ -194,6 +195,13 @@ jobs:
             fi
           }
 
+          require_exact_tag() {
+            response="$RUNNER_TEMP/required-tag-ref.json"
+            timeout 60s gh api "repos/$GH_REPO/git/ref/tags/$tag" >"$response"
+            jq -e --arg expected "$build_revision" \
+              '.object.type == "commit" and .object.sha == $expected' "$response" >/dev/null
+          }
+
           verify_remote() {
             release_id="$1"
             grep -Eq '^[1-9][0-9]{0,18}$' <<<"$release_id"
@@ -259,6 +267,7 @@ jobs:
             if test "$(jq -er '.draft | tostring' "$RUNNER_TEMP/release-$release_id.json")" = true; then
               promote=true
             else
+              require_exact_tag
               echo "published_noop: exact immutable release verified"
             fi
           else

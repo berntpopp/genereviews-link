@@ -20,6 +20,11 @@ def test_verifier_uses_exact_assets_and_rebuilds_schema_before_restore() -> None
     scripts = "\n".join(str(step.get("run", "")) for step in verify["steps"])
     assert "release_assets" in scripts
     assert "gh release download" not in scripts
+    assert "${{ inputs.release_tag }}" not in scripts
+    download = next(
+        step for step in verify["steps"] if "Bounded fresh-directory" in step.get("name", "")
+    )
+    assert download["env"]["RELEASE_TAG"] == "${{ inputs.release_tag }}"
     assert "genereview-link db migrate" in scripts
     assert "--data-only" in scripts
     assert "--no-owner" in scripts
