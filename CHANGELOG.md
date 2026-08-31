@@ -2,6 +2,11 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
+## [5.1.4] - 2026-08-31
+
+- Pinned the data-release provenance attestation action to its reviewed immutable v4.2.2 revision.
+  This is workflow source maintenance only; it does not publish or alter corpus data.
+
 ## [5.1.3] - 2026-08-31
 
 - Re-pinned the Python base image and all CI workflow dependencies to reviewed immutable revisions.

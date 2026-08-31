@@ -26,6 +26,10 @@ def test_release_dependencies_use_reviewed_immutable_pins() -> None:
         "_container-release.yml@db47bd3357cebf33e6722615c4f0e7419a64857e"
         in (ROOT / ".github/workflows/container-release.yml").read_text()
     )
+    assert (
+        "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
+        in (ROOT / ".github/workflows/corpus-data-release.yml").read_text()
+    )
 
 
 def test_production_compose_uses_the_approved_restart_policy() -> None:
