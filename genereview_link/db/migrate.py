@@ -18,6 +18,7 @@ from typing import Literal
 import asyncpg
 
 from genereview_link.db.identifiers import quote_pg_identifier, validate_schema_identifier
+from genereview_link.db.locks import CORPUS_WRITE_LOCK_KEY
 from genereview_link.db.migrations import control as control_pkg
 from genereview_link.db.migrations import data as data_pkg
 
@@ -76,6 +77,7 @@ async def apply_control_migrations(pool: asyncpg.Pool) -> list[str]:
             if version in existing:
                 continue
             async with conn.transaction():
+                await conn.execute("select pg_advisory_xact_lock($1)", CORPUS_WRITE_LOCK_KEY)
                 await conn.execute(sql)
                 await conn.execute(
                     "insert into public.schema_migrations (namespace, version) "
@@ -114,6 +116,7 @@ async def apply_data_migrations(pool: asyncpg.Pool, *, schema: str) -> list[str]
             if qualified in existing:
                 continue
             async with conn.transaction():
+                await conn.execute("select pg_advisory_xact_lock($1)", CORPUS_WRITE_LOCK_KEY)
                 await conn.execute(f"set local search_path to {quoted_schema}, public")
                 await conn.execute(sql)
                 await conn.execute(

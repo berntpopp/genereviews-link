@@ -23,6 +23,7 @@ from genereview_link.corpus.records import ChapterRecord, PassageRecord
 from genereview_link.corpus.sidedata import load_sidedata
 from genereview_link.corpus.source_identity import SIDEDATA_FILES, validate_source_identity
 from genereview_link.db.identifiers import quote_pg_identifier
+from genereview_link.db.locks import CORPUS_WRITE_LOCK_KEY
 from genereview_link.db.migrate import apply_data_migrations
 from genereview_link.download_guard import (
     STREAM_TIMEOUT,
@@ -50,6 +51,7 @@ class IngestResult:
 async def prepare_staging(pool: asyncpg.Pool) -> None:
     """Stage 0: drop and recreate the genereview_staging schema."""
     async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select pg_advisory_xact_lock($1)", CORPUS_WRITE_LOCK_KEY)
         await conn.execute("drop schema if exists genereview_staging cascade")
         await conn.execute(
             "delete from public.schema_migrations "
@@ -79,23 +81,42 @@ async def record_corpus_version_start(
     )
     exact_side_data = source["side_data"]
     assert isinstance(exact_side_data, dict)
-    base = listing.last_updated.split(" ")[0]  # "2026-05-10"
     async with pool.acquire() as conn:
-        # pick next free -rN suffix for same-day re-ingest
-        version = base
-        existing = await conn.fetchval(
-            "select 1 from public.genereview_corpus_version where version = $1", version
-        )
-        if existing:
-            n = 2
-            while await conn.fetchval(
-                "select 1 from public.genereview_corpus_version where version = $1",
-                f"{base}-r{n}",
-            ):
-                n += 1
-            version = f"{base}-r{n}"
-        await conn.execute(
-            """
+        await conn.execute("select pg_advisory_lock($1)", CORPUS_WRITE_LOCK_KEY)
+        try:
+            return await _record_corpus_version_start_locked(
+                conn, listing=listing, source=source, exact_side_data=exact_side_data
+            )
+        finally:
+            await conn.execute("select pg_advisory_unlock($1)", CORPUS_WRITE_LOCK_KEY)
+
+
+async def _record_corpus_version_start_locked(
+    conn: asyncpg.Connection,
+    *,
+    listing: ArchiveListing,
+    source: Mapping[str, object],
+    exact_side_data: Mapping[str, Mapping[str, str | int]],
+) -> str:
+    """Choose and insert a version while the database-wide writer lock is held."""
+    base = str(source["last_updated"]).split(" ")[0]
+    tarball = source["tarball"]
+    if not isinstance(tarball, Mapping):
+        raise ValueError("source tarball identity is incomplete")
+    version = base
+    existing = await conn.fetchval(
+        "select 1 from public.genereview_corpus_version where version = $1", version
+    )
+    if existing:
+        n = 2
+        while await conn.fetchval(
+            "select 1 from public.genereview_corpus_version where version = $1",
+            f"{base}-r{n}",
+        ):
+            n += 1
+        version = f"{base}-r{n}"
+    await conn.execute(
+        """
             insert into public.genereview_corpus_version
                 (version, listing_relpath, file_list_etag,
                  tarball_sha256, tarball_size_bytes,
@@ -105,20 +126,20 @@ async def record_corpus_version_start(
                  ingest_started_at, ingest_status, is_active)
             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
                     'in_progress', false)
-            """,
-            version,
-            source["listing_relpath"],
-            listing.last_updated,
-            tarball_sha256,
-            size,
-            exact_side_data[SIDEDATA_FILES[0]]["sha256"],
-            exact_side_data[SIDEDATA_FILES[0]]["size_bytes"],
-            exact_side_data[SIDEDATA_FILES[1]]["sha256"],
-            exact_side_data[SIDEDATA_FILES[1]]["size_bytes"],
-            exact_side_data[SIDEDATA_FILES[2]]["sha256"],
-            exact_side_data[SIDEDATA_FILES[2]]["size_bytes"],
-            datetime.now(UTC),
-        )
+        """,
+        version,
+        str(source["listing_relpath"]),
+        str(source["last_updated"]),
+        str(tarball["sha256"]),
+        int(tarball["size_bytes"]),
+        exact_side_data[SIDEDATA_FILES[0]]["sha256"],
+        exact_side_data[SIDEDATA_FILES[0]]["size_bytes"],
+        exact_side_data[SIDEDATA_FILES[1]]["sha256"],
+        exact_side_data[SIDEDATA_FILES[1]]["size_bytes"],
+        exact_side_data[SIDEDATA_FILES[2]]["sha256"],
+        exact_side_data[SIDEDATA_FILES[2]]["size_bytes"],
+        datetime.now(UTC),
+    )
     return version
 
 
@@ -130,6 +151,7 @@ async def atomic_swap(
 ) -> None:
     """Stage 8: rename schemas + flip is_active in a single transaction."""
     async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select pg_advisory_xact_lock($1)", CORPUS_WRITE_LOCK_KEY)
         # find any existing active version
         existing = await conn.fetchval(
             "select version from public.genereview_corpus_version where is_active"
@@ -198,7 +220,8 @@ async def cleanup_old(pool: asyncpg.Pool, *, retain: int = 2) -> int:
     if len(rows) <= retain:
         return 0
     for row in rows[retain:]:
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.execute("select pg_advisory_xact_lock($1)", CORPUS_WRITE_LOCK_KEY)
             # Fail closed: validate the catalog-sourced schema name before the DDL.
             quoted = quote_pg_identifier(row["schema_name"])
             await conn.execute(f"drop schema {quoted} cascade")
@@ -285,6 +308,7 @@ async def _flush(
     version: str,
 ) -> None:
     async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select pg_advisory_xact_lock($1)", CORPUS_WRITE_LOCK_KEY)
         # ``set local`` only takes effect inside a transaction. Without the
         # transaction wrapper, the COPY targets fall back to the connection's
         # default search_path (the user's own ``genereview`` schema), and the

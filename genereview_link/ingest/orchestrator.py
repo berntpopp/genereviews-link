@@ -11,6 +11,7 @@ import asyncpg
 
 from genereview_link.config import settings
 from genereview_link.db.identifiers import quote_pg_identifier
+from genereview_link.db.locks import CORPUS_WRITE_LOCK_KEY
 from genereview_link.retrieval.embeddings import (
     EmbeddingProvider,
     bge_passage_text,
@@ -109,7 +110,8 @@ async def backfill_embeddings(
             records = await encoded_q.get()
             if records is None:
                 return
-            async with pool.acquire() as conn:
+            async with pool.acquire() as conn, conn.transaction():
+                await conn.execute("select pg_advisory_xact_lock($1)", CORPUS_WRITE_LOCK_KEY)
                 await conn.execute(f"set search_path to {quoted_schema}, public")
                 await conn.copy_records_to_table(
                     "genereview_embeddings_bge384",
@@ -132,12 +134,29 @@ async def backfill_embeddings(
 async def build_hnsw_index(pool: asyncpg.Pool, *, schema: str = "genereview") -> None:
     """Build the HNSW index post-COPY."""
     quoted_schema = quote_pg_identifier(schema)
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select pg_advisory_xact_lock($1)", CORPUS_WRITE_LOCK_KEY)
         await conn.execute(
             f"""
-            create index if not exists genereview_embeddings_bge384_hnsw_cosine
-                on {quoted_schema}.genereview_embeddings_bge384
-                using hnsw (embedding vector_cosine_ops)
-                with (m = 16, ef_construction = 200)
-            """
+                create index if not exists genereview_embeddings_bge384_hnsw_cosine
+                    on {quoted_schema}.genereview_embeddings_bge384
+                    using hnsw (embedding vector_cosine_ops)
+                    with (m = 16, ef_construction = 200)
+                """
+        )
+
+
+async def rebuild_hnsw_index(pool: asyncpg.Pool, *, schema: str = "genereview") -> None:
+    """Rebuild only the reviewed HNSW index without inserting embeddings."""
+    quoted_schema = quote_pg_identifier(schema)
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("select pg_advisory_xact_lock($1)", CORPUS_WRITE_LOCK_KEY)
+        await conn.execute("drop index if exists genereview_embeddings_bge384_hnsw_cosine")
+        await conn.execute(
+            f"""
+                create index genereview_embeddings_bge384_hnsw_cosine
+                    on {quoted_schema}.genereview_embeddings_bge384
+                    using hnsw (embedding vector_cosine_ops)
+                    with (m = 16, ef_construction = 200)
+                """
         )

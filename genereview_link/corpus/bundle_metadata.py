@@ -105,9 +105,11 @@ def resolve_app_git_sha(
     return _validated_git_revision(resolved.stdout)
 
 
-async def collect_database_facts(pool: asyncpg.Pool) -> BundleDatabaseFacts | None:
-    """Collect complete, fail-closed provenance for the one active corpus."""
-    row = await pool.fetchrow(
+async def collect_database_facts_from_connection(
+    connection: asyncpg.Connection,
+) -> BundleDatabaseFacts | None:
+    """Collect all bundle facts from one already-fenced database snapshot."""
+    row = await connection.fetchrow(
         """
         select version, listing_relpath, file_list_etag,
                tarball_sha256, tarball_size_bytes,
@@ -122,7 +124,7 @@ async def collect_database_facts(pool: asyncpg.Pool) -> BundleDatabaseFacts | No
     if row is None:
         return None
 
-    migration_rows = await pool.fetch(
+    migration_rows = await connection.fetch(
         """
         select namespace, version
           from public.schema_migrations
@@ -137,10 +139,10 @@ async def collect_database_facts(pool: asyncpg.Pool) -> BundleDatabaseFacts | No
         migrations[namespace].append(str(migration["version"]))
 
     passage_count = int(
-        await pool.fetchval('select count(*) from "genereview".genereview_passages') or 0
+        await connection.fetchval('select count(*) from "genereview".genereview_passages') or 0
     )
     embedding_count = int(
-        await pool.fetchval(
+        await connection.fetchval(
             """
             select count(*)
               from "genereview".genereview_embeddings_bge384
@@ -150,7 +152,7 @@ async def collect_database_facts(pool: asyncpg.Pool) -> BundleDatabaseFacts | No
         or 0
     )
     hnsw_exists = bool(
-        await pool.fetchval(
+        await connection.fetchval(
             """
             select exists (
               select 1 from pg_indexes
@@ -160,9 +162,10 @@ async def collect_database_facts(pool: asyncpg.Pool) -> BundleDatabaseFacts | No
             """
         )
     )
-    server_version = str(await pool.fetchval("select current_setting('server_version_num')"))
+    server_version = str(await connection.fetchval("select current_setting('server_version_num')"))
     pgvector_version = str(
-        await pool.fetchval("select extversion from pg_extension where extname = 'vector'") or ""
+        await connection.fetchval("select extversion from pg_extension where extname = 'vector'")
+        or ""
     )
 
     source_sha256 = str(row["tarball_sha256"])
@@ -206,6 +209,13 @@ async def collect_database_facts(pool: asyncpg.Pool) -> BundleDatabaseFacts | No
         postgres_major=str(int(server_version) // 10_000),
         pgvector_version=pgvector_version,
     )
+
+
+async def collect_database_facts(pool: asyncpg.Pool) -> BundleDatabaseFacts | None:
+    """Collect complete, fail-closed provenance for the one active corpus."""
+    # asyncpg pools expose the fetch helpers directly; keeping this facade also
+    # preserves the lightweight mocked-pool contract used by unit tests.
+    return await collect_database_facts_from_connection(pool)
 
 
 def validate_release_id(release_id: str) -> str:

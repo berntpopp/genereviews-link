@@ -31,7 +31,33 @@ def _source(tmp_path: Path) -> Path:
     )
 
 
+def _write_rights(path: Path, record: dict[str, object], tmp_path: Path) -> None:
+    evidence = tmp_path / "rights-evidence.json"
+    evidence.write_text('{"decision":"affirmative"}\n')
+    record.setdefault("terms_uri", "https://example.org/terms/2026-08")
+    record.setdefault("terms_sha256", "b" * 64)
+    record["evidence_uri"] = str(evidence)
+    record["evidence_sha256"] = hashlib.sha256(evidence.read_bytes()).hexdigest()
+    unsigned = dict(record)
+    record["rights_record_sha256"] = hashlib.sha256(
+        (json.dumps(unsigned, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    ).hexdigest()
+    path.write_text(json.dumps(record))
+
+
+def _rewrite_rights_digest(record: dict[str, object]) -> None:
+    unsigned = {key: value for key, value in record.items() if key != "rights_record_sha256"}
+    record["rights_record_sha256"] = hashlib.sha256(
+        (json.dumps(unsigned, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    ).hexdigest()
+
+
 def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
+    evaluation_results = {
+        "mrr_at_10": 0.2,
+        "section_precision_at_5": 0.4,
+        "queries_run": 5,
+    }
     return BundleManifest(
         corpus_release_id=release_id,
         corpus_version="2026-08-30-r3",
@@ -83,6 +109,18 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
             },
         },
         validation={"status": "passed", "smoke_queries": []},
+        evaluation={
+            "status": "passed",
+            "suite": "tests/eval/genereviews_queries.jsonl",
+            "suite_sha256": "e" * 64,
+            "model_name": "BAAI/bge-small-en-v1.5",
+            "results": evaluation_results,
+            "result_sha256": hashlib.sha256(
+                (
+                    json.dumps(evaluation_results, sort_keys=True, separators=(",", ":")) + "\n"
+                ).encode()
+            ).hexdigest(),
+        },
     )
 
 
@@ -197,10 +235,10 @@ def test_rights_record_binds_affirmative_decision_to_exact_object(tmp_path: Path
         "corpus_release_id": "2026-08-30-r1",
     }
     rights = tmp_path / "rights.json"
-    rights.write_text(json.dumps(record))
+    _write_rights(rights, record, tmp_path)
     assert verify_rights_record(rights, sealed.object_id)["decision"] == "affirmative"
     record["decision"] = "pending"
-    rights.write_text(json.dumps(record))
+    _write_rights(rights, record, tmp_path)
     with pytest.raises(HandoffError, match="affirmative"):
         verify_rights_record(rights, sealed.object_id)
 
@@ -327,7 +365,7 @@ def test_publisher_rejects_a_rights_record_for_a_different_source(tmp_path: Path
         "corpus_release_id": "2026-08-30-r1",
     }
     rights = tmp_path / "rights.json"
-    rights.write_text(json.dumps(record))
+    _write_rights(rights, record, tmp_path)
 
     with pytest.raises(HandoffError, match="source_sha256"):
         prepare_publish_handoff(tmp_path / "handoffs", sealed.object_id, rights)
@@ -384,6 +422,18 @@ def test_data_only_verifier_rejects_duplicate_migration_identity(tmp_path: Path)
     source = write_data_only_bundle(work_dir=work, output=tmp_path / "source", manifest=manifest)
 
     with pytest.raises(HandoffError, match="migration identity"):
+        verify_data_only_bundle(source)
+
+
+def test_data_only_verifier_requires_bound_evaluation_evidence(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "corpus.dump").write_bytes(b"PGDMP-data")
+    manifest = _verified_manifest()
+    manifest.evaluation["result_sha256"] = "0" * 64
+    source = write_data_only_bundle(work_dir=work, output=tmp_path / "source", manifest=manifest)
+
+    with pytest.raises(HandoffError, match="result digest"):
         verify_data_only_bundle(source)
 
 
@@ -448,7 +498,7 @@ def test_rights_record_requires_durable_evidence_and_distinct_reviewers(tmp_path
         "corpus_release_id": "2026-08-30-r1",
     }
     rights = tmp_path / "rights.json"
-    rights.write_text(json.dumps(record))
+    _write_rights(rights, record, tmp_path)
     assert verify_rights_record(rights, sealed.object_id)["decision"] == "affirmative"
 
 
@@ -473,10 +523,14 @@ def test_rights_record_rejects_future_decision_and_relative_evidence(tmp_path: P
         "corpus_release_id": "2026-08-30-r1",
     }
     rights = tmp_path / "rights.json"
+    _write_rights(rights, record, tmp_path)
+    record["evidence_uri"] = "rights-record.json"
+    _rewrite_rights_digest(record)
     rights.write_text(json.dumps(record))
     with pytest.raises(HandoffError, match="durable"):
         verify_rights_record(rights, sealed.object_id)
     record["evidence_uri"] = "/var/lib/rights-record.json"
+    _rewrite_rights_digest(record)
     rights.write_text(json.dumps(record))
-    with pytest.raises(HandoffError, match="future"):
+    with pytest.raises(HandoffError, match="durable"):
         verify_rights_record(rights, sealed.object_id)

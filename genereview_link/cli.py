@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -239,10 +240,17 @@ def embed_cmd(
     fake: Annotated[
         bool, typer.Option("--fake", help="Use deterministic FakeEmbeddingProvider (testing).")
     ] = False,
+    index_only: Annotated[
+        bool, typer.Option("--index-only", help="Rebuild HNSW without inserting embeddings.")
+    ] = False,
 ) -> None:
     """Backfill BGE embeddings for missing passages and build HNSW index."""
     from genereview_link.db.pool import create_pool
-    from genereview_link.ingest.orchestrator import backfill_embeddings, build_hnsw_index
+    from genereview_link.ingest.orchestrator import (
+        backfill_embeddings,
+        build_hnsw_index,
+        rebuild_hnsw_index,
+    )
     from genereview_link.retrieval.embeddings import (
         FakeEmbeddingProvider,
         SentenceTransformerEmbeddingProvider,
@@ -251,6 +259,10 @@ def embed_cmd(
     async def run() -> None:
         pool = await create_pool()
         try:
+            if index_only:
+                await rebuild_hnsw_index(pool, schema=schema)
+                typer.echo("HNSW index rebuilt")
+                return
             provider = (
                 FakeEmbeddingProvider(dim=384) if fake else SentenceTransformerEmbeddingProvider()
             )
@@ -273,6 +285,7 @@ def _build_bundle(
     output: Path | None,
     release_id: str | None,
     skip_validation: bool,
+    evaluation_file: Path | None = None,
 ) -> Path:
     """Build a local data-only corpus directory from DATABASE_URL."""
 
@@ -283,10 +296,11 @@ def _build_bundle(
         write_data_only_bundle,
     )
     from genereview_link.corpus.bundle_metadata import (
-        collect_database_facts,
+        collect_database_facts_from_connection,
         resolve_app_git_sha,
     )
-    from genereview_link.corpus.bundle_validation import validate_database_ready
+    from genereview_link.corpus.bundle_validation import validate_database_ready_from_connection
+    from genereview_link.db.locks import CORPUS_WRITE_LOCK_KEY
     from genereview_link.db.pool import create_pool
 
     if release_id and output is None:
@@ -296,45 +310,80 @@ def _build_bundle(
     async def run() -> Path:
         pool = await create_pool()
         try:
-            facts = await collect_database_facts(pool)
-            if facts is None:
+            # Fast fail before opening the fenced export transaction.  The complete
+            # identity is collected again inside that transaction below.
+            if (
+                await pool.fetchrow(
+                    "select 1 from public.genereview_corpus_version "
+                    "where is_active and ingest_status = 'completed'"
+                )
+                is None
+            ):
                 typer.echo("no active corpus version; aborting")
                 raise typer.Exit(1)
-
-            validation_manifest: dict[str, Any] = {
-                "status": "not_run",
-                "smoke_queries": [],
-            }
-            if not skip_validation:
-                validation = await validate_database_ready(pool)
-                validation_manifest = validation.as_manifest()
-                if not validation.ok:
-                    for error in validation.errors:
-                        typer.echo(f"error: {error}", err=True)
-                    raise typer.Exit(1)
-                # Bind the manifest to the same post-validation database identity that
-                # was actually checked, closing a concurrent migration/extension race.
-                facts = await collect_database_facts(pool)
-                if facts is None:
-                    typer.echo("no active corpus version after validation; aborting")
-                    raise typer.Exit(1)
-
-            if release_id:
-                from genereview_link.corpus.bundle_metadata import validate_release_id
-
-                validate_release_id(release_id)
-                source_date = facts.tarball_last_updated[:10]
-                if release_id[:10] != source_date:
-                    raise typer.BadParameter(
-                        "must use the normalized upstream source last_updated date",
-                        param_hint="--release-id",
-                    )
-
             from genereview_link import __version__
 
             with tempfile.TemporaryDirectory() as td:
                 td_path = Path(td)
-                pg_dump_to(td_path / "corpus.dump", database_url=settings.DATABASE_URL)
+                async with pool.acquire() as connection:  # noqa: SIM117 - export must stay in transaction
+                    async with connection.transaction(isolation="repeatable_read", readonly=True):
+                        await connection.execute(
+                            "select pg_advisory_xact_lock($1)", CORPUS_WRITE_LOCK_KEY
+                        )
+                        facts = await collect_database_facts_from_connection(connection)
+                        if facts is None:
+                            typer.echo("no active corpus version; aborting")
+                            raise typer.Exit(1)
+                        validation_manifest: dict[str, Any] = {
+                            "status": "not_run",
+                            "smoke_queries": [],
+                        }
+                        if not skip_validation:
+                            validation = await validate_database_ready_from_connection(connection)
+                            validation_manifest = validation.as_manifest()
+                            if not validation.ok:
+                                for error in validation.errors:
+                                    typer.echo(f"error: {error}", err=True)
+                                raise typer.Exit(1)
+                        snapshot = await connection.fetchval("select pg_export_snapshot()")
+                        pg_dump_to(
+                            td_path / "corpus.dump",
+                            database_url=settings.DATABASE_URL,
+                            snapshot=str(snapshot),
+                        )
+
+                if release_id:
+                    from genereview_link.corpus.bundle_metadata import validate_release_id
+
+                    validate_release_id(release_id)
+                    source_date = facts.tarball_last_updated[:10]
+                    if release_id[:10] != source_date:
+                        raise typer.BadParameter(
+                            "must use the normalized upstream source last_updated date",
+                            param_hint="--release-id",
+                        )
+
+                if evaluation_file is None:
+                    evaluation: dict[str, object] = {
+                        "status": "not_run",
+                        "suite": "tests/eval/genereviews_queries.jsonl",
+                        "suite_sha256": "",
+                        "model_name": "BAAI/bge-small-en-v1.5",
+                        "results": {},
+                        "result_sha256": "",
+                    }
+                else:
+                    try:
+                        evaluation = json.loads(evaluation_file.read_text())
+                    except (OSError, json.JSONDecodeError) as error:
+                        raise typer.BadParameter(
+                            "evaluation file must be readable JSON", param_hint="--evaluation-file"
+                        ) from error
+                    if not isinstance(evaluation, dict):
+                        raise typer.BadParameter(
+                            "evaluation file must contain one JSON object",
+                            param_hint="--evaluation-file",
+                        )
                 m = BundleManifest(
                     corpus_release_id=release_id or "",
                     corpus_version=facts.corpus_version,
@@ -362,6 +411,7 @@ def _build_bundle(
                     source=facts.source,
                     created_by="ci" if os.getenv("GITHUB_ACTIONS") == "true" else "cli",
                     validation=validation_manifest,
+                    evaluation=evaluation,
                 )
                 write_data_only_bundle(work_dir=td_path, output=output, manifest=m)
                 return output
@@ -398,13 +448,19 @@ def bundle_validate() -> None:
 def bundle_build(
     output: Annotated[Path | None, typer.Option("--output")] = None,
     release_id: Annotated[str | None, typer.Option("--release-id")] = None,
+    evaluation_file: Annotated[Path | None, typer.Option("--evaluation-file")] = None,
     skip_validation: Annotated[
         bool,
         typer.Option("--skip-validation", help="Build without publish-readiness validation."),
     ] = False,
 ) -> None:
     """Build a release bundle from the current DATABASE_URL."""
-    built = _build_bundle(output=output, release_id=release_id, skip_validation=skip_validation)
+    built = _build_bundle(
+        output=output,
+        release_id=release_id,
+        skip_validation=skip_validation,
+        evaluation_file=evaluation_file,
+    )
     typer.echo(f"wrote {built} (+ {built}.sha256)")
 
 
@@ -504,8 +560,6 @@ def corpus_restore() -> None:
                 "select version from public.genereview_corpus_version where is_active"
             )
             if active:
-                # Idempotent: the PostgreSQL volume already holds a restored corpus. A
-                # second restore would duplicate rows, so stop here and let the app start.
                 logger.info("active corpus already present; nothing to restore", version=active)
                 return
 

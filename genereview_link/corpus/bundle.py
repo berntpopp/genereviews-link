@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.resources as resources
 import json
 import shutil
 import subprocess
@@ -10,6 +11,25 @@ import tarfile
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+
+
+def _reviewed_migration_digests() -> dict[str, dict[str, str]]:
+    """Digest the exact SQL files shipped by this source revision."""
+    from genereview_link.db.migrations import control as control_pkg
+    from genereview_link.db.migrations import data as data_pkg
+
+    result: dict[str, dict[str, str]] = {"control": {}, "data": {}}
+    for namespace, package, prefix in (
+        ("control", control_pkg, ""),
+        ("data", data_pkg, "genereview:"),
+    ):
+        for entry in resources.files(package).iterdir():
+            if entry.is_file() and entry.name.endswith(".sql"):
+                version = entry.name.removesuffix(".sql")
+                result[namespace][f"{prefix}{version}"] = hashlib.sha256(
+                    entry.read_bytes()
+                ).hexdigest()
+    return result
 
 
 @dataclass
@@ -39,6 +59,9 @@ class BundleManifest:
     schema_migrations: dict[str, list[str]] = field(
         default_factory=lambda: {"control": [], "data": []}
     )
+    migration_file_sha256: dict[str, dict[str, str]] = field(
+        default_factory=_reviewed_migration_digests
+    )
     app_git_sha: str = ""
     app_version: str = ""
     genereview_link_version: str = ""
@@ -51,6 +74,16 @@ class BundleManifest:
     source: dict[str, object] = field(default_factory=dict)
     validation: dict[str, object] = field(
         default_factory=lambda: {"status": "not_run", "smoke_queries": []}
+    )
+    evaluation: dict[str, object] = field(
+        default_factory=lambda: {
+            "status": "not_run",
+            "suite": "tests/eval/genereviews_queries.jsonl",
+            "suite_sha256": "",
+            "model_name": "BAAI/bge-small-en-v1.5",
+            "results": {},
+            "result_sha256": "",
+        }
     )
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     created_by: str = "manual"
@@ -67,6 +100,7 @@ def pg_dump_to(
     dump_path: Path,
     *,
     database_url: str,
+    snapshot: str | None = None,
     tables: tuple[str, ...] = (
         "genereview.genereview_chapters",
         "genereview.genereview_embeddings_bge384",
@@ -85,6 +119,8 @@ def pg_dump_to(
     ]
     for table in tables:
         cmd.extend(["--table", table])
+    if snapshot is not None:
+        cmd.extend(["--snapshot", snapshot])
     cmd.append(database_url)
     subprocess.run(  # noqa: S603
         cmd,

@@ -8,6 +8,28 @@ from typing import Any
 
 import asyncpg
 
+
+class _ConnectionPool:
+    """Small pool facade used to validate inside a caller-owned transaction."""
+
+    def __init__(self, connection: asyncpg.Connection) -> None:
+        self.connection = connection
+
+    def acquire(self) -> _ConnectionAcquire:
+        return _ConnectionAcquire(self.connection)
+
+
+class _ConnectionAcquire:
+    def __init__(self, connection: asyncpg.Connection) -> None:
+        self.connection = connection
+
+    async def __aenter__(self) -> asyncpg.Connection:
+        return self.connection
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 EXPECTED_CONTROL_MIGRATIONS = frozenset(
     {
@@ -163,3 +185,23 @@ async def validate_database_ready(
         )
 
     return BundleValidationResult(errors=errors, warnings=warnings)
+
+
+async def validate_database_ready_from_connection(
+    connection: asyncpg.Connection,
+    *,
+    schema: str = "genereview",
+    min_chapters: int = 880,
+    min_passages: int = 40_000,
+    embedding_table: str = "genereview_embeddings_bge384",
+    model_name: str = "BAAI/bge-small-en-v1.5",
+) -> BundleValidationResult:
+    """Run validation on a caller-owned repeatable-read connection."""
+    return await validate_database_ready(
+        _ConnectionPool(connection),
+        schema=schema,
+        min_chapters=min_chapters,
+        min_passages=min_passages,
+        embedding_table=embedding_table,
+        model_name=model_name,
+    )

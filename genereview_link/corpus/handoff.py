@@ -1,14 +1,10 @@
-"""Fail-closed, local-only sealing for corpus publication handoffs.
-
-This module deliberately has no GitHub client and never starts a publication.
-It turns a verified data-only bundle into an immutable local object which a
-separate, privileged publisher may inspect after rights review.
-"""
+"""Fail-closed, local-only sealing for corpus publication handoffs."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -20,10 +16,19 @@ MAX_METADATA_BYTES = 1 << 20
 CHUNK_BYTES = 1 << 20
 _SOURCE_FILES = frozenset({"corpus.dump", "manifest.json", "SHA256SUMS"})
 _SEAL_MANIFEST_FILE = "seal-manifest.json"
+__all__ = [
+    "HandoffError",
+    "SealedHandoff",
+    "prepare_publish_handoff",
+    "seal_handoff",
+    "verify_data_only_bundle",
+    "verify_handoff",
+    "verify_rights_record",
+]
 
 
 class HandoffError(ValueError):
-    """The handoff cannot safely be sealed or used."""
+    pass
 
 
 def _valid_wheel_name(name: str) -> bool:
@@ -38,8 +43,6 @@ def _valid_wheel_name(name: str) -> bool:
 
 @dataclass(frozen=True)
 class SealedHandoff:
-    """An immutable, locally verified corpus object."""
-
     object_id: str
     path: Path
     manifest: Path
@@ -56,11 +59,15 @@ def _regular_file(path: Path) -> os.stat_result:
 
 
 def _open_regular(path: Path) -> tuple[int, os.stat_result]:
-    """Open one regular file without a pathname-following race."""
+    parent_fd: int | None = None
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except OSError as error:
+        if parent_fd is not None:
+            os.close(parent_fd)
         raise HandoffError(f"unsafe or missing required file: {path.name}") from error
+    os.close(parent_fd)
     info = os.fstat(fd)
     if not stat.S_ISREG(info.st_mode):
         os.close(fd)
@@ -95,7 +102,6 @@ def _sha256(path: Path) -> tuple[str, int]:
 
 
 def _sha256_facts(path: Path) -> tuple[str, int, int]:
-    """Digest one no-follow regular file and return its current file mode too."""
     digest = hashlib.sha256()
     size = 0
     fd, info = _open_regular(path)
@@ -171,12 +177,7 @@ def _verify_source(source: Path, *, allow_extra: bool = False) -> list[dict[str,
 
 
 def verify_data_only_bundle(bundle: Path, *, allow_extra: bool = False) -> dict[str, object]:
-    """Validate a fresh data-only release directory before restore or sealing.
-
-    It accepts no archive expansion, links, side data, or unchecked metadata:
-    callers must have already placed the three exact release assets in a fresh
-    directory using their bounded downloader.
-    """
+    """Validate a fresh local bundle before restore or sealing."""
     _verify_source(bundle, allow_extra=allow_extra)
     metadata = _load_json(bundle / "manifest.json")
     from genereview_link.corpus.bundle import BundleManifest
@@ -272,6 +273,12 @@ def verify_data_only_bundle(bundle: Path, *, allow_extra: bool = False) -> dict[
         or set(migrations["data"]) != EXPECTED_DATA_MIGRATIONS
     ):
         raise HandoffError("manifest.json schema migrations do not match reviewed migrations")
+    migration_digests = metadata.get("migration_file_sha256")
+    from genereview_link.corpus.bundle import _reviewed_migration_digests
+
+    expected_migration_digests = _reviewed_migration_digests()
+    if migration_digests != expected_migration_digests:
+        raise HandoffError("manifest.json migration file digests do not match reviewed SQL")
     postgres = metadata.get("postgres")
     if not (
         isinstance(postgres, dict)
@@ -294,6 +301,41 @@ def verify_data_only_bundle(bundle: Path, *, allow_extra: bool = False) -> dict[
     validation = metadata.get("validation")
     if not isinstance(validation, dict) or validation.get("status") != "passed":
         raise HandoffError("manifest.json lacks a passing candidate validation")
+    evaluation = metadata.get("evaluation")
+    if not isinstance(evaluation, dict) or set(evaluation) != {
+        "status",
+        "suite",
+        "suite_sha256",
+        "model_name",
+        "results",
+        "result_sha256",
+    }:
+        raise HandoffError("manifest.json lacks exact evaluation evidence")
+    if (
+        evaluation["status"] != "passed"
+        or evaluation["suite"] != "tests/eval/genereviews_queries.jsonl"
+        or evaluation["model_name"] != "BAAI/bge-small-en-v1.5"
+        or not isinstance(evaluation["suite_sha256"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", evaluation["suite_sha256"])
+        or not isinstance(evaluation["result_sha256"], str)
+        or not re.fullmatch(r"[0-9a-f]{64}", evaluation["result_sha256"])
+        or not isinstance(evaluation["results"], dict)
+        or set(evaluation["results"]) != {"mrr_at_10", "section_precision_at_5", "queries_run"}
+        or type(evaluation["results"]["queries_run"]) is not int
+        or evaluation["results"]["queries_run"] <= 0
+        or any(
+            type(evaluation["results"][name]) not in {int, float}
+            or not math.isfinite(evaluation["results"][name])
+            or not 0 <= evaluation["results"][name] <= 1
+            for name in ("mrr_at_10", "section_precision_at_5")
+        )
+    ):
+        raise HandoffError("manifest.json evaluation evidence is invalid")
+    if (
+        hashlib.sha256(_canonical_json(evaluation["results"])).hexdigest()
+        != evaluation["result_sha256"]
+    ):
+        raise HandoffError("manifest.json evaluation result digest mismatch")
     from genereview_link.corpus.source_identity import validate_release_id
 
     try:
@@ -320,26 +362,7 @@ def verify_data_only_bundle(bundle: Path, *, allow_extra: bool = False) -> dict[
     return metadata
 
 
-def _copy_regular(source: Path, destination: Path) -> None:
-    source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    try:
-        if not stat.S_ISREG(os.fstat(source_fd).st_mode):
-            raise HandoffError(f"{source.name} must be a regular file")
-        destination_fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
-        try:
-            while chunk := os.read(source_fd, CHUNK_BYTES):
-                view = memoryview(chunk)
-                while view:
-                    view = view[os.write(destination_fd, view) :]
-            os.fsync(destination_fd)
-        finally:
-            os.close(destination_fd)
-    finally:
-        os.close(source_fd)
-
-
 def _publisher_wheel(publisher_tool: Path) -> tuple[Path, str, int, int]:
-    """Return the sole regular wheel in a fresh publisher-tool directory."""
     try:
         info = publisher_tool.lstat()
     except FileNotFoundError as error:
@@ -348,8 +371,6 @@ def _publisher_wheel(publisher_tool: Path) -> tuple[Path, str, int, int]:
         raise HandoffError("publisher-tool must be a real directory")
     entries = list(publisher_tool.iterdir())
     wheels = [path for path in entries if path.name.endswith(".whl")]
-    # uv creates a harmless ignore marker in an output directory; it is not part of the
-    # sealed object and every other extra entry remains forbidden.
     if len(wheels) != 1 or any(path.name not in {wheels[0].name, ".gitignore"} for path in entries):
         raise HandoffError("publisher-tool must contain exactly one publisher wheel")
     if any(
@@ -357,8 +378,6 @@ def _publisher_wheel(publisher_tool: Path) -> tuple[Path, str, int, int]:
     ):
         raise HandoffError("publisher-tool contains an unsafe ignore marker")
     wheel = wheels[0]
-    # Keep the exact PEP 427 filename.  Renaming a wheel to ``publisher-tool.whl``
-    # makes pip/uv reject it before it can even inspect the sealed bytes.
     if not _valid_wheel_name(wheel.name):
         raise HandoffError("publisher wheel filename is not a valid PEP 427 wheel name")
     digest, size, mode = _sha256_facts(wheel)
@@ -366,6 +385,17 @@ def _publisher_wheel(publisher_tool: Path) -> tuple[Path, str, int, int]:
 
 
 def _assert_handoff_root(handoff_root: Path) -> None:
+    if not handoff_root.is_absolute():
+        raise HandoffError("handoff root must be an absolute durable path")
+    resolved = handoff_root.resolve()
+    checkout = Path.cwd().resolve()
+    serving = os.getenv("GENEREVIEW_SERVING_ROOT")
+    if resolved == checkout or checkout in resolved.parents:
+        raise HandoffError("handoff root must be outside the checkout")
+    if serving:
+        serving_path = Path(serving).resolve()
+        if resolved == serving_path or serving_path in resolved.parents:
+            raise HandoffError("handoff root must be outside serving volumes")
     try:
         info = handoff_root.lstat()
     except FileNotFoundError as error:
@@ -378,9 +408,6 @@ def _assert_handoff_root(handoff_root: Path) -> None:
 
 def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> SealedHandoff:
     """Verify and atomically seal one exact data-only bundle without publishing."""
-    # Capture one complete source snapshot before any copy.  The later digest checks bind
-    # every copied file to this snapshot, while the embedded manifest check binds its
-    # metadata to the same snapshot.
     source_files = _verify_source(source)
     source_manifest = verify_data_only_bundle(source)
     files = [
@@ -435,6 +462,11 @@ def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> S
         for path in staging.iterdir():
             path.chmod(0o400)
         staging.chmod(0o500)
+        staging_fd = os.open(staging, os.O_RDONLY)
+        try:
+            os.fsync(staging_fd)
+        finally:
+            os.close(staging_fd)
         os.replace(staging, target)
         root_fd = os.open(handoff_root, os.O_RDONLY)
         try:
@@ -451,7 +483,6 @@ def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> S
 
 
 def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
-    """Reverify a sealed object before any privileged action is considered."""
     if len(object_id) != 64 or any(char not in "0123456789abcdef" for char in object_id):
         raise HandoffError("object_id must be a lowercase SHA-256")
     _assert_handoff_root(handoff_root)
@@ -540,8 +571,6 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
         actual, _ = _sha256(target / name)
         if actual != digest:
             raise HandoffError(f"checksum mismatch for {name}")
-    # The seal's source/release tuple must agree with the embedded manifest, so a
-    # valid file from bundle A can never be paired with identity from bundle B.
     embedded = verify_data_only_bundle(target, allow_extra=True)
     if (
         record["source_sha256"] != embedded["tarball_source_sha256"]
@@ -551,30 +580,8 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
     return SealedHandoff(object_id=object_id, path=target, manifest=manifest)
 
 
-def verify_rights_record(
-    rights_path: Path, object_id: str, *, sealed: SealedHandoff | None = None
-) -> dict[str, object]:
-    """Accept only a complete affirmative rights decision bound to ``object_id``."""
-    from genereview_link.corpus.rights import RightsError
-    from genereview_link.corpus.rights import verify_rights_record as verify
-
-    sealed_values: dict[str, str] | None = None
-    if sealed is not None:
-        seal = _load_json(sealed.manifest)
-        sealed_values = {}
-        for name in ("source_sha256", "artifact_sha256", "corpus_release_id"):
-            value = seal.get(name)
-            if not isinstance(value, str):
-                raise HandoffError(f"sealed manifest is missing string {name}")
-            sealed_values[name] = value
-    try:
-        return verify(rights_path, object_id, sealed_values=sealed_values)
-    except RightsError as error:
-        raise HandoffError(str(error)) from error
-
-
-def prepare_publish_handoff(handoff_root: Path, object_id: str, rights_path: Path) -> SealedHandoff:
-    """Reverify an object and rights record; intentionally performs no publication."""
-    sealed = verify_handoff(handoff_root, object_id)
-    verify_rights_record(rights_path, sealed.object_id, sealed=sealed)
-    return sealed
+from genereview_link.corpus.handoff_io import copy_regular as _copy_regular  # noqa: E402
+from genereview_link.corpus.publisher_gate import (  # noqa: E402
+    prepare_publish_handoff,
+    verify_rights_record,
+)

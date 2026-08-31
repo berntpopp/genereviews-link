@@ -347,6 +347,22 @@ class TestCliIngest:
 
 
 class TestCliEmbed:
+    def test_embed_index_only_rebuilds_without_provider(self, mocker: MockerFixture) -> None:
+        fake_pool = MagicMock()
+        fake_pool.close = AsyncMock()
+        mocker.patch(
+            "genereview_link.db.pool.create_pool",
+            AsyncMock(return_value=fake_pool),
+        )
+        rebuild = mocker.patch(
+            "genereview_link.ingest.orchestrator.rebuild_hnsw_index",
+            AsyncMock(return_value=None),
+        )
+        result = runner.invoke(cli_app, ["embed", "--index-only"])
+        assert result.exit_code == 0
+        rebuild.assert_awaited_once_with(fake_pool, schema="genereview")
+        assert "HNSW index rebuilt" in result.stdout
+
     def test_embed_fake_provider_runs(self, mocker: MockerFixture) -> None:
         fake_pool = MagicMock()
         fake_pool.close = AsyncMock()
