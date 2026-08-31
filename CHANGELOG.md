@@ -7,6 +7,8 @@ All notable changes to GeneReviews-Link are documented in this file.
 - Preserved the current NCBI GeneReviews corpus when a malformed trailing `colspan`
   overflows the declared table header, while retaining strict rejection for real row-width
   mismatches. The fresh 2026-08-31 source now parses all 890 mapped chapters.
+- Reset stale staging migration records after an interrupted ingest so a safe retry recreates
+  every staging table before writing and still leaves the active corpus untouched until swap.
 
 ## [5.1.4] - 2026-08-31
 

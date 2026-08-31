@@ -25,6 +25,28 @@ FIXTURE_SIDEDATA = Path(__file__).parent.parent / "fixtures" / "sidedata"
 
 @pytest.mark.asyncio
 @pytest.mark.slow
+async def test_prepare_staging_recreates_tables_after_interrupted_ingest(
+    pool: asyncpg.Pool,
+) -> None:
+    await apply_control_migrations(pool)
+    await prepare_staging(pool)
+
+    await prepare_staging(pool)
+
+    async with pool.acquire() as conn:
+        chapters = await conn.fetchval(
+            "select to_regclass('genereview_staging.genereview_chapters')"
+        )
+        migration_count = await conn.fetchval(
+            "select count(*) from public.schema_migrations "
+            "where namespace = 'data' and version like 'genereview_staging:%'"
+        )
+    assert chapters == "genereview_staging.genereview_chapters"
+    assert migration_count > 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.slow
 async def test_full_ingest_against_mini_tarball(pool: asyncpg.Pool) -> None:
     await apply_control_migrations(pool)
     await prepare_staging(pool)

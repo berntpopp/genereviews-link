@@ -46,8 +46,12 @@ class IngestResult:
 
 async def prepare_staging(pool: asyncpg.Pool) -> None:
     """Stage 0: drop and recreate the genereview_staging schema."""
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
         await conn.execute("drop schema if exists genereview_staging cascade")
+        await conn.execute(
+            "delete from public.schema_migrations "
+            "where namespace = 'data' and version like 'genereview_staging:%'"
+        )
     await apply_data_migrations(pool, schema="genereview_staging")
 
 
