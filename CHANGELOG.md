@@ -2,6 +2,12 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
+## [5.1.5] - 2026-08-31
+
+- Preserved the current NCBI GeneReviews corpus when a malformed trailing `colspan`
+  overflows the declared table header, while retaining strict rejection for real row-width
+  mismatches. The fresh 2026-08-31 source now parses all 890 mapped chapters.
+
 ## [5.1.4] - 2026-08-31
 
 - Pinned the data-release provenance attestation action to its reviewed immutable v4.2.2 revision.

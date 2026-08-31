@@ -46,7 +46,7 @@ from genereview_link.corpus.tokenizer import BGE_NET_CHUNK_TOKENS
 
 # Parser version is included in audit logs and can be bound into the
 # corpus_version to invalidate caches on parser-affecting changes.
-PARSER_VERSION = "2026-05-12-r2"
+PARSER_VERSION = "2026-08-31-r3"
 
 # Prose-bearing tags whose text must reach a PassageRecord.
 CAPTURE_TAGS: frozenset[str] = frozenset(
