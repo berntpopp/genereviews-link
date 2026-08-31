@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import subprocess
 import sys
 import tempfile
 from enum import StrEnum
@@ -269,13 +267,6 @@ bundle_app = typer.Typer(name="bundle", help="Build and verify release bundles."
 app.add_typer(bundle_app)
 
 
-def _run_gh(args: list[str]) -> None:
-    try:
-        subprocess.run(["gh", *args], check=True)  # noqa: S603, S607
-    except FileNotFoundError as exc:
-        raise RuntimeError("GitHub CLI 'gh' is required for upload") from exc
-
-
 def _build_bundle(
     *,
     output: Path | None,
@@ -411,27 +402,11 @@ def bundle_build(
 @bundle_app.command("publish-local")
 def bundle_publish_local(
     release_id: Annotated[str, typer.Option("--release-id")],
-    device: Annotated[str, typer.Option("--device")] = "cuda",
-    repo: Annotated[str, typer.Option("--repo")] = "berntpopp/genereviews-link",
-    draft: Annotated[bool, typer.Option("--draft/--no-draft")] = True,
-    upload: Annotated[bool, typer.Option("--upload/--no-upload")] = True,
 ) -> None:
-    """Build a local CUDA corpus bundle and optionally upload it to GitHub Releases."""
+    """Package an already validated local corpus without publishing it."""
     from genereview_link.corpus.bundle_metadata import asset_name_for_release, validate_release_id
-    from genereview_link.corpus.pipeline import run_full_ingest
-    from genereview_link.db.migrate import apply_control_migrations
-    from genereview_link.db.pool import create_pool
-    from genereview_link.ingest.orchestrator import backfill_embeddings, build_hnsw_index
-    from genereview_link.retrieval.embeddings import SentenceTransformerEmbeddingProvider
 
     validate_release_id(release_id)
-    if device.startswith("cuda"):
-        import torch
-
-        if not torch.cuda.is_available():
-            typer.echo("CUDA requested but torch.cuda.is_available() is false", err=True)
-            raise typer.Exit(1)
-
     output = Path(
         asset_name_for_release(
             release_id,
@@ -441,34 +416,8 @@ def bundle_publish_local(
         )
     )
 
-    async def run() -> None:
-        pool = await create_pool()
-        try:
-            await apply_control_migrations(pool)
-            await run_full_ingest(pool)
-            os.environ["INGEST_EMBED_DEVICE"] = device
-            provider = SentenceTransformerEmbeddingProvider(device=device)
-            embedded = await backfill_embeddings(pool, provider)
-            typer.echo(f"embedded {embedded} passages")
-            await build_hnsw_index(pool)
-        finally:
-            await pool.close()
-
-    asyncio.run(run())
     built = _build_bundle(output=output, release_id=release_id, skip_validation=False)
-
-    if upload:
-        tag = f"corpus-{release_id}"
-        release_args = ["release", "create", tag, str(built), f"{built}.sha256", "--repo", repo]
-        if draft:
-            release_args.append("--draft")
-        release_args.extend(
-            ["--title", tag, "--notes", f"Precomputed GeneReviews corpus bundle {release_id}"]
-        )
-        _run_gh(release_args)
-        typer.echo(f"uploaded {built} to {repo} release {tag}")
-    else:
-        typer.echo(f"built {built}; upload skipped")
+    typer.echo(f"local bundle prepared: {built}")
 
 
 corpus_app = typer.Typer(name="corpus", help="Immutable corpus artifact operations.")

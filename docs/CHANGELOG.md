@@ -194,6 +194,11 @@ so this server composes cleanly behind the `genefoundry-router` gateway under th
 
 ## Unreleased
 
+### Fixed
+
+- `bundle publish-local` and `make bundle-publish-local` now package only an already validated
+  local corpus. They no longer ingest, embed, create drafts, upload assets, or invoke GitHub.
+
 ### Breaking changes
 
 1. **Adopted the GeneFoundry Response-Envelope Standard v1**
