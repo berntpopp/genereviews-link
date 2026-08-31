@@ -193,6 +193,20 @@ def verify_data_only_bundle(bundle: Path) -> dict[str, object]:
         or metadata["bundle_format"] != "postgresql-custom-data-only"
     ):
         raise HandoffError("manifest.json is not a v3 data-only bundle")
+    app_git_sha = metadata.get("app_git_sha")
+    if not (
+        isinstance(app_git_sha, str)
+        and len(app_git_sha) in {40, 64}
+        and all(char in "0123456789abcdef" for char in app_git_sha)
+    ):
+        raise HandoffError("manifest.json application Git revision is incomplete")
+    app_version = metadata.get("app_version")
+    if not (
+        isinstance(app_version, str)
+        and app_version
+        and metadata.get("genereview_link_version") == app_version
+    ):
+        raise HandoffError("manifest.json application version identity is incomplete")
     source_sha256 = metadata.get("tarball_source_sha256")
     if not (
         isinstance(source_sha256, str)
@@ -227,6 +241,44 @@ def verify_data_only_bundle(bundle: Path) -> dict[str, object]:
         or embedding["expected_count"] != metadata["passage_count"]
     ):
         raise HandoffError("manifest.json embedding count does not match passage_count")
+    hnsw = metadata.get("hnsw")
+    if not (
+        isinstance(hnsw, dict)
+        and set(hnsw) == {"index_name", "exists"}
+        and hnsw.get("index_name") == "genereview_embeddings_bge384_hnsw_cosine"
+        and hnsw.get("exists") is True
+    ):
+        raise HandoffError("manifest.json lacks the validated HNSW identity")
+    migrations = metadata.get("schema_migrations")
+    if not (
+        isinstance(migrations, dict)
+        and set(migrations) == {"control", "data"}
+        and all(
+            isinstance(values, list)
+            and values
+            and all(isinstance(value, str) and value for value in values)
+            for values in migrations.values()
+        )
+    ):
+        raise HandoffError("manifest.json schema migration identity is incomplete")
+    postgres = metadata.get("postgres")
+    if not (
+        isinstance(postgres, dict)
+        and set(postgres) == {"major_version", "pgvector_version"}
+        and all(isinstance(postgres[name], str) and postgres[name] for name in postgres)
+    ):
+        raise HandoffError("manifest.json PostgreSQL identity is incomplete")
+    source = metadata.get("source")
+    if not (
+        isinstance(source, dict)
+        and set(source) == {"file_list_etag", "tarball_size_bytes"}
+        and isinstance(source.get("file_list_etag"), str)
+        and bool(source["file_list_etag"])
+        and type(source.get("tarball_size_bytes")) is int
+        and source["tarball_size_bytes"] > 0
+        and metadata.get("tarball_last_updated") == source["file_list_etag"]
+    ):
+        raise HandoffError("manifest.json upstream source identity is incomplete")
     validation = metadata.get("validation")
     if not isinstance(validation, dict) or validation.get("status") != "passed":
         raise HandoffError("manifest.json lacks a passing candidate validation")

@@ -67,8 +67,12 @@ def pg_dump_to(
     dump_path: Path,
     *,
     database_url: str,
-    schemas: tuple[str, ...] = ("public", "genereview"),
-    extensions: tuple[str, ...] = ("vector",),
+    tables: tuple[str, ...] = (
+        "genereview.genereview_chapters",
+        "genereview.genereview_embeddings_bge384",
+        "genereview.genereview_passages",
+        "public.genereview_corpus_version",
+    ),
 ) -> None:
     cmd = [
         "pg_dump",
@@ -79,10 +83,8 @@ def pg_dump_to(
         "-f",
         str(dump_path),
     ]
-    for extension in extensions:
-        cmd.extend(["--extension", extension])
-    for schema in schemas:
-        cmd.extend(["--schema", schema])
+    for table in tables:
+        cmd.extend(["--table", table])
     cmd.append(database_url)
     subprocess.run(  # noqa: S603
         cmd,

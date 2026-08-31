@@ -27,26 +27,18 @@ def _source(tmp_path: Path) -> Path:
     return write_data_only_bundle(
         work_dir=work,
         output=tmp_path / "source",
-        manifest=BundleManifest(
-            corpus_release_id="2026-08-30-r1",
-            tarball_source_sha256="a" * 64,
-            embedding={
-                "model_name": "BAAI/bge-small-en-v1.5",
-                "dimension": 384,
-                "distance_metric": "cosine",
-                "active_table": "genereview_embeddings_bge384",
-                "count": 0,
-                "expected_count": 0,
-            },
-            validation={"status": "passed", "smoke_queries": []},
-        ),
+        manifest=_verified_manifest(),
     )
 
 
 def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
     return BundleManifest(
         corpus_release_id=release_id,
+        corpus_version="2026-08-30-r3",
         tarball_source_sha256="a" * 64,
+        tarball_last_updated="2026-08-30 02:41:04",
+        chapter_count=890,
+        passage_count=0,
         embedding={
             "model_name": "BAAI/bge-small-en-v1.5",
             "dimension": 384,
@@ -54,6 +46,22 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
             "active_table": "genereview_embeddings_bge384",
             "count": 0,
             "expected_count": 0,
+        },
+        postgres={"major_version": "18", "pgvector_version": "0.8.2"},
+        schema_migrations={
+            "control": ["0001_base"],
+            "data": ["genereview:0001_chapters"],
+        },
+        app_git_sha="b" * 40,
+        app_version="5.1.5",
+        genereview_link_version="5.1.5",
+        hnsw={
+            "index_name": "genereview_embeddings_bge384_hnsw_cosine",
+            "exists": True,
+        },
+        source={
+            "file_list_etag": "2026-08-30 02:41:04",
+            "tarball_size_bytes": 123,
         },
         validation={"status": "passed", "smoke_queries": []},
     )
@@ -306,4 +314,20 @@ def test_data_only_verifier_rejects_invalid_release_identity(tmp_path: Path) -> 
         manifest=_verified_manifest("not-a-release"),
     )
     with pytest.raises(HandoffError, match="corpus_release_id"):
+        verify_data_only_bundle(source)
+
+
+def test_data_only_verifier_rejects_incomplete_release_provenance(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "corpus.dump").write_bytes(b"PGDMP-data")
+    incomplete = _verified_manifest()
+    incomplete.app_git_sha = ""
+    source = write_data_only_bundle(
+        work_dir=work,
+        output=tmp_path / "source",
+        manifest=incomplete,
+    )
+
+    with pytest.raises(HandoffError, match="application Git revision"):
         verify_data_only_bundle(source)

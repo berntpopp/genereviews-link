@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import tempfile
 from enum import StrEnum
@@ -281,6 +282,10 @@ def _build_bundle(
         pg_dump_to,
         write_data_only_bundle,
     )
+    from genereview_link.corpus.bundle_metadata import (
+        collect_database_facts,
+        resolve_app_git_sha,
+    )
     from genereview_link.corpus.bundle_validation import validate_database_ready
     from genereview_link.db.pool import create_pool
 
@@ -291,10 +296,8 @@ def _build_bundle(
     async def run() -> Path:
         pool = await create_pool()
         try:
-            row = await pool.fetchrow(
-                "select version, chapter_count from public.genereview_corpus_version where is_active"
-            )
-            if not row:
+            facts = await collect_database_facts(pool)
+            if facts is None:
                 typer.echo("no active corpus version; aborting")
                 raise typer.Exit(1)
 
@@ -310,33 +313,37 @@ def _build_bundle(
                         typer.echo(f"error: {error}", err=True)
                     raise typer.Exit(1)
 
-            passage_count = await pool.fetchval(
-                'select count(*) from "genereview".genereview_passages'
-            )
-            embedding_count = await pool.fetchval(
-                """
-                select count(*)
-                  from "genereview".genereview_embeddings_bge384
-                 where model_name = 'BAAI/bge-small-en-v1.5'
-                """
-            )
+            from genereview_link import __version__
+
             with tempfile.TemporaryDirectory() as td:
                 td_path = Path(td)
                 pg_dump_to(td_path / "corpus.dump", database_url=settings.DATABASE_URL)
                 m = BundleManifest(
                     corpus_release_id=release_id or "",
-                    corpus_version=row["version"],
-                    chapter_count=row["chapter_count"] or 0,
-                    passage_count=int(passage_count or 0),
+                    corpus_version=facts.corpus_version,
+                    tarball_source_sha256=facts.tarball_source_sha256,
+                    tarball_last_updated=facts.tarball_last_updated,
+                    chapter_count=facts.chapter_count,
+                    passage_count=facts.passage_count,
                     embedding={
                         "model_name": "BAAI/bge-small-en-v1.5",
                         "dimension": 384,
                         "distance_metric": "cosine",
                         "active_table": "genereview_embeddings_bge384",
-                        "count": int(embedding_count or 0),
-                        "expected_count": int(passage_count or 0),
+                        "count": facts.embedding_count,
+                        "expected_count": facts.passage_count,
                     },
-                    created_by="cli",
+                    postgres=facts.postgres,
+                    schema_migrations=facts.schema_migrations,
+                    app_git_sha=resolve_app_git_sha(),
+                    app_version=__version__,
+                    genereview_link_version=__version__,
+                    hnsw={
+                        "index_name": "genereview_embeddings_bge384_hnsw_cosine",
+                        "exists": facts.hnsw_exists,
+                    },
+                    source=facts.source,
+                    created_by="ci" if os.getenv("GITHUB_ACTIONS") == "true" else "cli",
                     validation=validation_manifest,
                 )
                 write_data_only_bundle(work_dir=td_path, output=output, manifest=m)

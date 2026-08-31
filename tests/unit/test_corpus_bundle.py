@@ -154,6 +154,16 @@ def test_pg_dump_to_calls_subprocess(tmp_path: Path, monkeypatch: pytest.MonkeyP
     pg_dump_to(dump_path, database_url="postgresql://user:pass@localhost/db")
     assert called_with[0][:5] == ["pg_dump", "-Fc", "--data-only", "--no-owner", "--no-privileges"]
     assert called_with[0][-1] == "postgresql://user:pass@localhost/db"
-    assert "--extension" in called_with[0]
-    assert "vector" in called_with[0]
-    assert called_with[0].count("--schema") == 2
+    assert "--schema" not in called_with[0]
+    assert "--extension" not in called_with[0]
+    selected = [
+        called_with[0][index + 1]
+        for index, argument in enumerate(called_with[0])
+        if argument == "--table"
+    ]
+    assert selected == [
+        "genereview.genereview_chapters",
+        "genereview.genereview_embeddings_bge384",
+        "genereview.genereview_passages",
+        "public.genereview_corpus_version",
+    ]
