@@ -37,3 +37,9 @@ def test_production_compose_uses_the_approved_restart_policy() -> None:
     assert "restart: unless-stopped" in compose
     assert "restart: on-failure" not in compose
     assert "restart: on-failure" not in (ROOT / "docker/docker-compose.yml").read_text()
+
+
+def test_container_release_accepts_only_three_component_version_tags() -> None:
+    workflow = (ROOT / ".github/workflows/container-release.yml").read_text()
+    assert '- "v*.*.*"' in workflow
+    assert '- "v*"' not in workflow

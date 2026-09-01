@@ -112,3 +112,42 @@ async def test_downloader_returns_release_and_downloaded_byte_identity(tmp_path:
         name: release_assets.hashlib.sha256(body).hexdigest() for name, body in bodies.items()
     }
     assert (destination / "rights-record.json").is_file()
+
+
+@pytest.mark.asyncio
+async def test_release_cleanup_never_deletes_a_preexisting_race_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "fresh"
+    destination.mkdir()
+
+    async def inject_target(
+        repo: str,
+        tag: str,
+        token: str,
+        *,
+        release_id: int | None = None,
+        allow_draft: bool = False,
+    ) -> release_assets.ReleaseIdentity:
+        del repo, token, release_id, allow_draft
+        (destination / "corpus.dump").write_bytes(b"preexisting")
+        return release_assets.ReleaseIdentity(
+            release_id=7,
+            tag=tag,
+            target_commit="a" * 40,
+            assets=tuple(
+                release_assets.AssetIdentity(
+                    asset_id=index,
+                    name=name,
+                    size=1,
+                    digest="sha256:" + "b" * 64,
+                    url=f"https://api.github.com/repos/o/r/releases/assets/{index}",
+                )
+                for index, name in enumerate(release_assets.PUBLICATION_ASSET_NAMES, 1)
+            ),
+        )
+
+    monkeypatch.setattr(release_assets, "_release_assets", inject_target)
+    with pytest.raises(FileExistsError):
+        await release_assets.download_release_assets("o/r", "tag", destination)
+    assert (destination / "corpus.dump").read_bytes() == b"preexisting"

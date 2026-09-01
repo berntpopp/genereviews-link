@@ -27,6 +27,7 @@ def _manifest() -> dict[str, object]:
             "exists": True,
         },
         "evaluation": {"result_sha256": "2" * 64},
+        "checksums": {"corpus.dump": "3" * 64},
     }
 
 

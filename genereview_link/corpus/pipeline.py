@@ -24,13 +24,14 @@ from genereview_link.corpus.sidedata import load_sidedata
 from genereview_link.corpus.source_capture import load_offline_capture
 from genereview_link.corpus.source_identity import SIDEDATA_FILES, validate_source_identity
 from genereview_link.db.identifiers import quote_pg_identifier
-from genereview_link.db.locks import CORPUS_WRITE_LOCK_KEY
+from genereview_link.db.locks import CORPUS_INGEST_LOCK_KEY, CORPUS_WRITE_LOCK_KEY
 from genereview_link.db.migrate import apply_data_migrations
 from genereview_link.download_guard import (
     STREAM_TIMEOUT,
     build_host_allowlist,
     make_url_guard,
     read_capped,
+    write_exclusive_bytes,
 )
 
 logger = logging.getLogger(__name__)
@@ -259,6 +260,40 @@ async def run_full_ingest(
     prior_manifest: Path | None = None,
     prior_seal_manifest: Path | None = None,
 ) -> IngestResult:
+    """Serialize the entire shared staging lifecycle under a distinct session lock."""
+    offline = (archive, side_data_dir, source_metadata, prior_manifest, prior_seal_manifest)
+    if not all(value is not None for value in offline):
+        message = (
+            "offline ingest requires archive, side-data directory, metadata, prior manifest, "
+            "and prior seal manifest"
+            if any(value is not None for value in offline)
+            else "mutating ingest requires the complete retained offline source set"
+        )
+        raise ValueError(message)
+    async with pool.acquire() as lock_connection:
+        await lock_connection.execute("select pg_advisory_lock($1)", CORPUS_INGEST_LOCK_KEY)
+        try:
+            return await _run_full_ingest_locked(
+                pool,
+                archive=archive,
+                side_data_dir=side_data_dir,
+                source_metadata=source_metadata,
+                prior_manifest=prior_manifest,
+                prior_seal_manifest=prior_seal_manifest,
+            )
+        finally:
+            await lock_connection.execute("select pg_advisory_unlock($1)", CORPUS_INGEST_LOCK_KEY)
+
+
+async def _run_full_ingest_locked(
+    pool: asyncpg.Pool,
+    *,
+    archive: Path | None = None,
+    side_data_dir: Path | None = None,
+    source_metadata: Path | None = None,
+    prior_manifest: Path | None = None,
+    prior_seal_manifest: Path | None = None,
+) -> IngestResult:
     """End-to-end stages 0-9 (excluding embeddings, which run separately)."""
     offline = (archive, side_data_dir, source_metadata, prior_manifest, prior_seal_manifest)
     if any(value is not None for value in offline):
@@ -418,7 +453,7 @@ async def _download_sidedata(target: Path) -> dict[str, dict[str, str | int]]:
                 max_bytes=MAX_SIDEDATA_BYTES,
                 deadline_seconds=SIDEDATA_DOWNLOAD_DEADLINE_SECONDS,
             )
-            (target / name).write_bytes(body)
+            write_exclusive_bytes(target / name, body)
             identity[name] = {
                 "sha256": hashlib.sha256(body).hexdigest(),
                 "size_bytes": len(body),

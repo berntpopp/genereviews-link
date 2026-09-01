@@ -170,7 +170,15 @@ jobs:
           from genereview_link.corpus.handoff import verify_rights_record
           root = Path(sys.argv[1])
           object_id = hashlib.sha256(root.joinpath("seal-manifest.json").read_bytes()).hexdigest()
-          verify_rights_record(root / "rights-record.json", object_id)
+          seal = json.loads(root.joinpath("seal-manifest.json").read_bytes())
+          with root.joinpath("corpus.dump").open("rb") as stream:
+              artifact_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+          sealed_values = {
+              "source_sha256": seal["source_sha256"],
+              "artifact_sha256": artifact_sha256,
+              "corpus_release_id": seal["corpus_release_id"],
+          }
+          verify_rights_record(root / "rights-record.json", object_id, sealed_values=sealed_values)
           record = json.loads(root.joinpath("rights-record.json").read_bytes())
           for name, field in (
               ("rights-evidence.json", "evidence_sha256"),
@@ -206,7 +214,9 @@ jobs:
           if capture != manifest["source_capture"]:
               raise SystemExit("retained source bytes do not match the released capture")
           PY
-          for subject in "$verify_dir/corpus.dump" "$verify_dir/seal-manifest.json" "$verify_dir/publisher-tool.whl"; do
+          for subject in "$verify_dir/corpus.dump" "$verify_dir/manifest.json" \
+            "$verify_dir/SHA256SUMS" "$verify_dir/seal-manifest.json" \
+            "$verify_dir/publisher-tool.whl"; do
             gh attestation verify "$subject" --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/corpus-data-release.yml" \
               --source-ref refs/heads/main --source-digest "$source_revision"

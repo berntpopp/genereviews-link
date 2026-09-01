@@ -8,12 +8,14 @@ import re
 from collections.abc import Iterable
 from contextlib import suppress
 from pathlib import Path
+from time import monotonic
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 MAX_SECRET_BYTES = 48 * 1024
 MAX_RIGHTS_ASSET_BYTES = 1 << 20
+RIGHTS_TRANSFER_DEADLINE_SECONDS = 2 * 60.0
 RIGHTS_ASSET_NAMES = frozenset(
     {"rights-record.json", "rights-evidence.json", "terms-snapshot.html"}
 )
@@ -127,6 +129,7 @@ def fetch_rights_assets(
     assets = locator["assets"]
     assert isinstance(assets, list)
     written: list[Path] = []
+    deadline = monotonic() + RIGHTS_TRANSFER_DEADLINE_SECONDS
     try:
         for asset in assets:
             assert isinstance(asset, dict)
@@ -143,12 +146,19 @@ def fetch_rights_assets(
             remaining = int(asset["size_bytes"])
             try:
                 with opener.open(request, timeout=60) as response, target.open("xb") as output:
-                    while chunk := response.read(min(64 * 1024, remaining + 1)):
+                    while True:
+                        if monotonic() >= deadline:
+                            raise RightsLocatorError("rights asset exceeded its monotonic deadline")
+                        chunk = response.read(min(64 * 1024, remaining + 1))
+                        if not chunk:
+                            break
                         remaining -= len(chunk)
                         if remaining < 0:
                             raise RightsLocatorError("rights asset exceeds its declared size")
                         digest.update(chunk)
                         output.write(chunk)
+                    if monotonic() >= deadline:
+                        raise RightsLocatorError("rights asset exceeded its monotonic deadline")
             except (HTTPError, URLError, TimeoutError, OSError) as error:
                 raise RightsLocatorError("rights asset could not be fetched safely") from error
             if remaining != 0 or digest.hexdigest() != asset["sha256"]:

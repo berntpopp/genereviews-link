@@ -7,6 +7,7 @@ import math
 import re
 from pathlib import Path
 
+from genereview_link.corpus.computation_validation import validate_computation_provenance
 from genereview_link.corpus.handoff import (
     HandoffError,
     _canonical_json,
@@ -14,6 +15,7 @@ from genereview_link.corpus.handoff import (
     _sha256,
     _verify_source,
 )
+from genereview_link.corpus.pg_client import PG18_IMAGE
 
 
 def _computation_run_id(
@@ -147,6 +149,9 @@ def verify_data_only_bundle_impl(
         raise HandoffError("manifest.json PostgreSQL identity does not match reviewed runtime")
     from genereview_link.corpus.source_identity import validate_source_identity
 
+    source_capture = metadata.get("source_capture")
+    if not isinstance(source_capture, dict):
+        raise HandoffError("manifest.json retained source/content identity is incomplete")
     try:
         validate_source_identity(
             metadata.get("source"),
@@ -415,7 +420,7 @@ def verify_data_only_bundle_impl(
         or database["client_major"] != "18"
         or database["server_major"] != "18"
         or database["pgvector"] != "0.8.2"
-        or not str(database["client_image"]).startswith("pgvector/pgvector:0.8.2-pg18@sha256:")
+        or database["client_image"] != PG18_IMAGE
         or not isinstance(determinism, dict)
         or determinism
         != {
@@ -429,11 +434,28 @@ def verify_data_only_bundle_impl(
         or determinism["batch_size"] <= 0
     ):
         raise HandoffError("manifest.json runtime computation provenance is invalid")
-    source_capture = metadata.get("source_capture")
+    try:
+        validate_computation_provenance(provenance, app_git_sha=str(app_git_sha))
+        validate_computation_provenance(
+            ingest_provenance,
+            app_git_sha=str(ingest_run["app_git_sha"]),
+            source_capture=source_capture,
+        )
+    except ValueError as error:
+        raise HandoffError("manifest.json runtime computation provenance is invalid") from error
+    for field in (
+        "uv_lock_sha256",
+        "environment",
+        "database",
+        "model",
+        "determinism",
+        "embedding",
+    ):
+        if ingest_provenance[field] != provenance[field]:
+            raise HandoffError("ingest and embedding runtime provenance do not match")
     content_identity = metadata.get("content_identity")
     if (
-        not isinstance(source_capture, dict)
-        or source_capture.get("format") != "genereviews-offline-source-v1"
+        source_capture.get("format") != "genereviews-offline-source-v1"
         or not isinstance(content_identity, dict)
         or content_identity.get("chapter_ids") != source_capture.get("chapter_ids")
         or content_identity.get("source_archive")

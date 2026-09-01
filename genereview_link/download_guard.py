@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
+import stat
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from time import monotonic
@@ -111,16 +113,30 @@ async def stream_to_file(
     raised.  A separate end-to-end deadline applies even when every individual
     read completes before ``STREAM_TIMEOUT.read``.
     """
+    try:
+        parent_fd = os.open(dest.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        output_fd = os.open(
+            dest.name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent_fd,
+        )
+    except OSError:
+        if "parent_fd" in locals():
+            os.close(parent_fd)
+        raise
+    created = os.fstat(output_fd)
     sha = hashlib.sha256()
     total = 0
     deadline_at = monotonic() + deadline_seconds
+    completed = False
     try:
         async with asyncio.timeout(deadline_seconds):
             async with client.stream("GET", url) as resp:
                 _reject_expired_deadline(deadline_at)
                 resp.raise_for_status()
                 _reject_declared_length(resp, max_bytes)
-                with dest.open("wb") as fh:
+                with os.fdopen(output_fd, "wb", closefd=False) as fh:
                     async for chunk in resp.aiter_bytes(chunk_size):
                         _reject_expired_deadline(deadline_at)
                         total += len(chunk)
@@ -128,14 +144,59 @@ async def stream_to_file(
                             raise ResponseTooLargeError(f"download exceeded {max_bytes} bytes")
                         sha.update(chunk)
                         fh.write(chunk)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+        _reject_expired_deadline(deadline_at)
+        completed = True
         return sha.hexdigest()
     except TimeoutError as exc:
         raise DownloadDeadlineError("download exceeded end-to-end deadline") from exc
-    except (DownloadDeadlineError, ResponseTooLargeError):
-        raise
     finally:
-        if total > max_bytes or monotonic() >= deadline_at:
-            dest.unlink(missing_ok=True)
+        os.close(output_fd)
+        if not completed:
+            try:
+                current = os.stat(dest.name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                if stat.S_ISREG(current.st_mode) and (current.st_dev, current.st_ino) == (
+                    created.st_dev,
+                    created.st_ino,
+                ):
+                    os.unlink(dest.name, dir_fd=parent_fd)
+        os.close(parent_fd)
+
+
+def write_exclusive_bytes(destination: Path, content: bytes) -> None:
+    """Create one download destination without following or replacing paths."""
+    parent_fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        descriptor = os.open(
+            destination.name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent_fd,
+        )
+        created = os.fstat(descriptor)
+        try:
+            view = memoryview(content)
+            while view:
+                view = view[os.write(descriptor, view) :]
+            os.fsync(descriptor)
+        except BaseException:
+            os.close(descriptor)
+            try:
+                current = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                if (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
+                    os.unlink(destination.name, dir_fd=parent_fd)
+            raise
+        else:
+            os.close(descriptor)
+    finally:
+        os.close(parent_fd)
 
 
 async def read_capped(

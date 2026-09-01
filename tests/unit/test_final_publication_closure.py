@@ -22,9 +22,9 @@ from genereview_link.db.restore import ArchivePolicyError, extract_bundle
 
 ROOT = Path(__file__).resolve().parents[2]
 RIGHTS_ATTRIBUTION = (
-    "GeneReviews® content © 1993–present University of Washington; "  # noqa: RUF001
-    "sourced from NCBI Bookshelf — GeneReviews. "
-    "Cite per https://www.ncbi.nlm.nih.gov/books/NBK138602/."
+    "GeneReviews® content ©1993-2026 University of Washington, Seattle; "
+    "source https://www.genereviews.org; noncommercial research purposes only; "
+    "comply with the copyright notice and Usage Disclaimer; no further modifications."
 )
 
 
@@ -66,16 +66,19 @@ def test_workflows_produce_and_consume_bound_attestations_for_all_restore_inputs
     producer = (ROOT / ".github/workflows/corpus-data-release.yml").read_text()
     verifier = (ROOT / ".github/workflows/verify-corpus-bundle.yml").read_text()
 
-    assert "name: Attest exact sealed publication inputs" in producer
-    producer_subjects = producer.split("name: Attest exact sealed publication inputs", 1)[1]
+    assert "name: Attest the exact evaluated build output" in producer
+    producer_subjects = producer.split("name: Attest the exact evaluated build output", 1)[1]
     producer_subjects = producer_subjects.split("- name:", 1)[0]
-    for name in ("corpus.dump", "seal-manifest.json", "publisher-tool.whl"):
+    for name in (
+        "corpus.dump",
+        "manifest.json",
+        "SHA256SUMS",
+        "seal-manifest.json",
+        "publisher-tool.whl",
+    ):
         assert name in producer_subjects
     assert "--source-ref refs/heads/main" in verifier
-    assert (
-        'for subject in "$verify_dir/corpus.dump" "$verify_dir/seal-manifest.json" "$verify_dir/publisher-tool.whl"'
-        in verifier
-    )
+    assert 'for subject in "$verify_dir/corpus.dump" "$verify_dir/manifest.json"' in verifier
 
 
 def test_production_seed_contract_preserves_current_pin_and_supports_direct_assets() -> None:
@@ -292,13 +295,20 @@ def test_rights_record_rejects_nontransferable_filesystem_references(
         "artifact_sha256": "2" * 64,
         "object_id": object_id,
         "decision": "affirmative",
+        "approval_kind": "repository-owner redistribution determination",
+        "upstream_approval": False,
         "responsible_reviewer": "reviewer@example.org",
-        "rights_authority": "authority@example.org",
+        "rights_authority": "Bernt Popp / repository owner",
+        "authorization_uri": "https://github.com/berntpopp/genereviews-link/issues/27",
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_uri": uri,
         "terms_sha256": hashlib.sha256(document.read_bytes()).hexdigest(),
         "terms_version": "2026-08",
-        "permitted_asset_use": "immutable research corpus artifact",
+        "terms_source_uri": "https://www.genereviews.org/",
+        "permitted_asset_use": (
+            "immutable GeneReviews research corpus artifact for noncommercial research purposes "
+            "only; no further modifications"
+        ),
         "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": uri,
         "evidence_sha256": hashlib.sha256(document.read_bytes()).hexdigest(),

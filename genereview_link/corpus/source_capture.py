@@ -12,7 +12,12 @@ from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
-from genereview_link.corpus.archive import FILE_LIST_URL, LITARCH_BASE, MAX_LISTING_BYTES
+from genereview_link.corpus.archive import (
+    FILE_LIST_URL,
+    LITARCH_BASE,
+    MAX_LISTING_BYTES,
+    parse_file_list_row,
+)
 from genereview_link.corpus.source_identity import SIDEDATA_FILES
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -31,8 +36,18 @@ def archive_content_identities(path: Path) -> tuple[str, str]:
     members: list[dict[str, object]] = []
     expanded = hashlib.sha256()
     total = 0
+    parent_fd: int | None = None
+    descriptor: int | None = None
     try:
-        with tarfile.open(path, "r:gz") as archive:
+        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise SourceCaptureError("archive must be a retained regular file")
+        with (
+            os.fdopen(descriptor, "rb", closefd=False) as source,
+            tarfile.open(fileobj=source, mode="r:gz") as archive,
+        ):
             entries = sorted(archive.getmembers(), key=lambda entry: entry.name)
             if not entries or len(entries) > 10_000:
                 raise SourceCaptureError("archive member count is outside the reviewed bound")
@@ -84,25 +99,57 @@ def archive_content_identities(path: Path) -> tuple[str, str]:
                 )
             if regular_members == 0:
                 raise SourceCaptureError("archive contains no regular source members")
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise SourceCaptureError("archive changed while its identity was computed")
     except (OSError, tarfile.TarError) as error:
         raise SourceCaptureError("archive is not a readable gzip tar capture") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if parent_fd is not None:
+            os.close(parent_fd)
     return hashlib.sha256(_canonical(members)).hexdigest(), expanded.hexdigest()
 
 
 def _file_identity(path: Path, expected: object, *, label: str) -> None:
     if not isinstance(expected, Mapping):
         raise SourceCaptureError(f"{label} identity is missing")
+    parent_fd: int | None = None
+    descriptor: int | None = None
     try:
-        info = path.lstat()
+        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        before = os.fstat(descriptor)
     except OSError as error:
+        if descriptor is not None:
+            os.close(descriptor)
+        if parent_fd is not None:
+            os.close(parent_fd)
         raise SourceCaptureError(f"{label} file is missing") from error
-    if not stat.S_ISREG(info.st_mode):
-        raise SourceCaptureError(f"{label} must be a retained regular file")
-    size = info.st_size
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(1 << 20):
+    try:
+        if not stat.S_ISREG(before.st_mode):
+            raise SourceCaptureError(f"{label} must be a retained regular file")
+        size = before.st_size
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 1 << 20):
             digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise SourceCaptureError(f"{label} changed while reading")
+    finally:
+        os.close(descriptor)
+        os.close(parent_fd)
     if expected.get("size_bytes") != size:
         raise SourceCaptureError(f"{label} size does not match capture")
     if expected.get("sha256") != digest.hexdigest():
@@ -110,13 +157,17 @@ def _file_identity(path: Path, expected: object, *, label: str) -> None:
 
 
 def _read_regular_bounded(path: Path, *, label: str, limit: int) -> bytes:
+    parent_fd: int | None = None
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptor = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
     except OSError as error:
+        if parent_fd is not None:
+            os.close(parent_fd)
         raise SourceCaptureError(f"{label} is missing or unsafe") from error
     try:
-        info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
             raise SourceCaptureError(f"{label} is not a bounded regular file")
         chunks: list[bytes] = []
         remaining = limit + 1
@@ -126,8 +177,17 @@ def _read_regular_bounded(path: Path, *, label: str, limit: int) -> bytes:
                 break
             chunks.append(chunk)
             remaining -= len(chunk)
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise SourceCaptureError(f"{label} changed while reading")
     finally:
         os.close(descriptor)
+        os.close(parent_fd)
     value = b"".join(chunks)
     if len(value) > limit:
         raise SourceCaptureError(f"{label} exceeds its reviewed bound")
@@ -181,6 +241,30 @@ def load_offline_capture(
         or captured_time.utcoffset() is None
     ):
         raise SourceCaptureError("listing capture integrity is invalid")
+    listing_bytes = _read_regular_bounded(
+        metadata.with_name("file_list.csv"), label="file_list.csv", limit=MAX_LISTING_BYTES
+    )
+    if (
+        len(listing_bytes) != listing["raw_size_bytes"]
+        or hashlib.sha256(listing_bytes).hexdigest() != listing["raw_sha256"]
+    ):
+        raise SourceCaptureError("file_list.csv bytes do not match listing capture")
+    try:
+        matching_rows = [
+            parsed
+            for line in listing_bytes.decode("utf-8").splitlines()
+            if (parsed := parse_file_list_row(line, nbk_filter="NBK1116")) is not None
+        ]
+    except UnicodeDecodeError as error:
+        raise SourceCaptureError("file_list.csv is not canonical UTF-8") from error
+    if len(matching_rows) != 1:
+        raise SourceCaptureError("file_list.csv must contain exactly one canonical NBK1116 row")
+    derived_listing = matching_rows[0]
+    if (
+        listing.get("relpath") != derived_listing.relpath
+        or listing.get("last_updated") != derived_listing.last_updated
+    ):
+        raise SourceCaptureError("listing fields are not derived from retained file_list.csv")
     if not isinstance(archive_identity, Mapping) or set(archive_identity) != {
         "url",
         "sha256",

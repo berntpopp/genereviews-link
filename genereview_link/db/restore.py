@@ -27,7 +27,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +34,7 @@ from typing import IO, Any
 from urllib.parse import unquote, urlsplit
 
 from genereview_link.db.direct_seed import DirectSeedError, extract_direct_seed
+from genereview_link.db.process_guard import BoundedProcessError, run_bounded_process
 
 __all__ = [
     "ALLOWED_ENTRY_TYPES",
@@ -46,6 +46,7 @@ __all__ = [
     "extract_bundle",
     "read_archive_entries",
     "restore_data_only",
+    "seed_identity_mode",
     "sha256_file",
 ]
 
@@ -73,6 +74,7 @@ _ENTRY = re.compile(r"^\d+; \d+ \d+ (?P<rest>.+)$")
 
 _MAX_BUNDLE_MEMBERS = 32
 _MAX_MEMBER_BYTES = 4 * 1024**3
+_MAX_MANIFEST_BYTES = 1 << 20
 _SAFE_MEMBER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
 _SAFE_ROLE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
@@ -147,6 +149,23 @@ def _sha256_stream(handle: IO[bytes]) -> str:
     return digest.hexdigest()
 
 
+def seed_identity_mode(
+    bundle_sha256: str,
+    dump_sha256: str,
+    manifest_sha256: str,
+    checksums_sha256: str,
+) -> str:
+    """Classify an exact legacy or direct seed identity; partial configurations fail."""
+    direct = (dump_sha256, manifest_sha256, checksums_sha256)
+    if all(re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", value) for value in direct):
+        return "direct"
+    if any(direct):
+        raise ArchivePolicyError("direct corpus seed identity is incomplete")
+    if re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", bundle_sha256):
+        return "legacy"
+    raise ArchivePolicyError("legacy corpus seed identity is incomplete")
+
+
 def extract_bundle(
     archive: Path,
     destination: Path,
@@ -180,26 +199,36 @@ def extract_bundle(
             manifest=direct.manifest,
             dump_sha256=direct.dump_sha256,
         )
-    if not expected_sha256 or len(expected_sha256.removeprefix("sha256:")) != 64:
+    normalized_sha256 = expected_sha256.removeprefix("sha256:").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", normalized_sha256):
         raise ArchivePolicyError("an exact 64-character corpus bundle SHA-256 is required")
     actual = sha256_file(archive)
-    if actual != expected_sha256.lower():
+    if actual != normalized_sha256:
         raise ArchivePolicyError("corpus bundle digest does not match the reviewed identity")
 
     destination.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive, "r:gz") as tar:
-        manifest_file = tar.extractfile(tar.getmember("manifest.json"))
+        members = tar.getmembers()
+        if len(members) > _MAX_BUNDLE_MEMBERS:
+            raise ArchivePolicyError("the bundle declares too many members")
+        manifest_members = [member for member in members if member.name == "manifest.json"]
+        if len(manifest_members) != 1:
+            raise ArchivePolicyError("the bundle must contain one manifest.json")
+        manifest_member = manifest_members[0]
+        if not manifest_member.isfile() or manifest_member.size > _MAX_MANIFEST_BYTES:
+            raise ArchivePolicyError("manifest.json is not a regular file within its size ceiling")
+        manifest_file = tar.extractfile(manifest_member)
         if manifest_file is None:
             raise ArchivePolicyError("manifest.json is not a regular file")
-        manifest = json.loads(manifest_file.read())
+        try:
+            manifest = json.loads(manifest_file.read(_MAX_MANIFEST_BYTES + 1))
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise ArchivePolicyError("manifest.json is not valid bounded JSON") from error
         checksums = manifest.get("checksums")
         if not isinstance(checksums, dict) or not checksums:
             raise ArchivePolicyError("the bundle manifest declares no member checksums")
 
         expected_members = {"manifest.json", *checksums}
-        members = tar.getmembers()
-        if len(members) > _MAX_BUNDLE_MEMBERS:
-            raise ArchivePolicyError("the bundle declares too many members")
         seen: set[str] = set()
         for member in members:
             if not _SAFE_MEMBER.fullmatch(member.name) or ".." in member.name.split("/"):
@@ -268,13 +297,15 @@ def read_archive_entries(dump: Path, *, file_descriptor: int | None = None) -> l
             "corpus artifact is not a PostgreSQL custom-format archive; a plain-SQL "
             "script is executable content and is never restored"
         )
-    listed = subprocess.run(  # noqa: S603 - explicit absolute argv, never a shell
-        [_pg_restore(), "--list", str(archive_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-        pass_fds=inherited,
-    )
+    try:
+        listed = run_bounded_process(
+            [_pg_restore(), "--list", str(archive_path)],
+            pass_fds=inherited,
+            timeout_seconds=60.0,
+            max_output_bytes=4 * 1024 * 1024,
+        )
+    except BoundedProcessError as error:
+        raise ArchivePolicyError("corpus archive table of contents exceeded its bounds") from error
     if listed.returncode != 0:
         raise ArchivePolicyError("corpus archive table of contents could not be read")
     return [
@@ -328,21 +359,23 @@ def restore_data_only(dump: Path, *, database_url: str) -> None:
     Raises:
         ArchivePolicyError: the restore did not complete cleanly.
     """
-    completed = subprocess.run(  # noqa: S603 - explicit absolute argv, never a shell
-        [
-            _pg_restore(),
-            "--no-owner",
-            "--no-privileges",
-            "--single-transaction",
-            "--exit-on-error",
-            "--dbname",
-            database_url,
-            str(dump),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = run_bounded_process(
+            [
+                _pg_restore(),
+                "--no-owner",
+                "--no-privileges",
+                "--single-transaction",
+                "--exit-on-error",
+                "--dbname",
+                database_url,
+                str(dump),
+            ],
+            timeout_seconds=60 * 60.0,
+            max_output_bytes=4 * 1024 * 1024,
+        )
+    except BoundedProcessError as error:
+        raise ArchivePolicyError("corpus restore exceeded its reviewed process bounds") from error
     if completed.returncode != 0:
         raise ArchivePolicyError("corpus restore failed and was rolled back in full")
 

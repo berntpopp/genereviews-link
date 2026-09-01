@@ -15,7 +15,7 @@ as phase tags where a semver release has not yet been cut.
 - Data-only corpus release workflows now use bounded exact-asset retrieval, release attestation,
   archive-TOC allowlisting, non-owner transactional restores, and exact restored-count/search checks.
   Handoff revalidation is no-follow, owner/mode checked, and binds the affirmative rights record to
-  the sealed source, artifact, and release identity. No corpus publication is enabled by this change.
+  the sealed source, artifact, and release identity. No publication was performed by this source change.
 
 ---
 

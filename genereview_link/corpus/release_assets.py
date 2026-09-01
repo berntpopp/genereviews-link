@@ -219,6 +219,7 @@ async def download_release_assets(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     downloaded: dict[str, str] = {}
+    created: dict[str, tuple[int, int]] = {}
     try:
         for name in PUBLICATION_ASSET_NAMES:
             asset = assets[name]
@@ -238,14 +239,21 @@ async def download_release_assets(
                 await stream_to_file(
                     client, url, target, max_bytes=limit, deadline_seconds=deadline
                 )
-            if target.stat().st_size != asset.size:
+            info = target.stat(follow_symlinks=False)
+            created[name] = (info.st_dev, info.st_ino)
+            if info.st_size != asset.size:
                 raise ReleaseAssetError(f"downloaded size does not match API identity: {name}")
             downloaded[name] = _sha256_file(target)
             if f"sha256:{downloaded[name]}" != asset.digest:
                 raise ReleaseAssetError(f"downloaded digest does not match API identity: {name}")
-    except Exception:
-        for name in PUBLICATION_ASSET_NAMES:
-            (destination / name).unlink(missing_ok=True)
+    except BaseException:
+        for name, created_identity in created.items():
+            try:
+                current = (destination / name).stat(follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if (current.st_dev, current.st_ino) == created_identity:
+                (destination / name).unlink()
         raise
     result = replace(
         identity,

@@ -76,12 +76,14 @@ def _capture_metadata(archive: Path, side_dir: Path) -> dict[str, object]:
         "NBKid_shortname_OMIM.txt",
     )
     members_sha256, expanded_sha256 = archive_content_identities(archive)
+    listing = b"ca/84/gene_NBK1116.tar.gz,GeneReviews,NCBI,1993,NBK1116,2026-08-31 02:41:04\n"
+    (archive.parent / "file_list.csv").write_bytes(listing)
     return {
         "format": "genereviews-offline-source-v1",
         "listing": {
             "url": "https://ftp.ncbi.nlm.nih.gov/pub/litarch/file_list.csv",
-            "raw_sha256": "a" * 64,
-            "raw_size_bytes": 4096,
+            "raw_sha256": hashlib.sha256(listing).hexdigest(),
+            "raw_size_bytes": len(listing),
             "captured_at": "2026-08-31T03:00:00Z",
             "integrity_class": "https-captured-untrusted",
             "relpath": "ca/84/gene_NBK1116.tar.gz",
@@ -317,6 +319,33 @@ def test_offline_capture_rejects_noncanonical_upstream_urls(tmp_path: Path) -> N
     metadata.write_text(json.dumps(capture))
 
     with pytest.raises(SourceCaptureError, match="canonical"):
+        load_offline_capture(
+            metadata,
+            archive=archive,
+            side_data_dir=side_dir,
+            prior_manifest=prior_manifest,
+            prior_seal_manifest=prior_seal,
+        )
+
+
+def test_offline_capture_derives_listing_fields_from_exact_retained_csv(tmp_path: Path) -> None:
+    archive = tmp_path / "gene_NBK1116.tar.gz"
+    member = tmp_path / "NBK1.nxml"
+    member.write_text("<article>retained</article>")
+    with tarfile.open(archive, "w:gz") as retained:
+        retained.add(member, arcname="NBK1/NBK1.nxml")
+    side_dir = tmp_path / "side"
+    side_dir.mkdir()
+    _write_side_data(side_dir)
+    capture = _capture_metadata(archive, side_dir)
+    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture)
+    listing = capture["listing"]
+    assert isinstance(listing, dict)
+    listing["last_updated"] = "2026-09-01 02:41:04"
+    metadata = tmp_path / "source-capture.json"
+    metadata.write_text(json.dumps(capture))
+
+    with pytest.raises(SourceCaptureError, match=r"derived from retained file_list\.csv"):
         load_offline_capture(
             metadata,
             archive=archive,

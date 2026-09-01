@@ -24,12 +24,18 @@ from genereview_link.corpus.handoff import (
     verify_handoff,
     verify_rights_record,
 )
+from genereview_link.corpus.pg_client import PG18_IMAGE
 from genereview_link.retrieval.model_identity import BGE_MODEL_FILES
 
 RIGHTS_ATTRIBUTION = (
-    "GeneReviews® content © 1993–present University of Washington; "  # noqa: RUF001
-    "sourced from NCBI Bookshelf — GeneReviews. "
-    "Cite per https://www.ncbi.nlm.nih.gov/books/NBK138602/."
+    "GeneReviews® content ©1993-2026 University of Washington, Seattle; "
+    "source https://www.genereviews.org; noncommercial research purposes only; "
+    "comply with the copyright notice and Usage Disclaimer; no further modifications."
+)
+RIGHTS_AUTHORITY = "Bernt Popp / repository owner"
+RIGHTS_USE = (
+    "immutable GeneReviews research corpus artifact for noncommercial research purposes only; "
+    "no further modifications"
 )
 
 
@@ -52,13 +58,48 @@ def _source(tmp_path: Path) -> Path:
 
 def _write_rights(path: Path, record: dict[str, object], tmp_path: Path) -> None:
     del tmp_path
+    record.setdefault("approval_kind", "repository-owner redistribution determination")
+    record.setdefault("upstream_approval", False)
+    record.setdefault(
+        "authorization_uri", "https://github.com/berntpopp/genereviews-link/issues/27"
+    )
+    record.setdefault("terms_source_uri", "https://www.genereviews.org/")
     evidence = path.parent / "rights-evidence.json"
-    evidence.write_text('{"decision":"affirmative"}\n')
     terms = path.parent / "terms-snapshot.html"
-    terms.write_text("<html>reviewed terms 2026-08</html>\n")
+    terms.write_text(
+        "<html>GeneReviews® ©1993-2026 University of Washington, Seattle; "
+        "https://www.genereviews.org; noncommercial research purposes only; copyright notice; "
+        "Usage Disclaimer; no further modifications.</html>\n"
+    )
     record["terms_uri"] = "bundle:terms-snapshot.html"
     record["terms_sha256"] = hashlib.sha256(terms.read_bytes()).hexdigest()
     record["evidence_uri"] = "bundle:rights-evidence.json"
+    evidence_fields = (
+        "approval_kind",
+        "upstream_approval",
+        "rights_authority",
+        "responsible_reviewer",
+        "authorization_uri",
+        "decision_time",
+        "terms_source_uri",
+        "permitted_asset_use",
+        "attribution",
+        "object_id",
+        "source_sha256",
+        "artifact_sha256",
+        "corpus_release_id",
+    )
+    evidence.write_text(
+        json.dumps(
+            {
+                "format": "genereviews-owner-rights-evidence-v1",
+                **{name: record[name] for name in evidence_fields},
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
     record["evidence_sha256"] = hashlib.sha256(evidence.read_bytes()).hexdigest()
     unsigned = dict(record)
     record["rights_record_sha256"] = hashlib.sha256(
@@ -186,7 +227,7 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
             "build_backend": "hatchling==1.27.0",
         },
         "database": {
-            "client_image": "pgvector/pgvector:0.8.2-pg18@sha256:" + "a" * 64,
+            "client_image": PG18_IMAGE,
             "client_major": "18",
             "server_version_num": "180004",
             "server_major": "18",
@@ -347,6 +388,36 @@ def test_bundle_rejects_computation_run_id_not_derived_from_immutable_record(
         verify_data_only_bundle(source)
 
 
+def test_bundle_rejects_recomputed_ingest_run_with_unreviewed_pg18_image(
+    tmp_path: Path,
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "corpus.dump").write_bytes(b"PGDMP-data")
+    manifest = _verified_manifest()
+    ingest = manifest.computation["ingest_run"]
+    assert isinstance(ingest, dict)
+    ingest_provenance = json.loads(json.dumps(ingest["provenance"]))
+    database = ingest_provenance["database"]
+    assert isinstance(database, dict)
+    database["client_image"] = PG18_IMAGE + "-attacker"
+    ingest["provenance"] = ingest_provenance
+    ingest["run_id"] = computation_run_id(
+        phase="ingest",
+        corpus_version=manifest.corpus_version,
+        expected_row_count=int(ingest["expected_row_count"]),
+        provenance=ingest_provenance,
+    )
+    source = write_data_only_bundle(
+        work_dir=work,
+        output=tmp_path / "source",
+        manifest=manifest,
+    )
+
+    with pytest.raises(HandoffError, match="runtime computation provenance"):
+        verify_data_only_bundle(source)
+
+
 def test_seal_is_content_addressed_read_only_and_reverifiable(tmp_path: Path) -> None:
     tool = tmp_path / "publisher-tool"
     tool.mkdir()
@@ -449,10 +520,10 @@ def test_rights_record_binds_affirmative_decision_to_exact_object(tmp_path: Path
         "object_id": sealed.object_id,
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
-        "rights_authority": "rights@example.org",
+        "rights_authority": RIGHTS_AUTHORITY,
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
-        "permitted_asset_use": "immutable research corpus artifact",
+        "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "https://example.org/rights-record",
         "source_sha256": "a" * 64,
@@ -624,10 +695,10 @@ def test_rights_record_must_bind_source_and_artifact_identity(tmp_path: Path) ->
         "object_id": sealed.object_id,
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
-        "rights_authority": "rights@example.org",
+        "rights_authority": RIGHTS_AUTHORITY,
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
-        "permitted_asset_use": "immutable research corpus artifact",
+        "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "https://example.org/rights-record",
     }
@@ -646,10 +717,10 @@ def test_publisher_rejects_a_rights_record_for_a_different_source(tmp_path: Path
         "object_id": sealed.object_id,
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
-        "rights_authority": "rights@example.org",
+        "rights_authority": RIGHTS_AUTHORITY,
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
-        "permitted_asset_use": "immutable research corpus artifact",
+        "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "https://example.org/rights-record",
         "source_sha256": "b" * 64,
@@ -779,10 +850,10 @@ def test_rights_record_requires_durable_evidence_and_distinct_reviewers(tmp_path
         "object_id": sealed.object_id,
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
-        "rights_authority": "rights@example.org",
+        "rights_authority": RIGHTS_AUTHORITY,
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
-        "permitted_asset_use": "immutable research corpus artifact",
+        "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "/var/lib/genereviews/rights-record.json",
         "source_sha256": "a" * 64,
@@ -804,10 +875,10 @@ def test_rights_record_rejects_future_decision_and_relative_evidence(tmp_path: P
         "object_id": sealed.object_id,
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
-        "rights_authority": "rights@example.org",
+        "rights_authority": RIGHTS_AUTHORITY,
         "decision_time": "2999-08-30T12:00:00Z",
         "terms_version": "2026-08",
-        "permitted_asset_use": "immutable research corpus artifact",
+        "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "rights-record.json",
         "source_sha256": "a" * 64,
@@ -838,10 +909,10 @@ def test_rights_record_rejects_changed_terms_snapshot(tmp_path: Path) -> None:
         "object_id": sealed.object_id,
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
-        "rights_authority": "rights@example.org",
+        "rights_authority": RIGHTS_AUTHORITY,
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
-        "permitted_asset_use": "immutable research corpus artifact",
+        "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "source_sha256": "a" * 64,
         "artifact_sha256": hashlib.sha256(

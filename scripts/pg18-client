@@ -17,6 +17,9 @@ test -d "$mount_root" && test "${mount_root#/}" != "$mount_root" && test "$mount
   echo 'PG18_MOUNT_ROOT must be an existing absolute non-root directory' >&2
   exit 64
 }
-exec docker run --rm --network host --user "$(id -u):$(id -g)" \
-  --volume "$mount_root:$mount_root:rw" \
-  "$image" "$tool" "$@"
+docker_arguments=(run --rm --network host --user "$(id -u):$(id -g)")
+if test "${PGPASSWORD+x}" = x; then
+  docker_arguments+=(--env PGPASSWORD)
+fi
+docker_arguments+=(--volume "$mount_root:$mount_root:rw" "$image" "$tool" "$@")
+exec docker "${docker_arguments[@]}"

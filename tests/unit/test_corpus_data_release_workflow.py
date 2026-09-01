@@ -65,8 +65,7 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     assert publish["permissions"] == {
         "actions": "write",
         "contents": "write",
-        "id-token": "write",
-        "attestations": "write",
+        "attestations": "read",
     }
     assert "github.ref == 'refs/heads/main'" in str(publish["if"])
     steps = publish["steps"]
@@ -80,10 +79,10 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     assert "verify_handoff" in scripts
     assert "gh attestation verify" in scripts
     assert "GENEREVIEWS_HANDOFF_LOCATOR" in scripts
-    assert "handoff-locator.json" in scripts
+    assert "release-assets.githubusercontent.com" in scripts
     assert "actions/download-artifact" not in str(steps)
     assert '.sha256 | select(test("^[0-9a-f]{64}$"))' in scripts
-    assert 'test "$(stat -c %s "$target")" = "$size"' in scripts
+    assert "remaining != 0 or actual.hexdigest() != digest" in scripts
     assert "attest=" not in scripts
     assert "dispatch_verifier prepublication" in scripts
     assert "genereview_restore" not in scripts
@@ -121,8 +120,11 @@ def test_publisher_uses_protected_secret_not_repository_variable() -> None:
     workflow = _workflow()
     publish = workflow["jobs"]["publish"]
     assert isinstance(publish, dict)
-    text = str(publish.get("env", {}).get("GENEREVIEWS_RIGHTS_LOCATOR", ""))
+    steps = publish["steps"]
+    rights_step = next(step for step in steps if "affirmative dated rights" in step["name"])
+    text = str(rights_step.get("env", {}).get("GENEREVIEWS_RIGHTS_LOCATOR", ""))
     assert text == "${{ secrets.GENEREVIEWS_RIGHTS_LOCATOR }}"
+    assert "GENEREVIEWS_RIGHTS_LOCATOR" not in publish.get("env", {})
     assert "vars.GENEREVIEWS_RIGHTS_LOCATOR" not in str(publish)
 
 

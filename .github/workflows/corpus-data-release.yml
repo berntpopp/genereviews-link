@@ -240,6 +240,23 @@ jobs:
           done
           if test -z "${release_id:-}"; then release_id="$first_free_release_id"; fi
           test -n "$release_id"
+          if test -z "$published_noop"; then
+            uv run python - "$source_date" "$tags" "$release_id" <<'PY'
+          import re, sys
+          from pathlib import Path
+          from genereview_link.corpus.release_selection import ReleaseSlot, select_release_id
+          source_date, inventory_path, selected = sys.argv[1:]
+          pattern = re.compile(rf"^corpus-data-{re.escape(source_date)}-r([1-9][0-9]*)$")
+          occupied = sorted({
+              int(match.group(1))
+              for line in Path(inventory_path).read_text().splitlines()
+              if (match := pattern.fullmatch(line)) is not None
+          })
+          slots = [ReleaseSlot(suffix, release="occupied", tag=True, immutable=False) for suffix in occupied]
+          if select_release_id(source_date, slots) != (selected, False):
+              raise SystemExit("shell selection disagrees with exhaustive release/ref union")
+          PY
+          fi
           # Drafts, published releases, and tag-only refs were exhausted above. A differing
           # collision is occupied; an exact source identity is handed to the immutable verifier
           # as a possible published_noop, never selected by an arbitrary operator-provided rN.
@@ -322,13 +339,27 @@ jobs:
           # repeated at the actual privileged restore call in the verifier job.
           pg_restore --list --data-only --no-owner --no-privileges "$source_dir/corpus.dump" >/dev/null
           # pg_restore --single-transaction --exit-on-error is mandatory for restore.
-          printf 'SOURCE_DIR=%s\nRELEASE_ID=%s\n' "$source_dir" "$release_id" >> "$GITHUB_ENV"
-      - name: Stage the evaluated build output for provenance only
+          publisher_tool="$RUNNER_TEMP/publisher-tool"
+          mkdir -m 0700 -- "$publisher_tool"
+          uv build --wheel --out-dir "$publisher_tool"
+          handoff_root="$RUNNER_TEMP/sealed-build"
+          object_id="$(uv run genereview-link bundle seal-handoff \
+            --source "$source_dir" --handoff-root "$handoff_root" \
+            --publisher-tool "$publisher_tool" | tail -n1)"
+          grep -Eq '^[0-9a-f]{64}$' <<<"$object_id"
+          sealed="$handoff_root/$object_id"
+          test "$(sha256sum "$sealed/seal-manifest.json" | cut -d' ' -f1)" = "$object_id"
+          wheel_name="$(jq -er '.publisher_tool.name | select(test("\\.whl$"))' "$sealed/seal-manifest.json")"
+          printf 'SOURCE_DIR=%s\nRELEASE_ID=%s\nSEALED_BUILD=%s\nSEALED_WHEEL=%s\n' \
+            "$source_dir" "$release_id" "$sealed" "$wheel_name" >> "$GITHUB_ENV"
+      - name: Stage the exact sealed evaluated build output
         run: |
           set -euo pipefail
           mkdir -m 0700 -- "$RUNNER_TEMP/reviewed-build"
-          cp -- "$SOURCE_DIR/corpus.dump" "$SOURCE_DIR/manifest.json" "$SOURCE_DIR/SHA256SUMS" \
+          cp -- "$SEALED_BUILD/corpus.dump" "$SEALED_BUILD/manifest.json" \
+            "$SEALED_BUILD/SHA256SUMS" "$SEALED_BUILD/seal-manifest.json" \
             "$RUNNER_TEMP/reviewed-build/"
+          cp -- "$SEALED_BUILD/$SEALED_WHEEL" "$RUNNER_TEMP/reviewed-build/publisher-tool.whl"
       - name: Attest the exact evaluated build output
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -336,6 +367,8 @@ jobs:
             ${{ runner.temp }}/reviewed-build/corpus.dump
             ${{ runner.temp }}/reviewed-build/manifest.json
             ${{ runner.temp }}/reviewed-build/SHA256SUMS
+            ${{ runner.temp }}/reviewed-build/seal-manifest.json
+            ${{ runner.temp }}/reviewed-build/publisher-tool.whl
   publish:
     if: ${{ needs.validate.result == 'success' && inputs.object_id != '' && github.ref == 'refs/heads/main' }}
     needs: validate
@@ -345,53 +378,141 @@ jobs:
     permissions:
       actions: write
       contents: write
-      id-token: write
-      attestations: write
+      attestations: read
     env:
       GH_REPO: ${{ github.repository }}
-      GH_TOKEN: ${{ github.token }}
       OBJECT_ID: ${{ inputs.object_id }}
-      GENEREVIEWS_HANDOFF_LOCATOR: ${{ secrets.GENEREVIEWS_HANDOFF_LOCATOR }}
       GENEREVIEWS_HANDOFF_REPOSITORIES: ${{ vars.GENEREVIEWS_HANDOFF_REPOSITORIES }}
-      GENEREVIEWS_RIGHTS_LOCATOR: ${{ secrets.GENEREVIEWS_RIGHTS_LOCATOR }}
       GENEREVIEWS_RIGHTS_REPOSITORIES: ${{ vars.GENEREVIEWS_RIGHTS_REPOSITORIES }}
     steps:
       - name: Fetch durable digest-addressed sealed handoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GENEREVIEWS_HANDOFF_LOCATOR: ${{ secrets.GENEREVIEWS_HANDOFF_LOCATOR }}
         run: |
           set -euo pipefail
           test -n "$GENEREVIEWS_HANDOFF_LOCATOR"
           test "$(printf %s "$GENEREVIEWS_HANDOFF_LOCATOR" | wc -c)" -le 49152
-          locator="$RUNNER_TEMP/handoff-locator.json"
-          printf '%s' "$GENEREVIEWS_HANDOFF_LOCATOR" >"$locator"
-          jq -e --arg object "$OBJECT_ID" --arg revision "$GITHUB_SHA" \
-            '.format == "genereviews-handoff-locator-v1" and .object_id == $object and
-             .build_revision == $revision and (.assets | length == 5) and
-             ([.assets[].name] | sort | .[0:4] | length == 4)' "$locator" >/dev/null
           handoff_root="$RUNNER_TEMP/sealed/handoffs"
           handoff_object="$handoff_root/$OBJECT_ID"
           mkdir -m 0700 -p -- "$handoff_object"
-          repositories=",${GENEREVIEWS_HANDOFF_REPOSITORIES},"
-          jq -cer '.assets[]' "$locator" | while IFS= read -r asset; do
-            name="$(jq -er '.name | select(test("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"))' <<<"$asset")"
-            url="$(jq -er .url <<<"$asset")"
-            repository="$(sed -En 's#^https://api\.github\.com/repos/([^/]+/[^/]+)/releases/assets/[1-9][0-9]{0,18}$#\1#p' <<<"$url")"
-            test -n "$repository" && [[ "$repositories" == *",$repository,"* ]]
-            size="$(jq -er '.size_bytes | select(type == "number" and floor == . and . > 0)' <<<"$asset")"
-            digest="$(jq -er '.sha256 | select(test("^[0-9a-f]{64}$"))' <<<"$asset")"
-            if test "$name" = corpus.dump; then limit=$((4 * 1024 * 1024 * 1024)); else limit=$((64 * 1024 * 1024)); fi
-            test "$size" -le "$limit"
-            target="$handoff_object/$name"
-            timeout 45m curl --fail --silent --show-error --location \
-              --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 2700 \
-              --max-filesize "$size" --header 'Accept: application/octet-stream' \
-              --header "Authorization: Bearer $GH_TOKEN" "$url" --output "$target"
-            test "$(stat -c %s "$target")" = "$size"
-            test "$(sha256sum "$target" | cut -d' ' -f1)" = "$digest"
-            chmod 0400 "$target"
+          HANDOFF_OBJECT="$handoff_object" python3 -I - <<'PY'
+          import hashlib, json, os, re, stat, time
+          from pathlib import Path
+          from urllib.parse import unquote, urlsplit
+          from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+          class TrustedRedirects(HTTPRedirectHandler):
+              def redirect_request(self, request, fp, code, msg, headers, newurl):
+                  del request, fp, code, msg, headers
+                  parsed = urlsplit(newurl)
+                  allowed = {
+                      "github.com", "release-assets.githubusercontent.com",
+                      "objects.githubusercontent.com", "github-releases.githubusercontent.com",
+                  }
+                  if (parsed.scheme != "https" or parsed.hostname not in allowed
+                          or parsed.port is not None or parsed.username or parsed.password):
+                      raise RuntimeError("handoff redirect left the trusted host allowlist")
+                  return Request(newurl, headers={"Accept": "application/octet-stream"})
+
+          raw = os.environ["GENEREVIEWS_HANDOFF_LOCATOR"].encode()
+          if not 0 < len(raw) <= 48 * 1024:
+              raise SystemExit("handoff locator exceeds its protected bound")
+          locator = json.loads(raw)
+          if (not isinstance(locator, dict)
+                  or set(locator) != {"format", "object_id", "build_revision", "assets"}
+                  or locator["format"] != "genereviews-handoff-locator-v1"
+                  or locator["object_id"] != os.environ["OBJECT_ID"]
+                  or locator["build_revision"] != os.environ["GITHUB_SHA"]):
+              raise SystemExit("handoff locator identity is not exact")
+          assets = locator["assets"]
+          allowed_repositories = set(filter(None, os.environ["GENEREVIEWS_HANDOFF_REPOSITORIES"].split(",")))
+          fixed = {"corpus.dump", "manifest.json", "SHA256SUMS", "seal-manifest.json"}
+          wheel_pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\.whl$")
+          names = [asset.get("name") for asset in assets if isinstance(asset, dict)]
+          wheels = {name for name in names if isinstance(name, str) and wheel_pattern.fullmatch(name)}
+          if (not isinstance(assets, list) or len(assets) != 5 or len(wheels) != 1
+                  or set(names) != fixed | wheels or len(set(names)) != 5):
+              raise SystemExit("handoff locator asset names are not exact")
+          destination = Path(os.environ["HANDOFF_OBJECT"])
+          opener = build_opener(TrustedRedirects())
+          try:
+              for asset in assets:
+                  name = asset["name"]
+                  url = str(asset.get("url"))
+                  parsed = urlsplit(url)
+                  match = re.fullmatch(
+                      r"/repos/([^/]+/[^/]+)/releases/assets/([1-9][0-9]{0,18})",
+                      unquote(parsed.path),
+                  )
+                  if (parsed.scheme != "https" or parsed.hostname != "api.github.com"
+                          or parsed.port is not None or parsed.username or parsed.password
+                          or parsed.query or parsed.fragment or match is None
+                          or match.group(1) not in allowed_repositories):
+                      raise RuntimeError("handoff asset URL is not an exact numeric GitHub API URL")
+                  size = asset.get("size_bytes")
+                  limit = 4 * 1024**3 if name == "corpus.dump" else 64 * 1024**2
+                  digest = asset.get("sha256")
+                  if (type(size) is not int or not 0 < size <= limit
+                          or not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None):
+                      raise RuntimeError("handoff asset identity exceeds its bound")
+                  target = destination / name
+                  fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
+                  remaining = size
+                  actual = hashlib.sha256()
+                  deadline = time.monotonic() + 45 * 60
+                  try:
+                      request = Request(url, headers={"Accept": "application/octet-stream", "Authorization": f"Bearer {os.environ['GH_TOKEN']}"})
+                      with opener.open(request, timeout=60) as response, os.fdopen(fd, "wb", closefd=False) as output:
+                          while True:
+                              if time.monotonic() >= deadline:
+                                  raise RuntimeError("handoff transfer exceeded its deadline")
+                              chunk = response.read(min(1 << 20, remaining + 1))
+                              if not chunk:
+                                  break
+                              remaining -= len(chunk)
+                              if remaining < 0:
+                                  raise RuntimeError("handoff asset exceeded declared size")
+                              actual.update(chunk)
+                              output.write(chunk)
+                          output.flush()
+                          os.fsync(fd)
+                  finally:
+                      os.close(fd)
+                  if remaining != 0 or actual.hexdigest() != digest:
+                      raise RuntimeError("handoff asset size or digest mismatch")
+                  os.chmod(target, 0o400, follow_symlinks=False)
+          except BaseException:
+              for name in names:
+                  if isinstance(name, str):
+                      try: (destination / name).unlink()
+                      except FileNotFoundError: pass
+              raise
+          os.chmod(destination, 0o500)
+          PY
+      - name: Verify trusted build provenance before supplied Python
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          handoff_object="$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID"
+          seal_manifest="$handoff_object/seal-manifest.json"
+          test "$(sha256sum "$seal_manifest" | cut -d' ' -f1)" = "$OBJECT_ID"
+          wheel_name="$(jq -er '.publisher_tool.name | select(test("\\.whl$"))' "$seal_manifest")"
+          test "$(sha256sum "$handoff_object/$wheel_name" | cut -d' ' -f1)" = \
+            "$(jq -er '.publisher_tool.sha256 | select(test("^[0-9a-f]{64}$"))' "$seal_manifest")"
+          build_revision="$(jq -er '.app_git_sha | select(test("^[0-9a-f]{40}$"))' "$handoff_object/manifest.json")"
+          test "$GITHUB_SHA" = "$build_revision"
+          for subject in corpus.dump manifest.json SHA256SUMS seal-manifest.json "$wheel_name"; do
+            timeout 2m gh attestation verify "$handoff_object/$subject" --repo "$GH_REPO" \
+              --signer-workflow "$GH_REPO/.github/workflows/corpus-data-release.yml" \
+              --source-ref refs/heads/main --source-digest "$build_revision"
           done
-          test "$(find "$handoff_object" -maxdepth 1 -type f | wc -l)" = 5
-          chmod 0500 "$handoff_object"
+          printf 'PUBLISHER_WHEEL_NAME=%s\n' "$wheel_name" >> "$GITHUB_ENV"
       - name: Reverify exact sealed object and affirmative dated rights
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GENEREVIEWS_RIGHTS_LOCATOR: ${{ secrets.GENEREVIEWS_RIGHTS_LOCATOR }}
         run: |
           set -euo pipefail
           test -n "$GENEREVIEWS_RIGHTS_LOCATOR"
@@ -402,7 +523,7 @@ jobs:
           test -d "$handoff_object" && test ! -L "$handoff_object"
           chmod 0700 "$handoff_root"
           chmod 0500 "$handoff_object"
-          wheel_name="$(jq -er '.publisher_tool.name | select(test("\\.whl$"))' "$handoff_object/seal-manifest.json")"
+          wheel_name="$PUBLISHER_WHEEL_NAME"
           grep -Eq '^[A-Za-z0-9][A-Za-z0-9._]*-[A-Za-z0-9][A-Za-z0-9._]*(-[A-Za-z0-9][A-Za-z0-9._]*)?-[A-Za-z0-9.]+-[A-Za-z0-9.]+-[A-Za-z0-9.]+\.whl$' <<<"$wheel_name"
           for name in corpus.dump manifest.json SHA256SUMS "$wheel_name" seal-manifest.json; do
             test -f "$handoff_object/$name" && test ! -L "$handoff_object/$name"
@@ -414,7 +535,6 @@ jobs:
           test "$(sha256sum "$seal_manifest" | cut -d' ' -f1)" = "$OBJECT_ID"
           test "$(sha256sum "$tool" | cut -d' ' -f1)" = "$(jq -r '.publisher_tool.sha256' "$seal_manifest")"
           build_revision="$(jq -er '.app_git_sha | select(test("^[0-9a-f]{40}$"))' "$handoff_object/manifest.json")"
-          printf 'PUBLISHER_WHEEL_NAME=%s\n' "$wheel_name" >> "$GITHUB_ENV"
           publisher_env="$RUNNER_TEMP/publisher-env"
           mkdir -- "$publisher_env"
           python3 -I - "$tool" "$publisher_env" <<'PY'
@@ -477,23 +597,9 @@ jobs:
           printf 'RIGHTS_DIGEST=%s\n' "$rights_digest" >> "$GITHUB_ENV"
           printf 'PUBLISHER_ENV=%s\n' "$publisher_env" >> "$GITHUB_ENV"
           printf 'RIGHTS_BUNDLE=%s\n' "$rights_bundle" >> "$GITHUB_ENV"
-      - name: Stage exact sealed publication inputs for attestation
-        run: |
-          set -euo pipefail
-          handoff="$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID"
-          mkdir -m 0700 -- "$RUNNER_TEMP/publication-attestation"
-          cp -- "$handoff/corpus.dump" "$handoff/seal-manifest.json" \
-            "$handoff/$PUBLISHER_WHEEL_NAME" "$RUNNER_TEMP/publication-attestation/"
-          mv -- "$RUNNER_TEMP/publication-attestation/$PUBLISHER_WHEEL_NAME" \
-            "$RUNNER_TEMP/publication-attestation/publisher-tool.whl"
-      - name: Attest exact sealed publication inputs
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: |
-            ${{ runner.temp }}/publication-attestation/corpus.dump
-            ${{ runner.temp }}/publication-attestation/seal-manifest.json
-            ${{ runner.temp }}/publication-attestation/publisher-tool.whl
       - name: Four-state immutable publication gate
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # Every state, including an already immutable no-op, verifies the exact
@@ -652,7 +758,8 @@ jobs:
           verifier.prepare_publish_handoff(Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4]))
           PY
             )
-            for subject in "$remote/corpus.dump" "$remote/seal-manifest.json" "$remote/publisher-tool.whl"; do
+            for subject in "$remote/corpus.dump" "$remote/manifest.json" "$remote/SHA256SUMS" \
+              "$remote/seal-manifest.json" "$remote/publisher-tool.whl"; do
               timeout 2m gh attestation verify "$subject" --repo "$GH_REPO" \
                 --signer-workflow "$GH_REPO/.github/workflows/corpus-data-release.yml" \
                 --source-ref refs/heads/main --source-digest "$build_revision"
@@ -709,6 +816,36 @@ jobs:
             grep -Eq '^[1-9][0-9]{0,18}$' <<<"$release_id"
             release_state="$created"
           fi
+
+          existing_tag_ref="$RUNNER_TEMP/existing-tag-ref.json"
+          existing_tag_object="$RUNNER_TEMP/existing-tag-object.json"
+          tag_error="$RUNNER_TEMP/existing-tag.error"
+          if timeout 60s gh api "repos/$GH_REPO/git/ref/tags/$tag" >"$existing_tag_ref" 2>"$tag_error"; then
+            if tag_sha="$(jq -er '.object | select(.type == "tag") | .sha | select(test("^[0-9a-f]{40}$"))' "$existing_tag_ref")"; then
+              timeout 60s gh api "repos/$GH_REPO/git/tags/$tag_sha" >"$existing_tag_object"
+            fi
+          elif grep -Fq 'HTTP 404' "$tag_error"; then
+            printf 'null\n' >"$existing_tag_ref"
+            printf 'null\n' >"$existing_tag_object"
+          else
+            cat "$tag_error" >&2
+            echo "tag state could not be resolved before publication mutation" >&2
+            exit 1
+          fi
+          test -e "$existing_tag_object" || printf 'null\n' >"$existing_tag_object"
+          python3 -I - "$PUBLISHER_ENV" "$existing_tag_ref" "$existing_tag_object" \
+            "$tag" "$build_revision" "$OBJECT_ID" <<'PY'
+          import json, sys
+          from pathlib import Path
+          target, ref_path, object_path, tag, revision, object_id = sys.argv[1:]
+          sys.path.insert(0, target)
+          from genereview_link.corpus.release_transaction import verify_existing_tag_state
+          verify_existing_tag_state(
+              json.loads(Path(ref_path).read_text()),
+              json.loads(Path(object_path).read_text()),
+              tag=tag, target=revision, object_id=object_id,
+          )
+          PY
 
           expected_assets="$RUNNER_TEMP/expected-assets.json"
           : >"$RUNNER_TEMP/expected-assets.jsonl"

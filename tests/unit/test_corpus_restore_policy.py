@@ -160,7 +160,7 @@ def test_archive_toc_consumes_the_already_open_descriptor_during_parent_swap(
         assert Path(argv[-1]).read_bytes() == b"PGDMP-safe"
         return subprocess.CompletedProcess(argv, 0, stdout=DATA_ENTRIES[0] + "\n", stderr="")
 
-    monkeypatch.setattr(restore.subprocess, "run", inspect_descriptor)
+    monkeypatch.setattr(restore, "run_bounded_process", inspect_descriptor)
     try:
         entries = read_archive_entries(dump, file_descriptor=descriptor)
     finally:

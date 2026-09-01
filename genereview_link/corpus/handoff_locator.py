@@ -10,6 +10,7 @@ import stat
 from collections.abc import Iterable
 from contextlib import suppress
 from pathlib import Path
+from time import monotonic
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -17,6 +18,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 MAX_LOCATOR_BYTES = 48 * 1024
 MAX_METADATA_BYTES = 64 * 1024**2
 MAX_ARCHIVE_BYTES = 4 * 1024**3
+HANDOFF_TRANSFER_DEADLINE_SECONDS = 45 * 60.0
 _FIXED_ASSETS = frozenset({"corpus.dump", "manifest.json", "SHA256SUMS", "seal-manifest.json"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -163,6 +165,7 @@ def fetch_handoff(
     opener = build_opener(_HandoffRedirects())
     assets = locator["assets"]
     assert isinstance(assets, list)
+    deadline = monotonic() + HANDOFF_TRANSFER_DEADLINE_SECONDS
     try:
         for asset in assets:
             assert isinstance(asset, dict)
@@ -175,12 +178,21 @@ def fetch_handoff(
             digest = hashlib.sha256()
             try:
                 with opener.open(request, timeout=60) as response, target_path.open("xb") as output:
-                    while chunk := response.read(min(1 << 20, remaining + 1)):
+                    while True:
+                        if monotonic() >= deadline:
+                            raise HandoffLocatorError(
+                                "handoff asset exceeded its monotonic deadline"
+                            )
+                        chunk = response.read(min(1 << 20, remaining + 1))
+                        if not chunk:
+                            break
                         remaining -= len(chunk)
                         if remaining < 0:
                             raise HandoffLocatorError("handoff asset exceeds its declared size")
                         digest.update(chunk)
                         output.write(chunk)
+                    if monotonic() >= deadline:
+                        raise HandoffLocatorError("handoff asset exceeded its monotonic deadline")
                     output.flush()
                     os.fsync(output.fileno())
             except (HTTPError, URLError, TimeoutError, OSError) as error:

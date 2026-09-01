@@ -9,25 +9,36 @@ import re
 import stat
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
 
 MAX_METADATA_BYTES = 1 << 20
+RIGHTS_AUTHORITY = "Bernt Popp / repository owner"
+RIGHTS_APPROVAL_KIND = "repository-owner redistribution determination"
+RIGHTS_AUTHORIZATION_URI = "https://github.com/berntpopp/genereviews-link/issues/27"
+RIGHTS_TERMS_SOURCE_URI = "https://www.genereviews.org/"
+RIGHTS_PERMITTED_ASSET_USE = (
+    "immutable GeneReviews research corpus artifact for noncommercial research purposes only; "
+    "no further modifications"
+)
 RIGHTS_ATTRIBUTION = (
-    "GeneReviews® content © 1993–present University of Washington; "  # noqa: RUF001
-    "sourced from NCBI Bookshelf — GeneReviews. "
-    "Cite per https://www.ncbi.nlm.nih.gov/books/NBK138602/."
+    "GeneReviews® content ©1993-2026 University of Washington, Seattle; "
+    "source https://www.genereviews.org; noncommercial research purposes only; "
+    "comply with the copyright notice and Usage Disclaimer; no further modifications."
 )
 RIGHTS_FIELDS = frozenset(
     {
         "artifact_sha256",
         "object_id",
         "decision",
+        "approval_kind",
+        "upstream_approval",
         "responsible_reviewer",
         "rights_authority",
+        "authorization_uri",
         "decision_time",
         "terms_uri",
         "terms_sha256",
         "terms_version",
+        "terms_source_uri",
         "permitted_asset_use",
         "attribution",
         "evidence_uri",
@@ -85,30 +96,6 @@ def _load_json(path: Path) -> dict[str, object]:
     return value
 
 
-def _digest_file(path: Path) -> str:
-    from genereview_link.corpus.handoff import _open_directory
-
-    parent_fd: int | None = None
-    try:
-        parent_fd = _open_directory(path.parent)
-        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
-    except OSError as error:
-        if parent_fd is not None:
-            os.close(parent_fd)
-        raise RightsError("evidence document must be a regular durable file") from error
-    digest = hashlib.sha256()
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_METADATA_BYTES:
-            raise RightsError("evidence document must be a regular bounded file")
-        while chunk := os.read(fd, 64 * 1024):
-            digest.update(chunk)
-    finally:
-        os.close(fd)
-        os.close(parent_fd)
-    return digest.hexdigest()
-
-
 def _bundle_document(value: str, *, label: str, bundle_root: Path) -> Path:
     expected = {
         "terms_uri": "terms-snapshot.html",
@@ -127,35 +114,93 @@ def verify_rights_record(
 ) -> dict[str, object]:
     """Accept only a complete affirmative, immutable, dated rights decision."""
     raw_record = _load_json(rights_path)
-    if set(raw_record) != RIGHTS_FIELDS or not all(
-        type(value) is str and value == value.strip() and value for value in raw_record.values()
+    string_fields = RIGHTS_FIELDS - {"upstream_approval"}
+    if (
+        set(raw_record) != RIGHTS_FIELDS
+        or not all(
+            type(raw_record.get(name)) is str
+            and raw_record[name] == str(raw_record[name]).strip()
+            and raw_record[name]
+            for name in string_fields
+        )
+        or raw_record.get("upstream_approval") is not False
     ):
         raise RightsError("rights record must contain exactly the complete required fields")
-    record = cast(dict[str, str], raw_record)
+    record = raw_record
     if record["object_id"] != object_id:
         raise RightsError("rights record is not bound to this handoff object")
     if record["decision"] != "affirmative":
         raise RightsError("rights record decision must be affirmative")
-    if record["responsible_reviewer"].casefold() == record["rights_authority"].casefold():
+    if record["approval_kind"] != RIGHTS_APPROVAL_KIND or record["upstream_approval"] is not False:
+        raise RightsError("rights record is not an explicit non-upstream owner determination")
+    if record["rights_authority"] != RIGHTS_AUTHORITY:
+        raise RightsError("rights record authority is not the repository owner")
+    if record["authorization_uri"] != RIGHTS_AUTHORIZATION_URI:
+        raise RightsError("rights record is not bound to the durable owner authorization")
+    if str(record["responsible_reviewer"]).casefold() == str(record["rights_authority"]).casefold():
         raise RightsError("rights record requires distinct responsible reviewer and authority")
-    if record["permitted_asset_use"] != "immutable research corpus artifact":
+    if record["permitted_asset_use"] != RIGHTS_PERMITTED_ASSET_USE:
         raise RightsError("rights record permitted_asset_use is not the reviewed value")
     if record["attribution"] != RIGHTS_ATTRIBUTION:
         raise RightsError("rights record attribution is not the reviewed value")
     for name in ("source_sha256", "artifact_sha256", "terms_sha256", "evidence_sha256"):
-        if not SHA256_RE.fullmatch(record[name]):
+        if not SHA256_RE.fullmatch(str(record[name])):
             raise RightsError(f"rights record {name} must be a lowercase SHA-256")
     terms_path = _bundle_document(
-        record["terms_uri"], label="terms_uri", bundle_root=rights_path.parent
+        str(record["terms_uri"]), label="terms_uri", bundle_root=rights_path.parent
     )
-    if _digest_file(terms_path) != record["terms_sha256"]:
+    terms_bytes = _read_bounded(terms_path)
+    if hashlib.sha256(terms_bytes).hexdigest() != record["terms_sha256"]:
         raise RightsError("terms document digest does not match rights record")
-    evidence_path = _bundle_document(
-        record["evidence_uri"], label="evidence_uri", bundle_root=rights_path.parent
+    try:
+        terms_text = terms_bytes.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise RightsError("terms snapshot is not valid UTF-8") from error
+    required_terms = (
+        "©1993-2026 University of Washington, Seattle",
+        "https://www.genereviews.org",
+        "noncommercial research purposes only",
+        "copyright notice",
+        "Usage Disclaimer",
+        "no further modifications",
     )
-    if _digest_file(evidence_path) != record["evidence_sha256"]:
+    if record["terms_source_uri"] != RIGHTS_TERMS_SOURCE_URI or any(
+        phrase not in terms_text for phrase in required_terms
+    ):
+        raise RightsError("terms snapshot does not contain the official reviewed terms")
+    evidence_path = _bundle_document(
+        str(record["evidence_uri"]), label="evidence_uri", bundle_root=rights_path.parent
+    )
+    evidence_bytes = _read_bounded(evidence_path)
+    if hashlib.sha256(evidence_bytes).hexdigest() != record["evidence_sha256"]:
         raise RightsError("evidence document digest does not match rights record")
-    decision_time = record["decision_time"]
+    try:
+        evidence = json.loads(evidence_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise RightsError("rights evidence is not valid JSON") from error
+    evidence_fields = {
+        "format",
+        "approval_kind",
+        "upstream_approval",
+        "rights_authority",
+        "responsible_reviewer",
+        "authorization_uri",
+        "decision_time",
+        "terms_source_uri",
+        "permitted_asset_use",
+        "attribution",
+        "object_id",
+        "source_sha256",
+        "artifact_sha256",
+        "corpus_release_id",
+    }
+    if not isinstance(evidence, dict) or set(evidence) != evidence_fields:
+        raise RightsError("rights evidence has missing or extra claims")
+    if evidence["format"] != "genereviews-owner-rights-evidence-v1" or any(
+        evidence[name] != record[name] for name in evidence_fields - {"format"}
+    ):
+        raise RightsError("rights evidence does not match the owner determination")
+    decision_time = str(record["decision_time"])
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z", decision_time):
         raise RightsError("rights record decision_time must be dated UTC")
     try:
@@ -173,4 +218,4 @@ def verify_rights_record(
         for name in ("source_sha256", "artifact_sha256", "corpus_release_id"):
             if record[name] != sealed_values[name]:
                 raise RightsError(f"rights record is not bound to sealed {name}")
-    return cast(dict[str, object], record)
+    return record

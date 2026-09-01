@@ -8,6 +8,7 @@ from genereview_link.corpus.release_transaction import (
     ReleaseTransactionError,
     plan_release,
     verify_annotated_tag,
+    verify_existing_tag_state,
 )
 
 EXPECTED = {
@@ -161,4 +162,27 @@ def test_only_exact_annotated_tag_can_resume_final_promotion() -> None:
             tag="corpus-data-2026-08-30-r1",
             target="a" * 40,
             object_id="c" * 64,
+        )
+
+
+def test_partial_draft_preflight_accepts_only_absent_or_exact_tag_state() -> None:
+    tag = "corpus-data-2026-08-30-r1"
+    target = "a" * 40
+    object_id = "c" * 64
+    verify_existing_tag_state(None, None, tag=tag, target=target, object_id=object_id)
+    tag_ref = {"object": {"type": "tag", "sha": "b" * 40}}
+    tag_object = {
+        "sha": "b" * 40,
+        "tag": tag,
+        "message": "GeneReviews sealed object " + object_id,
+        "object": {"type": "commit", "sha": target},
+    }
+    verify_existing_tag_state(tag_ref, tag_object, tag=tag, target=target, object_id=object_id)
+    with pytest.raises(ReleaseTransactionError, match="incomplete"):
+        verify_existing_tag_state(
+            {"object": {"type": "commit", "sha": target}},
+            None,
+            tag=tag,
+            target=target,
+            object_id=object_id,
         )

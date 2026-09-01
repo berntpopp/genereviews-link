@@ -11,8 +11,8 @@ new corpus. For the environment variables named here, see
 |---|---|
 | Upstream | [GeneReviews](https://www.ncbi.nlm.nih.gov/books/NBK1116/), NCBI Bookshelf |
 | Access paths | NCBI E-utilities (`EUTILS_BASE_URL`) and Bookshelf HTML |
-| Data licence | GeneReviews® content © 1993–present University of Washington. SPDX `LicenseRef-GeneReviews` — copyrighted, **not** an open licence. |
-| Terms | <https://www.ncbi.nlm.nih.gov/books/NBK138602/> |
+| Data licence | GeneReviews® content ©1993-2026 University of Washington, Seattle. SPDX `LicenseRef-GeneReviews` — copyrighted, **not** an open licence. |
+| Terms | Official snapshot from <https://www.genereviews.org/>: noncommercial research purposes only; retain the copyright notice and Usage Disclaimer; no further modifications. |
 | Attribution | Attribute the University of Washington when redistributing. The `get_license` tool and the `genereview://license` resource return the canonical notice. |
 | Citation | Every search hit and passage carries `recommended_citation`. Paste it verbatim; never paraphrase or fabricate it. Cite `passage_id` + the chapter NBK id + `chapter_last_updated`. |
 

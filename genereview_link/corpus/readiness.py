@@ -90,8 +90,14 @@ def build_readiness_payload(
     expected_query = evaluation.get("result_sha256") if isinstance(evaluation, Mapping) else None
     if query_result_sha256 != expected_query or not _SHA256.fullmatch(query_result_sha256):
         raise ReadinessError("semantic query digest does not match the release manifest")
-    if not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_digest):
-        raise ReadinessError("artifact digest is invalid")
+    checksums = manifest.get("checksums")
+    expected_artifact = checksums.get("corpus.dump") if isinstance(checksums, Mapping) else None
+    if (
+        not isinstance(expected_artifact, str)
+        or not _SHA256.fullmatch(expected_artifact)
+        or artifact_digest != f"sha256:{expected_artifact}"
+    ):
+        raise ReadinessError("artifact digest does not match manifest corpus.dump")
     release_id = manifest.get("corpus_release_id")
     if not isinstance(release_id, str) or not release_id:
         raise ReadinessError("release identity is incomplete")

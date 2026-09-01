@@ -158,6 +158,22 @@ def verify_annotated_tag(
         raise ReleaseTransactionError("annotated tag conflicts with sealed publication identity")
 
 
+def verify_existing_tag_state(
+    tag_ref: dict[str, object] | None,
+    tag_object: dict[str, object] | None,
+    *,
+    tag: str,
+    target: str,
+    object_id: str,
+) -> None:
+    """Allow an absent tag or the exact sealed annotated tag, never a partial conflict."""
+    if tag_ref is None and tag_object is None:
+        return
+    if tag_ref is None or tag_object is None:
+        raise ReleaseTransactionError("existing release tag state is incomplete")
+    verify_annotated_tag(tag_ref, tag_object, tag=tag, target=target, object_id=object_id)
+
+
 __all__ = [
     "EXPECTED_RELEASE_ASSETS",
     "ReleasePlan",
@@ -165,4 +181,5 @@ __all__ = [
     "annotated_tag_message",
     "plan_release",
     "verify_annotated_tag",
+    "verify_existing_tag_state",
 ]

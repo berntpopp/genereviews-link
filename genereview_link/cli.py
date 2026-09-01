@@ -417,6 +417,7 @@ def corpus_restore() -> None:
         extract_bundle,
         read_archive_entries,
         restore_data_only,
+        seed_identity_mode,
     )
     from genereview_link.ingest.orchestrator import build_hnsw_index
 
@@ -430,12 +431,26 @@ def corpus_restore() -> None:
             if applied:
                 logger.info("applied data migrations", versions=applied)
 
+            identity_mode = seed_identity_mode(
+                settings.CORPUS_BUNDLE_SHA256,
+                settings.CORPUS_DUMP_SHA256,
+                settings.CORPUS_MANIFEST_SHA256,
+                settings.CORPUS_CHECKSUMS_SHA256,
+            )
+
             active = await pool.fetchval(
                 "select version from public.genereview_corpus_version where is_active"
             )
             if active:
-                await require_release_readiness(pool)
-                logger.info("active corpus and readiness already present", version=active)
+                if identity_mode == "direct":
+                    await require_release_readiness(pool)
+                    logger.info(
+                        "active direct corpus and verified-v1 readiness present", version=active
+                    )
+                else:
+                    logger.info(
+                        "active legacy corpus retained without controller readiness", version=active
+                    )
                 return
 
             bundle = extract_bundle(
@@ -467,11 +482,16 @@ def corpus_restore() -> None:
             )
             if not restored:
                 raise ArchivePolicyError("restore completed with no active corpus version")
-            await write_release_readiness(
-                pool,
-                bundle.manifest,
-                artifact_digest=f"sha256:{bundle.dump_sha256}",
-            )
+            if identity_mode == "direct":
+                if bundle.manifest.get("manifest_version") != "3":
+                    raise ReadinessError("direct corpus release requires a manifest-v3 identity")
+                await write_release_readiness(
+                    pool,
+                    bundle.manifest,
+                    artifact_digest=f"sha256:{bundle.dump_sha256}",
+                )
+            else:
+                logger.info("legacy corpus restored without a verified-v1 readiness claim")
             logger.info("corpus restored", version=restored)
         finally:
             await pool.close()
