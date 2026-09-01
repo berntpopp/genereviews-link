@@ -43,9 +43,10 @@ async def test_offline_ingest_parses_only_admitted_private_source_bytes(
     for name in SIDEDATA_FILES:
         (side_data / name).write_bytes(f"owned {name}".encode())
     metadata = tmp_path / "source-capture.json"
+    listing = tmp_path / "file_list.csv"
     prior = tmp_path / "prior-manifest.json"
     prior_seal = tmp_path / "prior-seal-manifest.json"
-    for path in (metadata, prior, prior_seal):
+    for path in (metadata, listing, prior, prior_seal):
         path.write_bytes(b"fixture")
 
     def validate(*_args: object, **kwargs: object) -> dict[str, object]:

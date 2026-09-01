@@ -310,13 +310,19 @@ async def _run_full_ingest_locked(
             and prior_manifest is not None
             and prior_seal_manifest is not None
         )
-        with admit_offline_source(archive, side_data_dir) as admitted:
+        with admit_offline_source(
+            archive=archive,
+            side_data_dir=side_data_dir,
+            source_metadata=source_metadata,
+            prior_manifest=prior_manifest,
+            prior_seal_manifest=prior_seal_manifest,
+        ) as admitted:
             capture = load_offline_capture(
-                source_metadata,
+                admitted.source_metadata,
                 archive=admitted.archive,
                 side_data_dir=admitted.side_data_dir,
-                prior_manifest=prior_manifest,
-                prior_seal_manifest=prior_seal_manifest,
+                prior_manifest=admitted.prior_manifest,
+                prior_seal_manifest=admitted.prior_seal_manifest,
             )
             listing_data = capture["listing"]
             archive_data = capture["archive"]

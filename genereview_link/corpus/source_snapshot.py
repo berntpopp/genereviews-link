@@ -10,11 +10,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from genereview_link.corpus.archive import MAX_TARBALL_BYTES
+from genereview_link.corpus.archive import MAX_LISTING_BYTES, MAX_TARBALL_BYTES
 from genereview_link.corpus.source_identity import SIDEDATA_FILES
+from genereview_link.corpus.source_locator import SOURCE_ASSETS
 
 CHUNK_BYTES = 1 << 20
 MAX_SIDEDATA_BYTES = 64 * 1024 * 1024
+MAX_CONTROL_BYTES = 4 * 1024 * 1024
 
 
 class SourceSnapshotError(ValueError):
@@ -23,8 +25,13 @@ class SourceSnapshotError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class OfflineSourceSnapshot:
+    root: Path
     archive: Path
     side_data_dir: Path
+    source_metadata: Path
+    file_list: Path
+    prior_manifest: Path
+    prior_seal_manifest: Path
 
 
 def _open_directory(path: Path) -> int:
@@ -93,22 +100,47 @@ def _copy_stable_regular(source: Path, destination: Path, *, max_bytes: int) -> 
 
 
 @contextmanager
-def admit_offline_source(archive: Path, side_data_dir: Path) -> Iterator[OfflineSourceSnapshot]:
+def admit_offline_source(
+    *,
+    archive: Path,
+    side_data_dir: Path,
+    source_metadata: Path,
+    prior_manifest: Path,
+    prior_seal_manifest: Path,
+) -> Iterator[OfflineSourceSnapshot]:
     """Yield private copies used by both provenance validation and parsing."""
+    sources = {
+        "source-capture.json": source_metadata,
+        "file_list.csv": source_metadata.with_name("file_list.csv"),
+        "prior-manifest.json": prior_manifest,
+        "prior-seal-manifest.json": prior_seal_manifest,
+        "gene_NBK1116.tar.gz": archive,
+        **{name: side_data_dir / name for name in SIDEDATA_FILES},
+    }
+    limits = {
+        "source-capture.json": MAX_CONTROL_BYTES,
+        "file_list.csv": MAX_LISTING_BYTES,
+        "prior-manifest.json": MAX_CONTROL_BYTES,
+        "prior-seal-manifest.json": MAX_CONTROL_BYTES,
+        "gene_NBK1116.tar.gz": MAX_TARBALL_BYTES,
+        **dict.fromkeys(SIDEDATA_FILES, MAX_SIDEDATA_BYTES),
+    }
+    if set(sources) != SOURCE_ASSETS or set(limits) != SOURCE_ASSETS:
+        raise SourceSnapshotError("offline source inventory differs from the exact asset contract")
     with tempfile.TemporaryDirectory(prefix="genereviews-admitted-source-") as temporary:
         root = Path(temporary)
         os.chmod(root, 0o700)
-        admitted_side = root / "side-data"
-        admitted_side.mkdir(mode=0o700)
-        admitted_archive = root / "gene_NBK1116.tar.gz"
-        _copy_stable_regular(archive, admitted_archive, max_bytes=MAX_TARBALL_BYTES)
-        for name in SIDEDATA_FILES:
-            _copy_stable_regular(
-                side_data_dir / name,
-                admitted_side / name,
-                max_bytes=MAX_SIDEDATA_BYTES,
-            )
-        yield OfflineSourceSnapshot(archive=admitted_archive, side_data_dir=admitted_side)
+        for name in sorted(SOURCE_ASSETS):
+            _copy_stable_regular(sources[name], root / name, max_bytes=limits[name])
+        yield OfflineSourceSnapshot(
+            root=root,
+            archive=root / "gene_NBK1116.tar.gz",
+            side_data_dir=root,
+            source_metadata=root / "source-capture.json",
+            file_list=root / "file_list.csv",
+            prior_manifest=root / "prior-manifest.json",
+            prior_seal_manifest=root / "prior-seal-manifest.json",
+        )
 
 
 __all__ = [
