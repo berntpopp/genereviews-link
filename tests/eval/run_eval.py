@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -43,8 +44,31 @@ async def run() -> dict[str, float]:
         await pool.close()
 
 
+def _canonical_json(value: object) -> bytes:
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+
+def write_evidence(metrics: dict[str, float], output: Path) -> None:
+    suite_sha256 = hashlib.sha256(QUERIES.read_bytes()).hexdigest()
+    results = dict(metrics)
+    evidence = {
+        "status": "passed",
+        "suite": "tests/eval/genereviews_queries.jsonl",
+        "suite_sha256": suite_sha256,
+        "model_name": "BAAI/bge-small-en-v1.5",
+        "results": results,
+        "result_sha256": hashlib.sha256(_canonical_json(results)).hexdigest(),
+    }
+    output.write_bytes(_canonical_json(evidence))
+
+
 if __name__ == "__main__":
     metrics = asyncio.run(run())
+    if "--output" in sys.argv:
+        index = sys.argv.index("--output")
+        if index + 1 >= len(sys.argv):
+            raise SystemExit("--output requires a path")
+        write_evidence(metrics, Path(sys.argv[index + 1]))
     print(json.dumps(metrics, indent=2))
     if BASELINE.exists():
         baseline = json.loads(BASELINE.read_text())

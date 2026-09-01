@@ -23,15 +23,18 @@ against a digest committed in the repository before it is opened.
 from __future__ import annotations
 
 import hashlib
-import json
+import os
 import re
 import shutil
-import subprocess
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
+
+from genereview_link.db.direct_seed import DirectSeedError, extract_direct_seed
+from genereview_link.db.process_guard import BoundedProcessError, run_bounded_process
+from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 __all__ = [
     "ALLOWED_ENTRY_TYPES",
@@ -43,6 +46,7 @@ __all__ = [
     "extract_bundle",
     "read_archive_entries",
     "restore_data_only",
+    "seed_identity_mode",
     "sha256_file",
 ]
 
@@ -58,6 +62,7 @@ CORPUS_TABLES = frozenset(
         "genereview.genereview_passages",
         "genereview.genereview_embeddings_bge384",
         "public.genereview_corpus_version",
+        "public.genereview_computation_runs",
     }
 )
 
@@ -69,6 +74,7 @@ _ENTRY = re.compile(r"^\d+; \d+ \d+ (?P<rest>.+)$")
 
 _MAX_BUNDLE_MEMBERS = 32
 _MAX_MEMBER_BYTES = 4 * 1024**3
+_MAX_MANIFEST_BYTES = 1 << 20
 _SAFE_MEMBER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
 _SAFE_ROLE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
@@ -85,6 +91,34 @@ class ArchivePolicyError(RuntimeError):
     """The artifact is not an immutable, data-only corpus archive."""
 
 
+def validate_restore_endpoint(owner_url: str, restore_url: str, *, role: str) -> None:
+    """Require the restricted URL to address the owner's exact database endpoint."""
+    owner = urlsplit(owner_url)
+    restore = urlsplit(restore_url)
+    try:
+        for parsed in (owner, restore):
+            _ = parsed.port  # validate a possibly explicit port before endpoint comparison
+        plain_urls = all(
+            parsed.scheme in {"postgres", "postgresql"}
+            and parsed.hostname is not None
+            and parsed.path.startswith("/")
+            and "/" not in unquote(parsed.path)[1:]
+            and parsed.query == ""
+            and parsed.fragment == ""
+            for parsed in (owner, restore)
+        )
+    except ValueError as error:
+        raise ArchivePolicyError("restore endpoints must be plain PostgreSQL URLs") from error
+    if not plain_urls:
+        raise ArchivePolicyError("restore endpoints must be plain PostgreSQL URLs")
+    if restore.username != role:
+        raise ArchivePolicyError("restore URL username must equal the configured restore role")
+    owner_endpoint = (owner.hostname, owner.port or 5432, unquote(owner.path))
+    restore_endpoint = (restore.hostname, restore.port or 5432, unquote(restore.path))
+    if owner_endpoint != restore_endpoint:
+        raise ArchivePolicyError("restore URL must use the same database endpoint as the owner URL")
+
+
 @dataclass(frozen=True)
 class CorpusBundle:
     """An extracted, checksum-verified corpus bundle."""
@@ -92,6 +126,7 @@ class CorpusBundle:
     root: Path
     dump: Path
     manifest: dict[str, object]
+    dump_sha256: str
 
     @property
     def corpus_version(self) -> str:
@@ -114,7 +149,31 @@ def _sha256_stream(handle: IO[bytes]) -> str:
     return digest.hexdigest()
 
 
-def extract_bundle(archive: Path, destination: Path, *, expected_sha256: str) -> CorpusBundle:
+def seed_identity_mode(
+    bundle_sha256: str,
+    dump_sha256: str,
+    manifest_sha256: str,
+    checksums_sha256: str,
+) -> str:
+    """Classify an exact legacy or direct seed identity; partial configurations fail."""
+    direct = (dump_sha256, manifest_sha256, checksums_sha256)
+    if all(re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", value) for value in direct):
+        return "direct"
+    if any(direct):
+        raise ArchivePolicyError("direct corpus seed identity is incomplete")
+    if re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", bundle_sha256):
+        return "legacy"
+    raise ArchivePolicyError("legacy corpus seed identity is incomplete")
+
+
+def extract_bundle(
+    archive: Path,
+    destination: Path,
+    *,
+    expected_sha256: str,
+    expected_manifest_sha256: str | None = None,
+    expected_checksums_sha256: str | None = None,
+) -> CorpusBundle:
     """Verify and expand the corpus bundle into ``destination``.
 
     The committed digest is the trust root: the bytes are proven BEFORE the archive is
@@ -123,26 +182,57 @@ def extract_bundle(archive: Path, destination: Path, *, expected_sha256: str) ->
     Raises:
         ArchivePolicyError: the digest, member set, or per-member checksums do not match.
     """
-    if not expected_sha256 or len(expected_sha256) != 64:
+    if archive.is_dir() and not archive.is_symlink():
+        try:
+            direct = extract_direct_seed(
+                archive,
+                destination,
+                expected_dump_sha256=expected_sha256,
+                expected_manifest_sha256=expected_manifest_sha256,
+                expected_checksums_sha256=expected_checksums_sha256,
+            )
+        except DirectSeedError as error:
+            raise ArchivePolicyError(str(error)) from error
+        return CorpusBundle(
+            root=direct.root,
+            dump=direct.dump,
+            manifest=direct.manifest,
+            dump_sha256=direct.dump_sha256,
+        )
+    normalized_sha256 = expected_sha256.removeprefix("sha256:").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", normalized_sha256):
         raise ArchivePolicyError("an exact 64-character corpus bundle SHA-256 is required")
     actual = sha256_file(archive)
-    if actual != expected_sha256.lower():
+    if actual != normalized_sha256:
         raise ArchivePolicyError("corpus bundle digest does not match the reviewed identity")
 
     destination.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive, "r:gz") as tar:
-        manifest_file = tar.extractfile(tar.getmember("manifest.json"))
+        members = tar.getmembers()
+        if len(members) > _MAX_BUNDLE_MEMBERS:
+            raise ArchivePolicyError("the bundle declares too many members")
+        manifest_members = [member for member in members if member.name == "manifest.json"]
+        if len(manifest_members) != 1:
+            raise ArchivePolicyError("the bundle must contain one manifest.json")
+        manifest_member = manifest_members[0]
+        if not manifest_member.isfile() or manifest_member.size > _MAX_MANIFEST_BYTES:
+            raise ArchivePolicyError("manifest.json is not a regular file within its size ceiling")
+        manifest_file = tar.extractfile(manifest_member)
         if manifest_file is None:
             raise ArchivePolicyError("manifest.json is not a regular file")
-        manifest = json.loads(manifest_file.read())
+        try:
+            manifest = load_strict_json(
+                manifest_file.read(_MAX_MANIFEST_BYTES + 1), max_bytes=_MAX_MANIFEST_BYTES
+            )
+        except StrictJsonError as error:
+            raise ArchivePolicyError("manifest.json is not valid bounded JSON") from error
+        if not isinstance(manifest, dict):
+            raise ArchivePolicyError("manifest.json must contain a JSON object")
         checksums = manifest.get("checksums")
         if not isinstance(checksums, dict) or not checksums:
             raise ArchivePolicyError("the bundle manifest declares no member checksums")
 
         expected_members = {"manifest.json", *checksums}
-        members = tar.getmembers()
-        if len(members) > _MAX_BUNDLE_MEMBERS:
-            raise ArchivePolicyError("the bundle declares too many members")
         seen: set[str] = set()
         for member in members:
             if not _SAFE_MEMBER.fullmatch(member.name) or ".." in member.name.split("/"):
@@ -179,28 +269,47 @@ def extract_bundle(archive: Path, destination: Path, *, expected_sha256: str) ->
     dump = destination / "corpus.dump"
     if not dump.is_file():
         raise ArchivePolicyError("the bundle carries no corpus.dump archive")
-    return CorpusBundle(root=destination, dump=dump, manifest=manifest)
+    dump_digest = checksums.get("corpus.dump")
+    if not isinstance(dump_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", dump_digest):
+        raise ArchivePolicyError("the bundle manifest has no exact corpus.dump digest")
+    return CorpusBundle(
+        root=destination,
+        dump=dump,
+        manifest=manifest,
+        dump_sha256=dump_digest,
+    )
 
 
-def read_archive_entries(dump: Path) -> list[str]:
+def read_archive_entries(dump: Path, *, file_descriptor: int | None = None) -> list[str]:
     """Return the archive's TOC entries, proving it is a custom-format archive first.
 
     Raises:
         ArchivePolicyError: the file is not a PostgreSQL custom-format archive, or its
             table of contents cannot be read.
     """
-    with dump.open("rb") as handle:
-        if handle.read(len(_CUSTOM_FORMAT_MAGIC)) != _CUSTOM_FORMAT_MAGIC:
-            raise ArchivePolicyError(
-                "corpus artifact is not a PostgreSQL custom-format archive; a plain-SQL "
-                "script is executable content and is never restored"
-            )
-    listed = subprocess.run(  # noqa: S603 - explicit absolute argv, never a shell
-        [_pg_restore(), "--list", str(dump)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    if file_descriptor is None:
+        with dump.open("rb") as handle:
+            magic = handle.read(len(_CUSTOM_FORMAT_MAGIC))
+        archive_path = dump
+        inherited: tuple[int, ...] = ()
+    else:
+        magic = os.pread(file_descriptor, len(_CUSTOM_FORMAT_MAGIC), 0)
+        archive_path = Path(f"/proc/self/fd/{file_descriptor}")
+        inherited = (file_descriptor,)
+    if magic != _CUSTOM_FORMAT_MAGIC:
+        raise ArchivePolicyError(
+            "corpus artifact is not a PostgreSQL custom-format archive; a plain-SQL "
+            "script is executable content and is never restored"
+        )
+    try:
+        listed = run_bounded_process(
+            [_pg_restore(), "--list", str(archive_path)],
+            pass_fds=inherited,
+            timeout_seconds=60.0,
+            max_output_bytes=4 * 1024 * 1024,
+        )
+    except BoundedProcessError as error:
+        raise ArchivePolicyError("corpus archive table of contents exceeded its bounds") from error
     if listed.returncode != 0:
         raise ArchivePolicyError("corpus archive table of contents could not be read")
     return [
@@ -254,31 +363,33 @@ def restore_data_only(dump: Path, *, database_url: str) -> None:
     Raises:
         ArchivePolicyError: the restore did not complete cleanly.
     """
-    completed = subprocess.run(  # noqa: S603 - explicit absolute argv, never a shell
-        [
-            _pg_restore(),
-            "--no-owner",
-            "--no-privileges",
-            "--single-transaction",
-            "--exit-on-error",
-            "--dbname",
-            database_url,
-            str(dump),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = run_bounded_process(
+            [
+                _pg_restore(),
+                "--no-owner",
+                "--no-privileges",
+                "--single-transaction",
+                "--exit-on-error",
+                "--dbname",
+                database_url,
+                str(dump),
+            ],
+            timeout_seconds=60 * 60.0,
+            max_output_bytes=4 * 1024 * 1024,
+        )
+    except BoundedProcessError as error:
+        raise ArchivePolicyError("corpus restore exceeded its reviewed process bounds") from error
     if completed.returncode != 0:
         raise ArchivePolicyError("corpus restore failed and was rolled back in full")
 
 
-async def ensure_restore_role(pool: Any, role: str, restore_url: str) -> None:
+async def ensure_restore_role(pool: Any, role: str, restore_url: str, *, owner_url: str) -> None:
     """Create the least-privileged role that may load the artifact, and nothing else.
 
     Reviewed migrations run as the database owner. The untrusted artifact is loaded by a
     role that is explicitly ``NOSUPERUSER`` / ``NOCREATEDB`` / ``NOCREATEROLE`` and holds
-    write rights on the exact corpus tables only -- so even an entry that somehow slipped
+    insert rights on the exact corpus tables only -- so even an entry that somehow slipped
     past the archive policy would have no rights to create objects, reach other databases,
     or execute server-side code.
 
@@ -287,12 +398,33 @@ async def ensure_restore_role(pool: Any, role: str, restore_url: str) -> None:
     """
     if not _SAFE_ROLE.fullmatch(role):
         raise ArchivePolicyError("the configured restore role name is not a plain identifier")
+    validate_restore_endpoint(owner_url, restore_url, role=role)
     password = _password_of(restore_url)
     async with pool.acquire() as connection:
         exists = await connection.fetchval("select 1 from pg_roles where rolname = $1", role)
         if not exists:
             statement = await connection.fetchval(
                 "select format('create role %I login nosuperuser nocreatedb nocreaterole', $1::text)",
+                role,
+            )
+            await connection.execute(statement)
+        statement = await connection.fetchval(
+            "select format('alter role %I login nosuperuser nocreatedb nocreaterole "
+            "noreplication nobypassrls noinherit', $1::text)",
+            role,
+        )
+        await connection.execute(statement)
+        memberships = await connection.fetch(
+            "select parent.rolname from pg_auth_members membership "
+            "join pg_roles member on member.oid = membership.member "
+            "join pg_roles parent on parent.oid = membership.roleid "
+            "where member.rolname = $1 order by parent.rolname",
+            role,
+        )
+        for membership in memberships:
+            statement = await connection.fetchval(
+                "select format('revoke %I from %I', $1::text, $2::text)",
+                membership["rolname"],
                 role,
             )
             await connection.execute(statement)
@@ -303,7 +435,25 @@ async def ensure_restore_role(pool: Any, role: str, restore_url: str) -> None:
                 password,
             )
             await connection.execute(statement)
+        unsafe_role = await connection.fetchval(
+            "select rolsuper or rolcreatedb or rolcreaterole or rolreplication "
+            "or rolbypassrls or rolinherit from pg_roles where rolname = $1",
+            role,
+        )
+        remaining_memberships = await connection.fetchval(
+            "select count(*) from pg_auth_members membership "
+            "join pg_roles member on member.oid = membership.member where member.rolname = $1",
+            role,
+        )
+        if unsafe_role or int(remaining_memberships or 0) != 0:
+            raise ArchivePolicyError("restore role retains escalation attributes or memberships")
         for schema in sorted({table.split(".", 1)[0] for table in CORPUS_TABLES}):
+            statement = await connection.fetchval(
+                "select format('revoke all on schema %I from %I', $1::text, $2::text)",
+                schema,
+                role,
+            )
+            await connection.execute(statement)
             statement = await connection.fetchval(
                 "select format('grant usage on schema %I to %I', $1::text, $2::text)", schema, role
             )
@@ -311,7 +461,14 @@ async def ensure_restore_role(pool: Any, role: str, restore_url: str) -> None:
         for table in sorted(CORPUS_TABLES):
             schema, name = table.split(".", 1)
             statement = await connection.fetchval(
-                "select format('grant select, insert, update, delete on %I.%I to %I', $1::text, $2::text, $3::text)",
+                "select format('revoke all on %I.%I from %I', $1::text, $2::text, $3::text)",
+                schema,
+                name,
+                role,
+            )
+            await connection.execute(statement)
+            statement = await connection.fetchval(
+                "select format('grant insert on %I.%I to %I', $1::text, $2::text, $3::text)",
                 schema,
                 name,
                 role,

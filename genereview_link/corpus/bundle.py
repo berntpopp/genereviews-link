@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.resources as resources
 import json
 import shutil
 import subprocess
@@ -10,6 +11,25 @@ import tarfile
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+
+
+def _reviewed_migration_digests() -> dict[str, dict[str, str]]:
+    """Digest the exact SQL files shipped by this source revision."""
+    from genereview_link.db.migrations import control as control_pkg
+    from genereview_link.db.migrations import data as data_pkg
+
+    result: dict[str, dict[str, str]] = {"control": {}, "data": {}}
+    for namespace, package, prefix in (
+        ("control", control_pkg, ""),
+        ("data", data_pkg, "genereview:"),
+    ):
+        for entry in resources.files(package).iterdir():
+            if entry.is_file() and entry.name.endswith(".sql"):
+                version = entry.name.removesuffix(".sql")
+                result[namespace][f"{prefix}{version}"] = hashlib.sha256(
+                    entry.read_bytes()
+                ).hexdigest()
+    return result
 
 
 @dataclass
@@ -39,6 +59,9 @@ class BundleManifest:
     schema_migrations: dict[str, list[str]] = field(
         default_factory=lambda: {"control": [], "data": []}
     )
+    migration_file_sha256: dict[str, dict[str, str]] = field(
+        default_factory=_reviewed_migration_digests
+    )
     app_git_sha: str = ""
     app_version: str = ""
     genereview_link_version: str = ""
@@ -49,9 +72,22 @@ class BundleManifest:
         }
     )
     source: dict[str, object] = field(default_factory=dict)
+    source_capture: dict[str, object] = field(default_factory=dict)
+    content_identity: dict[str, object] = field(default_factory=dict)
     validation: dict[str, object] = field(
         default_factory=lambda: {"status": "not_run", "smoke_queries": []}
     )
+    evaluation: dict[str, object] = field(
+        default_factory=lambda: {
+            "status": "not_run",
+            "suite": "tests/eval/genereviews_queries.jsonl",
+            "suite_sha256": "",
+            "model_name": "BAAI/bge-small-en-v1.5",
+            "results": {},
+            "result_sha256": "",
+        }
+    )
+    computation: dict[str, object] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     created_by: str = "manual"
     license: dict[str, object] = field(
@@ -67,11 +103,16 @@ def pg_dump_to(
     dump_path: Path,
     *,
     database_url: str,
-    schemas: tuple[str, ...] = ("public", "genereview"),
-    extensions: tuple[str, ...] = ("vector",),
+    snapshot: str | None = None,
+    tables: tuple[str, ...] = (
+        "genereview.genereview_chapters",
+        "genereview.genereview_embeddings_bge384",
+        "genereview.genereview_passages",
+        "public.genereview_corpus_version",
+        "public.genereview_computation_runs",
+    ),
 ) -> None:
-    cmd = [
-        "pg_dump",
+    arguments = [
         "-Fc",
         "--data-only",
         "--no-owner",
@@ -79,13 +120,33 @@ def pg_dump_to(
         "-f",
         str(dump_path),
     ]
-    for extension in extensions:
-        cmd.extend(["--extension", extension])
-    for schema in schemas:
-        cmd.extend(["--schema", schema])
-    cmd.append(database_url)
+    for table in tables:
+        arguments.extend(["--table", table])
+    if snapshot is not None:
+        arguments.extend(["--snapshot", snapshot])
+    arguments.append(database_url)
+    from genereview_link.corpus.pg_client import (
+        assert_client_server_match,
+        build_pg_client_command,
+    )
+
+    client = subprocess.run(  # noqa: S603
+        build_pg_client_command("pg_dump", ["--version"]),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    server = subprocess.run(  # noqa: S603
+        build_pg_client_command(
+            "psql", [database_url, "-At", "-v", "ON_ERROR_STOP=1", "-c", "show server_version_num"]
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert_client_server_match(client, server)
     subprocess.run(  # noqa: S603
-        cmd,
+        build_pg_client_command("pg_dump", arguments, mounts=(dump_path.parent,)),
         check=True,
     )
 

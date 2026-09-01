@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly image='pgvector/pgvector:0.8.2-pg18@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d'
+tool="$(basename -- "$0")"
+if test "$tool" = pg18-client; then
+  test "$#" -gt 0 || { echo 'usage: pg18-client TOOL [ARG...]' >&2; exit 64; }
+  tool="$1"
+  shift
+fi
+case "$tool" in
+  pg_dump|pg_restore|psql) ;;
+  *) echo "unsupported PostgreSQL client tool: $tool" >&2; exit 64 ;;
+esac
+mount_root="${PG18_MOUNT_ROOT:?PG18_MOUNT_ROOT must name the bounded runner directory}"
+test -d "$mount_root" && test "${mount_root#/}" != "$mount_root" && test "$mount_root" != / || {
+  echo 'PG18_MOUNT_ROOT must be an existing absolute non-root directory' >&2
+  exit 64
+}
+docker_arguments=(run --rm --network host --user "$(id -u):$(id -g)")
+if test "${PGPASSWORD+x}" = x; then
+  docker_arguments+=(--env PGPASSWORD)
+fi
+docker_arguments+=(--volume "$mount_root:$mount_root:rw" "$image" "$tool" "$@")
+exec docker "${docker_arguments[@]}"

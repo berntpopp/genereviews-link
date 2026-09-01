@@ -8,6 +8,33 @@ from typing import Any
 
 import asyncpg
 
+from genereview_link.corpus.schema_identity import (
+    EXPECTED_CONTROL_MIGRATIONS,
+    EXPECTED_DATA_MIGRATIONS,
+)
+
+
+class _ConnectionPool:
+    """Small pool facade used to validate inside a caller-owned transaction."""
+
+    def __init__(self, connection: asyncpg.Connection) -> None:
+        self.connection = connection
+
+    def acquire(self) -> _ConnectionAcquire:
+        return _ConnectionAcquire(self.connection)
+
+
+class _ConnectionAcquire:
+    def __init__(self, connection: asyncpg.Connection) -> None:
+        self.connection = connection
+
+    async def __aenter__(self) -> asyncpg.Connection:
+        return self.connection
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -50,11 +77,41 @@ async def validate_database_ready(
     quoted_schema = _quote_ident(schema)
     quoted_embedding_table = _quote_ident(embedding_table)
     async with pool.acquire() as conn:
-        active_version = await conn.fetchval(
-            "select version from public.genereview_corpus_version where is_active"
+        migration_rows = await conn.fetch(
+            "select namespace, version from public.schema_migrations "
+            "where namespace in ('control', 'data')"
         )
-        if not active_version:
+        applied_control = {
+            str(row["version"]) for row in migration_rows if row["namespace"] == "control"
+        }
+        applied_data = {str(row["version"]) for row in migration_rows if row["namespace"] == "data"}
+        if applied_control != EXPECTED_CONTROL_MIGRATIONS:
+            errors.append("control schema migrations do not match the reviewed migration set")
+        if applied_data != EXPECTED_DATA_MIGRATIONS:
+            errors.append("data schema migrations do not match the reviewed migration set")
+        actual_pg_major = str(
+            int(await conn.fetchval("select current_setting('server_version_num')")) // 10_000
+        )
+        actual_pgvector = str(
+            await conn.fetchval("select extversion from pg_extension where extname = 'vector'")
+            or ""
+        )
+        if actual_pg_major != "18":
+            errors.append(f"PostgreSQL major {actual_pg_major} is not the reviewed major 18")
+        if actual_pgvector != "0.8.2":
+            errors.append(f"pgvector {actual_pgvector!r} is not the reviewed version 0.8.2")
+        active_corpus = await conn.fetchrow(
+            "select version, source_capture, ingest_run_id, embedding_run_id "
+            "from public.genereview_corpus_version where is_active"
+        )
+        if not active_corpus:
             errors.append("no active corpus version")
+        elif (
+            not isinstance(active_corpus["source_capture"], dict)
+            or not active_corpus["ingest_run_id"]
+            or not active_corpus["embedding_run_id"]
+        ):
+            errors.append("active corpus lacks retained source and computation-run identity")
 
         chapter_count = int(
             await conn.fetchval(
@@ -76,6 +133,17 @@ async def validate_database_ready(
             )
             or 0
         )
+        from genereview_link.retrieval.model_identity import BGE_MODEL_REVISION
+
+        model_revision_matches = bool(
+            await conn.fetchval(
+                f"select count(*) > 0 and "  # noqa: S608
+                f"count(*) filter (where model_revision = $2) = count(*) "
+                f"from {quoted_schema}.{quoted_embedding_table} where model_name = $1",
+                model_name,
+                BGE_MODEL_REVISION,
+            )
+        )
         hnsw_exists = bool(
             await conn.fetchval(
                 """
@@ -95,6 +163,14 @@ async def validate_database_ready(
              where id = 1
             """
         )
+        run_mismatch_count = int(
+            await conn.fetchval(
+                f"select count(*) from {quoted_schema}.{quoted_embedding_table} "  # noqa: S608
+                "where embedding_run_id is distinct from $1",
+                active_corpus["embedding_run_id"] if active_corpus else None,
+            )
+            or 0
+        )
 
     if chapter_count < min_chapters:
         errors.append(f"chapter count {chapter_count} is below minimum {min_chapters}")
@@ -104,6 +180,10 @@ async def validate_database_ready(
         errors.append(
             f"embedding count {embedding_count} does not equal passage count {passage_count}"
         )
+    if not model_revision_matches:
+        errors.append("embeddings do not use the exact reviewed model revision")
+    if run_mismatch_count:
+        errors.append("embeddings are not tied to the active immutable computation run")
     if not hnsw_exists:
         errors.append("HNSW index genereview_embeddings_bge384_hnsw_cosine is missing")
     if active_embedding is None:
@@ -117,3 +197,23 @@ async def validate_database_ready(
         )
 
     return BundleValidationResult(errors=errors, warnings=warnings)
+
+
+async def validate_database_ready_from_connection(
+    connection: asyncpg.Connection,
+    *,
+    schema: str = "genereview",
+    min_chapters: int = 880,
+    min_passages: int = 40_000,
+    embedding_table: str = "genereview_embeddings_bge384",
+    model_name: str = "BAAI/bge-small-en-v1.5",
+) -> BundleValidationResult:
+    """Run validation on a caller-owned repeatable-read connection."""
+    return await validate_database_ready(
+        _ConnectionPool(connection),
+        schema=schema,
+        min_chapters=min_chapters,
+        min_passages=min_passages,
+        embedding_table=embedding_table,
+        model_name=model_name,
+    )

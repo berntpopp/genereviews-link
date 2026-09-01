@@ -71,12 +71,21 @@ Production does **not** use any of the three corpus-loading modes in [data.md](d
 The corpus is an **immutable, digest-pinned GitHub data release**, restored exactly once
 into the Postgres volume by the `genereview-corpus-restore` init sidecar:
 
-- The sidecar has **no route off the internal network** — it cannot fetch the bundle
-  itself. Point `CORPUS_SEED_DIR` at a host directory already holding
-  `corpus-bundle.tar.gz` from the release named in
-  [`container-release.json`](../container-release.json), mounted read-only at `/seed`.
-- `CORPUS_BUNDLE_SHA256` is the trust root: the bytes are verified **before** the archive
-  is opened, and an empty value **fails closed**.
+- The sidecar has **no route off the internal network** — it cannot fetch release assets
+  itself. Point `CORPUS_SEED_DIR` at a host directory already holding the exact artifact
+  shape named in [`container-release.json`](../container-release.json), mounted read-only
+  at `/seed`.
+- The current immutable pin is the legacy `corpus-bundle.tar.gz` release and uses
+  `CORPUS_BUNDLE_SHA256`. After the owner-authorized exact-eight release is published and
+  verified, the pin selects `asset_name: corpus.dump`; the seed then contains exactly
+  `corpus.dump`, `manifest.json`, and `SHA256SUMS`, and the three corresponding digest
+  variables are required. No source-only change may point production at unpublished assets.
+- Both shapes verify every byte before restore. Only a manifest-v3 direct release may write the
+  readiness record, which identifies the verified inner `corpus.dump` and the configured release
+  tag, manifest digest, and checksums digest. Every later start must match that complete direct tuple;
+  changing any configured direct asset or tag fails closed instead of accepting stale readiness.
+  A legacy restore remains
+  runnable but deliberately produces no controller readiness claim.
 - The restore runs as `RESTORE_ROLE` (`NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`), which
   may write the corpus tables and nothing else. Reviewed in-repo migrations run as the
   owner; the untrusted artifact is loaded with the least rights that can load it.
@@ -86,6 +95,11 @@ into the Postgres volume by the `genereview-corpus-restore` init sidecar:
 (`ghcr.io/berntpopp/genereviews-link@sha256:…`); the prod overlay fails closed if it is
 unset. `container-release.json` is the machine-readable contract (`data-bound`, with the
 pinned corpus release tag and digest) that the release workflow asserts against.
+
+`definitions.contract: data-bound` requires the service definitions eventually to bind accepted
+data evidence. The current legacy runtime is explicitly `data_identity_contract: unadopted`: it
+can start safely, but it is not controller-deployable evidence. Only a future verified direct
+`corpus.dump` pin changes that state and may produce a `verified-v1` readiness record.
 
 ## Resource budget
 

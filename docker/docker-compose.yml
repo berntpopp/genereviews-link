@@ -8,7 +8,7 @@
 name: genereviews-link
 
 # The corpus is a RESTORED DATABASE, not a file the server reads. It arrives as an
-# immutable, digest-pinned, DATA-ONLY archive (see container-release.json `data`) and is
+# immutable, digest-pinned, DATA-ONLY release (see container-release.json `data`) and is
 # loaded exactly once, by `genereview-corpus-restore`, into the `genereview_pg_data`
 # volume. That sidecar has no route off the internal network: it cannot fetch anything,
 # and it refuses any archive entry that is not table data for a named corpus table, so the
@@ -89,8 +89,12 @@ services:
       # The artifact is loaded by a role that may write the corpus tables and nothing else.
       # Reviewed migrations run as the owner; the untrusted archive never does.
       RESTORE_DATABASE_URL: postgresql://genereview_restore:${POSTGRES_PASSWORD:-genereview}@postgres:5432/genereview
-      CORPUS_SEED_PATH: /seed/corpus-bundle.tar.gz
+      CORPUS_SEED_PATH: "${CORPUS_SEED_PATH:-/seed/corpus-bundle.tar.gz}"
       CORPUS_BUNDLE_SHA256: "${CORPUS_BUNDLE_SHA256:-0000000000000000000000000000000000000000000000000000000000000000}"
+      CORPUS_DUMP_SHA256: "${CORPUS_DUMP_SHA256:-}"
+      CORPUS_MANIFEST_SHA256: "${CORPUS_MANIFEST_SHA256:-}"
+      CORPUS_CHECKSUMS_SHA256: "${CORPUS_CHECKSUMS_SHA256:-}"
+      CORPUS_RELEASE_TAG: "${CORPUS_RELEASE_TAG:-}"
       CORPUS_RESTORE_DIR: /var/lib/genereview/restore
     volumes:
       # A reviewed, pre-seeded artifact: read-only, never a system path.

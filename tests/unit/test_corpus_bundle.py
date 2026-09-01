@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from dataclasses import asdict
 from pathlib import Path
 
@@ -140,20 +141,32 @@ def test_data_only_bundle_has_canonical_metadata_and_exact_checksum_set(tmp_path
 def test_pg_dump_to_calls_subprocess(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     called_with: list[list[str]] = []
 
-    import subprocess
-
-    def fake_run(cmd: list[str], **kwargs: object) -> object:
+    def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         called_with.append(cmd)
-        # create empty dump file so write_bundle won't fail
-        dump_path = Path(cmd[cmd.index("-f") + 1])
+        if cmd[-2:] == ["pg_dump", "--version"]:
+            return subprocess.CompletedProcess(cmd, 0, "pg_dump (PostgreSQL) 18.4\n", "")
+        if cmd[-1] == "show server_version_num":
+            return subprocess.CompletedProcess(cmd, 0, "180004\n", "")
         dump_path.write_bytes(b"")
-        return None
+        return subprocess.CompletedProcess(cmd, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     dump_path = tmp_path / "corpus.dump"
     pg_dump_to(dump_path, database_url="postgresql://user:pass@localhost/db")
-    assert called_with[0][:5] == ["pg_dump", "-Fc", "--data-only", "--no-owner", "--no-privileges"]
-    assert called_with[0][-1] == "postgresql://user:pass@localhost/db"
-    assert "--extension" in called_with[0]
-    assert "vector" in called_with[0]
-    assert called_with[0].count("--schema") == 2
+    dump_command = called_with[2]
+    assert dump_command[0:2] == ["docker", "run"]
+    assert dump_command[-1] == "postgresql://user:pass@localhost/db"
+    assert "--schema" not in dump_command
+    assert "--extension" not in dump_command
+    selected = [
+        dump_command[index + 1]
+        for index, argument in enumerate(dump_command)
+        if argument == "--table"
+    ]
+    assert selected == [
+        "genereview.genereview_chapters",
+        "genereview.genereview_embeddings_bge384",
+        "genereview.genereview_passages",
+        "public.genereview_corpus_version",
+        "public.genereview_computation_runs",
+    ]

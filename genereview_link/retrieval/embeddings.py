@@ -9,7 +9,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import random
 from typing import Any, Protocol, cast
+
+from genereview_link.retrieval.model_identity import BGE_MODEL_REVISION
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,7 @@ class EmbeddingProviderUnavailableError(RuntimeError):
 
 class EmbeddingProvider(Protocol):
     model_name: str
+    model_revision: str
     dim: int
 
     async def embed_query(self, text: str) -> list[float]: ...
@@ -85,6 +89,7 @@ class FakeEmbeddingProvider:
 
     def __init__(self, *, dim: int, model_name: str = "fake-embedding") -> None:
         self.model_name = model_name
+        self.model_revision = "fake-deterministic-v1"
         self.dim = dim
 
     async def embed_query(self, text: str) -> list[float]:
@@ -113,10 +118,12 @@ class SentenceTransformerEmbeddingProvider:
         model_name: str = "BAAI/bge-small-en-v1.5",
         dim: int = 384,
         device: str = "auto",
+        model_revision: str = BGE_MODEL_REVISION,
     ) -> None:
         self.model_name = model_name
         self.dim = dim
         self.device = device
+        self.model_revision = model_revision
         self._model: Any | None = None
         self._np: Any | None = None
 
@@ -141,14 +148,25 @@ class SentenceTransformerEmbeddingProvider:
             return self._model, self._np
         try:
             import numpy as np
+            import torch
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
             raise EmbeddingProviderUnavailableError(
                 "Install sentence-transformers + numpy to use BGE embeddings."
             ) from exc
         self._np = np
+        random.seed(0)
+        np.random.seed(0)
+        torch.manual_seed(0)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(0)
         device = None if self.device == "auto" else self.device
-        self._model = SentenceTransformer(self.model_name, device=device)
+        self._model = SentenceTransformer(
+            self.model_name,
+            device=device,
+            revision=self.model_revision,
+            local_files_only=True,
+        )
         resolved = getattr(self._model, "device", None)
         logger.info(
             "loaded embedding model %s on device=%s (requested=%s)",

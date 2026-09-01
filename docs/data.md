@@ -11,8 +11,8 @@ new corpus. For the environment variables named here, see
 |---|---|
 | Upstream | [GeneReviews](https://www.ncbi.nlm.nih.gov/books/NBK1116/), NCBI Bookshelf |
 | Access paths | NCBI E-utilities (`EUTILS_BASE_URL`) and Bookshelf HTML |
-| Data licence | GeneReviews® content © 1993–present University of Washington. SPDX `LicenseRef-GeneReviews` — copyrighted, **not** an open licence. |
-| Terms | <https://www.ncbi.nlm.nih.gov/books/NBK138602/> |
+| Data licence | GeneReviews® content ©1993-2026 University of Washington, Seattle. SPDX `LicenseRef-GeneReviews` — copyrighted, **not** an open licence. |
+| Terms | Official snapshot from <https://www.genereviews.org/>: noncommercial research purposes only; retain the copyright notice and Usage Disclaimer; no further modifications. |
 | Attribution | Attribute the University of Washington when redistributing. The `get_license` tool and the `genereview://license` resource return the canonical notice. |
 | Citation | Every search hit and passage carries `recommended_citation`. Paste it verbatim; never paraphrase or fabricate it. Cite `passage_id` + the chapter NBK id + `chapter_last_updated`. |
 
@@ -109,7 +109,10 @@ If the schema is empty, `/passages/search` returns 503 until a corpus is loaded 
 
 ```bash
 make db-migrate     # apply control + data migrations against $DATABASE_URL
-make ingest         # download → parse → write → swap
+genereview-link ingest --archive <archive> --side-data-dir <dir> \
+  --source-metadata <capture.json> --prior-manifest <prior-manifest.json> \
+  --prior-seal-manifest <prior-seal-manifest.json>
+                    # verify retained bytes → record identity → parse → write → swap
 make embed          # backfill embeddings + build the HNSW index
 make db-reset       # DROP and recreate the genereview schemas (dev only)
 ```
@@ -124,6 +127,7 @@ already-embedded, validated database locally; it never uploads, creates a draft,
 release service.
 
 ```bash
+uv sync --group dev --extra cpu --frozen
 make bundle-validate                              # active corpus is bundle-ready
 RELEASE_ID=2026-05-12-r1 make bundle-publish-local
 ```
@@ -132,6 +136,12 @@ RELEASE_ID=2026-05-12-r1 make bundle-publish-local
 publication is deliberately separate: it requires a complete dated affirmative redistribution
 record bound to an immutable sealed handoff object. Do not draft, upload, or publish without that
 record.
+
+`bundle publish-local` is the ergonomic build-to-seal path: it validates, evaluates, and exports
+the candidate while holding the same corpus advisory lock and repeatable-read exported snapshot.
+The resulting manifest binds the evaluation suite/results to the exact corpus source tuple,
+snapshot identifier, and `corpus.dump` digest, so the directory is accepted by `seal-handoff`.
+Metrics copied from another run cannot replace this in-transaction evidence.
 
 The local output is exactly `corpus.dump`, canonical `manifest.json`, and `SHA256SUMS`; it contains
 data only, never schema, migrations, application code, environment files, or credentials. Verify
@@ -142,14 +152,82 @@ record bound to that object, its source SHA-256, corpus-dump SHA-256, and releas
 has no release-service client. The handoff root is owner-only (`0700`), and sealed objects/files are
 checked with no-follow file descriptors, exact digest/size/mode manifests, and immutable object IDs.
 The sealed publisher wheel name and digest are part of that object identity; the privileged workflow
-installs it and its lockfile-derived dependency wheels with no index and no dependency resolution.
+extracts only that bounded wheel without an index or dependency resolution. Its handoff verifier uses only
+the Python standard library. It is launched from a neutral directory under `python -I`, inserts only
+the sealed installation target, and proves the verifier module's `__file__` is below that target, so
+the source checkout and ambient site packages cannot shadow it in the credentialed job.
 A separately privileged automation may act only on that sealed handoff after the rights record exists.
 
-The privileged workflow downloads only the three named assets through byte- and deadline-bounded
-allowlisted streams, verifies the source/release attestation, reads the PostgreSQL archive TOC before
-restore, and accepts only data rows for reviewed tables. It applies reviewed migrations first, restores
-as a non-owner without privileges in one transaction, and compares the restored chapter, passage, and
-embedding counts exactly with the sealed manifest before representative GeneReviews search fixtures run.
+The build job uploads one immutable, 90-day Actions artifact named from the sealed object ID. It
+contains the exact five attested subjects plus canonical `handoff-materialization.json`, which
+binds their names, sizes, SHA-256 digests, build revision, source repository/ref, and object ID.
+This unprivileged artifact is only a bridge for the owner: download those exact content bytes, verify
+their build-provenance attestations and materialization record, restore the generic
+`publisher-tool.whl` filename to the sealed wheel name recorded in that materialization and
+`seal-manifest.json`, then copy the five subjects to durable immutable release-asset storage and
+construct the numeric-asset handoff locator. Record the
+Actions artifact ID/digest and the resulting durable asset IDs/digests in the owner evidence. The
+privileged publisher never consumes a runner artifact or run ID as a handoff. Its protected
+sub-48-KiB handoff locator names exactly the sealed `corpus.dump`, `manifest.json`, `SHA256SUMS`,
+`seal-manifest.json`, and one publisher wheel by immutable numeric GitHub release-asset URL, size,
+and SHA-256, and binds the object ID and build revision. It reconstructs a fresh owner-only handoff,
+then the sealed wheel re-verifies its object identity before rights or release logic is reached.
+
+The protected publisher consumes a sub-48-KiB locator for exactly three immutable, numeric GitHub
+release assets: `rights-record.json`, `rights-evidence.json`, and `terms-snapshot.html`. Repository,
+host, byte-size, and SHA-256 allowlists are enforced before those durable bytes are accepted. The
+canonical rights record uses `bundle:` member URIs and binds both snapshots by SHA-256. The public
+release retains all three safe records, `seal-manifest.json`, and the sealed publisher wheel as
+`publisher-tool.whl`, in addition to the three data-only bundle files. This makes the public decision
+and publisher object reconstructable without publishing private keys, tokens, or unrelated reviewer
+material. A missing, non-affirmative, malformed, or mismatched record fails before any release or tag
+mutation.
+
+Local handoff roots and the final numeric release assets are durable owner-controlled storage outside
+both the repository and serving volumes. They are retained through program closure. The intermediate
+90-day workflow artifact makes the attested bytes retrievable after the build job, but its retention
+deadline is not final durable-publication evidence. Record only verified exact local or release-asset
+identities—do not infer or claim an object from an earlier log line.
+
+The no-input builder uses a separate sub-48-KiB protected locator to download the exact retained
+archive, source-capture metadata, prior release manifest and seal manifest, and three side-data
+files from immutable numeric release assets.
+Ingest never substitutes a live fetch for this publication path. The corpus manifest binds the
+canonical upstream URLs, exact raw listing response digest/size/capture time, archive digest/size and
+sorted member/expanded-content identities, exact sorted chapter IDs, and digest/size identity for
+each side-data file. These fields and compute-time runtime/model provenance are stored immutably with
+the active corpus rows; packaging refuses older database rows that lack the complete identity.
+The prior release ID, application revision, manifest digest, and full logical content tuple are
+verified from the retained prior manifest before staging is touched. Restore writes the immutable
+`public.genereview_release_readiness` marker only after migrations, exactly one data-only restore,
+counts, HNSW, source digest, and the reviewed semantic suite succeed; it binds the three logical
+volumes `genereview_pg_data`, `genereview_pg_run`, and `genereview_restore_state`.
+
+The privileged workflow downloads only the exact eight public reconstruction assets through byte-
+and deadline-bounded allowlisted streams, verifies their API asset IDs/sizes/digests and attestation,
+and reads the PostgreSQL archive TOC before restore. Every `pg_dump`, `pg_restore`, and `psql` command
+runs from the digest-pinned PostgreSQL 18/pgvector image, matching the server major. Reviewed migrations
+run as the owner; archive data restores through the exact restricted `NOINHERIT` role in one transaction.
+The verifier recomputes source/content/provenance identities, exact migration file digests, counts,
+HNSW presence, representative queries, and the reviewed nonzero evaluation suite from the restored DB.
+Release publication inventories drafts as well as published releases and mutates only the exact numeric
+release ID after verifying its tag, source revision, asset IDs, sizes, digests, and closed lifecycle state.
+Before any draft or asset mutation, the owner-created annotated corpus tag must resolve to the exact
+build/object identity under an active tag ruleset that prohibits deletion and updates with no
+bypass actors. Promotion freezes that tag object plus the exact draft representation and ETag before
+semantic restore, rechecks the protected tag/ruleset and ETag immediately before the only PATCH, and
+uses the verified ETag as `If-Match`. Publication automatically dispatches the external verifier with the
+exact release ID/tag/target/assets tuple; closure requires its successful acceptance artifact.
+
+The repository owner supplied an affirmative redistribution determination dated 2026-09-01;
+publication remains bound to that durable evidence, the exact source/artifact digests, and required
+University of Washington attribution. The current production pin remains the truthful legacy tar
+release until the authorized replacement is actually published and verified. The restore bridge
+also accepts the exact-eight release directly: its read-only seed directory contains exactly
+`corpus.dump`, `manifest.json`, and `SHA256SUMS`, and `container-release.json` sets `asset_name` to
+`corpus.dump` while anchoring all three asset digests. In that direct shape, `data.digest` and the
+final readiness artifact identity both mean the verified `corpus.dump` digest. A pin changes only
+after the immutable release exists; source preparation never invents an unavailable asset.
 
 ## Corpus freshness
 

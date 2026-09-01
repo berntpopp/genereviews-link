@@ -2,6 +2,28 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
+## [5.1.6] - 2026-08-31
+
+- Bound every corpus bundle to the exact upstream listing path, archive digest and size, and all
+  three GeneReviews side-data digests and sizes recorded during ingest.
+- Closed handoff copy races and made the sealed file-mode manifest match the immutable object.
+- Hardened the rights-gated publisher around exact numeric GitHub release IDs, draft-inclusive
+  inventory, exact tag/source ownership, bounded asset verification, and immutable promotion.
+- Restored sealed-object permissions after artifact transfer and removed unsealed publisher
+  dependencies from the credentialed job. The repository owner supplied an affirmative
+  redistribution determination dated 2026-09-01; publication remains bound to its exact durable
+  evidence, source/artifact digests, and required University of Washington attribution.
+- Retained exact attested build subjects through an immutable owner-materialization artifact and
+  required an active no-bypass immutable-tag ruleset before any corpus draft or asset mutation.
+
+## [5.1.5] - 2026-08-31
+
+- Preserved the current NCBI GeneReviews corpus when a malformed trailing `colspan`
+  overflows the declared table header, while retaining strict rejection for real row-width
+  mismatches. The fresh 2026-08-31 source now parses all 890 mapped chapters.
+- Reset stale staging migration records after an interrupted ingest so a safe retry recreates
+  every staging table before writing and still leaves the active corpus untouched until swap.
+
 ## [5.1.4] - 2026-08-31
 
 - Pinned the data-release provenance attestation action to its reviewed immutable v4.2.2 revision.

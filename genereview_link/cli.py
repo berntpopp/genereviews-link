@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import tempfile
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 import typer
 import uvicorn
@@ -17,6 +16,25 @@ from genereview_link.logging_config import configure_structlog, get_logger
 
 configure_structlog()
 logger = get_logger("cli")
+
+
+def _build_bundle(
+    *,
+    output: Path | None,
+    release_id: str | None,
+    skip_validation: bool,
+    evaluation_file: Path | None = None,
+) -> Path:
+    """Load offline-only corpus tooling only when its CLI command is invoked."""
+    from genereview_link.corpus.bundle_builder import build_bundle
+
+    return build_bundle(
+        output=output,
+        release_id=release_id,
+        skip_validation=skip_validation,
+        evaluation_file=evaluation_file,
+    )
+
 
 app = typer.Typer(
     name="genereview-link",
@@ -207,6 +225,11 @@ def ingest_cmd(
         bool,
         typer.Option("--dry-run", help="Download + parse only; do not write to DB."),
     ] = False,
+    archive: Annotated[Path | None, typer.Option("--archive")] = None,
+    side_data_dir: Annotated[Path | None, typer.Option("--side-data-dir")] = None,
+    source_metadata: Annotated[Path | None, typer.Option("--source-metadata")] = None,
+    prior_manifest: Annotated[Path | None, typer.Option("--prior-manifest")] = None,
+    prior_seal_manifest: Annotated[Path | None, typer.Option("--prior-seal-manifest")] = None,
 ) -> None:
     """Run the full ingest pipeline against DATABASE_URL."""
     import asyncio
@@ -220,7 +243,14 @@ def ingest_cmd(
             if dry_run:
                 typer.echo("dry-run not yet implemented; aborting")
                 raise typer.Exit(2)
-            result = await run_full_ingest(pool)
+            result = await run_full_ingest(
+                pool,
+                archive=archive,
+                side_data_dir=side_data_dir,
+                source_metadata=source_metadata,
+                prior_manifest=prior_manifest,
+                prior_seal_manifest=prior_seal_manifest,
+            )
             typer.echo(
                 f"ingested {result.chapter_count} chapters / "
                 f"{result.passage_count} passages "
@@ -238,10 +268,17 @@ def embed_cmd(
     fake: Annotated[
         bool, typer.Option("--fake", help="Use deterministic FakeEmbeddingProvider (testing).")
     ] = False,
+    index_only: Annotated[
+        bool, typer.Option("--index-only", help="Rebuild HNSW without inserting embeddings.")
+    ] = False,
 ) -> None:
     """Backfill BGE embeddings for missing passages and build HNSW index."""
     from genereview_link.db.pool import create_pool
-    from genereview_link.ingest.orchestrator import backfill_embeddings, build_hnsw_index
+    from genereview_link.ingest.orchestrator import (
+        backfill_embeddings,
+        build_hnsw_index,
+        rebuild_hnsw_index,
+    )
     from genereview_link.retrieval.embeddings import (
         FakeEmbeddingProvider,
         SentenceTransformerEmbeddingProvider,
@@ -250,6 +287,10 @@ def embed_cmd(
     async def run() -> None:
         pool = await create_pool()
         try:
+            if index_only:
+                await rebuild_hnsw_index(pool, schema=schema)
+                typer.echo("HNSW index rebuilt")
+                return
             provider = (
                 FakeEmbeddingProvider(dim=384) if fake else SentenceTransformerEmbeddingProvider()
             )
@@ -265,86 +306,6 @@ def embed_cmd(
 
 bundle_app = typer.Typer(name="bundle", help="Build and verify release bundles.")
 app.add_typer(bundle_app)
-
-
-def _build_bundle(
-    *,
-    output: Path | None,
-    release_id: str | None,
-    skip_validation: bool,
-) -> Path:
-    """Build a local data-only corpus directory from DATABASE_URL."""
-
-    from genereview_link.config import settings
-    from genereview_link.corpus.bundle import (
-        BundleManifest,
-        pg_dump_to,
-        write_data_only_bundle,
-    )
-    from genereview_link.corpus.bundle_validation import validate_database_ready
-    from genereview_link.db.pool import create_pool
-
-    if release_id and output is None:
-        output = Path(f"genereview-corpus-data-{release_id}")
-    output = output or Path("genereview-corpus-data")
-
-    async def run() -> Path:
-        pool = await create_pool()
-        try:
-            row = await pool.fetchrow(
-                "select version, chapter_count from public.genereview_corpus_version where is_active"
-            )
-            if not row:
-                typer.echo("no active corpus version; aborting")
-                raise typer.Exit(1)
-
-            validation_manifest: dict[str, Any] = {
-                "status": "not_run",
-                "smoke_queries": [],
-            }
-            if not skip_validation:
-                validation = await validate_database_ready(pool)
-                validation_manifest = validation.as_manifest()
-                if not validation.ok:
-                    for error in validation.errors:
-                        typer.echo(f"error: {error}", err=True)
-                    raise typer.Exit(1)
-
-            passage_count = await pool.fetchval(
-                'select count(*) from "genereview".genereview_passages'
-            )
-            embedding_count = await pool.fetchval(
-                """
-                select count(*)
-                  from "genereview".genereview_embeddings_bge384
-                 where model_name = 'BAAI/bge-small-en-v1.5'
-                """
-            )
-            with tempfile.TemporaryDirectory() as td:
-                td_path = Path(td)
-                pg_dump_to(td_path / "corpus.dump", database_url=settings.DATABASE_URL)
-                m = BundleManifest(
-                    corpus_release_id=release_id or "",
-                    corpus_version=row["version"],
-                    chapter_count=row["chapter_count"] or 0,
-                    passage_count=int(passage_count or 0),
-                    embedding={
-                        "model_name": "BAAI/bge-small-en-v1.5",
-                        "dimension": 384,
-                        "distance_metric": "cosine",
-                        "active_table": "genereview_embeddings_bge384",
-                        "count": int(embedding_count or 0),
-                        "expected_count": int(passage_count or 0),
-                    },
-                    created_by="cli",
-                    validation=validation_manifest,
-                )
-                write_data_only_bundle(work_dir=td_path, output=output, manifest=m)
-                return output
-        finally:
-            await pool.close()
-
-    return asyncio.run(run())
 
 
 @bundle_app.command("validate")
@@ -374,14 +335,20 @@ def bundle_validate() -> None:
 def bundle_build(
     output: Annotated[Path | None, typer.Option("--output")] = None,
     release_id: Annotated[str | None, typer.Option("--release-id")] = None,
+    evaluation_file: Annotated[Path | None, typer.Option("--evaluation-file")] = None,
     skip_validation: Annotated[
         bool,
         typer.Option("--skip-validation", help="Build without publish-readiness validation."),
     ] = False,
 ) -> None:
     """Build a release bundle from the current DATABASE_URL."""
-    built = _build_bundle(output=output, release_id=release_id, skip_validation=skip_validation)
-    typer.echo(f"wrote {built} (+ {built}.sha256)")
+    built = _build_bundle(
+        output=output,
+        release_id=release_id,
+        skip_validation=skip_validation,
+        evaluation_file=evaluation_file,
+    )
+    typer.echo(f"wrote {built} (contains corpus.dump, manifest.json, SHA256SUMS)")
 
 
 @bundle_app.command("publish-local")
@@ -422,7 +389,7 @@ def bundle_publish_handoff(
     object_id: Annotated[str, typer.Option("--object-id")],
     rights_record: Annotated[Path, typer.Option("--rights-record")],
 ) -> None:
-    """Reverify a rights-bound object locally; it intentionally does not publish."""
+    """Run the privileged rights gate for a sealed handoff before publication."""
     from genereview_link.corpus.handoff import HandoffError, prepare_publish_handoff
 
     try:
@@ -454,6 +421,12 @@ def corpus_restore() -> None:
     definition is ever taken from the artifact either.
     """
     from genereview_link.config import settings
+    from genereview_link.corpus.readiness import (
+        ReadinessError,
+        require_release_readiness,
+        write_release_readiness,
+    )
+    from genereview_link.db.indexes import build_hnsw_index
     from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
     from genereview_link.db.pool import create_pool
     from genereview_link.db.restore import (
@@ -463,8 +436,8 @@ def corpus_restore() -> None:
         extract_bundle,
         read_archive_entries,
         restore_data_only,
+        seed_identity_mode,
     )
-    from genereview_link.ingest.orchestrator import build_hnsw_index
 
     async def run() -> None:
         pool = await create_pool()
@@ -476,24 +449,50 @@ def corpus_restore() -> None:
             if applied:
                 logger.info("applied data migrations", versions=applied)
 
+            identity_mode = seed_identity_mode(
+                settings.CORPUS_BUNDLE_SHA256,
+                settings.CORPUS_DUMP_SHA256,
+                settings.CORPUS_MANIFEST_SHA256,
+                settings.CORPUS_CHECKSUMS_SHA256,
+            )
+
             active = await pool.fetchval(
                 "select version from public.genereview_corpus_version where is_active"
             )
             if active:
-                # Idempotent: the PostgreSQL volume already holds a restored corpus. A
-                # second restore would duplicate rows, so stop here and let the app start.
-                logger.info("active corpus already present; nothing to restore", version=active)
+                if identity_mode == "direct":
+                    await require_release_readiness(
+                        pool,
+                        release_tag=settings.CORPUS_RELEASE_TAG,
+                        artifact_digest=settings.CORPUS_DUMP_SHA256,
+                        manifest_digest=settings.CORPUS_MANIFEST_SHA256,
+                        checksums_digest=settings.CORPUS_CHECKSUMS_SHA256,
+                    )
+                    logger.info(
+                        "active direct corpus and verified-v1 readiness present", version=active
+                    )
+                else:
+                    logger.info(
+                        "active legacy corpus retained without controller readiness", version=active
+                    )
                 return
 
             bundle = extract_bundle(
                 Path(settings.CORPUS_SEED_PATH),
                 Path(settings.CORPUS_RESTORE_DIR) / "bundle",
-                expected_sha256=settings.CORPUS_BUNDLE_SHA256,
+                expected_sha256=settings.CORPUS_DUMP_SHA256 or settings.CORPUS_BUNDLE_SHA256,
+                expected_manifest_sha256=settings.CORPUS_MANIFEST_SHA256,
+                expected_checksums_sha256=settings.CORPUS_CHECKSUMS_SHA256,
             )
             assert_data_only_archive(read_archive_entries(bundle.dump))
             logger.info("corpus archive verified data-only", version=bundle.corpus_version)
 
-            await ensure_restore_role(pool, settings.RESTORE_ROLE, settings.RESTORE_DATABASE_URL)
+            await ensure_restore_role(
+                pool,
+                settings.RESTORE_ROLE,
+                settings.RESTORE_DATABASE_URL,
+                owner_url=settings.DATABASE_URL,
+            )
             restore_url = settings.RESTORE_DATABASE_URL
             if not restore_url:
                 raise ArchivePolicyError(
@@ -507,13 +506,26 @@ def corpus_restore() -> None:
             )
             if not restored:
                 raise ArchivePolicyError("restore completed with no active corpus version")
+            if identity_mode == "direct":
+                if bundle.manifest.get("manifest_version") != "3":
+                    raise ReadinessError("direct corpus release requires a manifest-v3 identity")
+                await write_release_readiness(
+                    pool,
+                    bundle.manifest,
+                    artifact_digest=f"sha256:{bundle.dump_sha256}",
+                    manifest_digest=settings.CORPUS_MANIFEST_SHA256,
+                    checksums_digest=settings.CORPUS_CHECKSUMS_SHA256,
+                    release_tag=settings.CORPUS_RELEASE_TAG,
+                )
+            else:
+                logger.info("legacy corpus restored without a verified-v1 readiness claim")
             logger.info("corpus restored", version=restored)
         finally:
             await pool.close()
 
     try:
         asyncio.run(run())
-    except ArchivePolicyError as exc:
+    except (ArchivePolicyError, ReadinessError) as exc:
         typer.echo(f"corpus restore refused: {exc}", err=True)
         raise typer.Exit(1) from exc
 

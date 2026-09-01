@@ -123,10 +123,14 @@ app has no restore path and never downloads anything. See [deployment.md](deploy
 
 | Variable | Default | Notes |
 |---|---|---|
-| `CORPUS_SEED_PATH` | `/seed/corpus.tar.gz` | The reviewed bundle, mounted read-only. |
-| `CORPUS_BUNDLE_SHA256` | *(empty)* | The digest committed in this repository — the trust root. Bytes are proven before the archive is opened. **Empty fails closed.** |
-| `CORPUS_RESTORE_DIR` | `/var/lib/genereview/restore` | Writable scratch for archive expansion. |
+| `CORPUS_SEED_PATH` | `/seed/corpus-bundle.tar.gz` | Read-only current legacy bundle, or `/seed` for an exact direct-asset release. |
+| `CORPUS_BUNDLE_SHA256` | *(empty)* | Reviewed legacy bundle digest; **empty fails closed** in legacy mode. |
+| `CORPUS_DUMP_SHA256` | *(empty)* | Reviewed `corpus.dump` release-asset digest; required in direct mode. |
+| `CORPUS_MANIFEST_SHA256` | *(empty)* | Reviewed `manifest.json` release-asset digest; required in direct mode. |
+| `CORPUS_CHECKSUMS_SHA256` | *(empty)* | Reviewed `SHA256SUMS` release-asset digest; required in direct mode. |
+| `CORPUS_RELEASE_TAG` | *(empty)* | Exact immutable `corpus-data-YYYY-MM-DD-rN` identity; required in direct mode and matched to readiness. |
+| `CORPUS_RESTORE_DIR` | `/var/lib/genereview/restore` | Writable scratch for verified asset extraction/staging. |
 | `RESTORE_DATABASE_URL` | *(empty)* | Restore-only connection, as an unprivileged role that may write the corpus tables and nothing else. |
 | `RESTORE_ROLE` | `genereview_restore` | The `NOSUPERUSER` / `NOCREATEDB` / `NOCREATEROLE` role the init ensures before restoring. |
-| `CORPUS_SEED_DIR` | *(compose)* | Host directory holding `corpus-bundle.tar.gz` from the release named in `container-release.json`. |
+| `CORPUS_SEED_DIR` | *(compose)* | Host directory holding exactly the artifact shape named in `container-release.json`. |
 | `GENEREVIEW_LINK_IMAGE` | *(compose)* | Digest-pinned image, e.g. `ghcr.io/berntpopp/genereviews-link@sha256:…`. The prod overlay **fails closed** if unset. |

@@ -14,12 +14,19 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from time import monotonic
 from urllib.parse import urlsplit
 
 import httpx
+
+from genereview_link.download_admission import DisallowedURLError as DisallowedURLError
+from genereview_link.download_admission import DownloadDeadlineError as DownloadDeadlineError
+from genereview_link.download_admission import DownloadOwnership as DownloadOwnership
+from genereview_link.download_admission import PinnedDownloadDirectory as PinnedDownloadDirectory
+from genereview_link.download_admission import ResponseTooLargeError as ResponseTooLargeError
 
 # Per-read deadlines protect a stalled socket.  The independent end-to-end
 # deadline ensures a peer cannot keep a transfer alive forever by dripping
@@ -29,18 +36,6 @@ STREAM_TIMEOUT = httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=30.0)
 MAX_DOWNLOAD_SECONDS = 20 * 60.0
 
 RequestHook = Callable[[httpx.Request], Awaitable[None]]
-
-
-class DisallowedURLError(Exception):
-    """Outbound request/redirect targets a non-allowlisted URL. NON-RETRYABLE."""
-
-
-class ResponseTooLargeError(Exception):
-    """A streamed download exceeded its byte ceiling. NON-RETRYABLE."""
-
-
-class DownloadDeadlineError(Exception):
-    """A download exceeded its monotonic end-to-end deadline. NON-RETRYABLE."""
 
 
 def build_host_allowlist(*urls: str) -> frozenset[str]:
@@ -104,23 +99,41 @@ async def stream_to_file(
     max_bytes: int,
     chunk_size: int = 1 << 20,
     deadline_seconds: float = MAX_DOWNLOAD_SECONDS,
+    created_ownership: list[DownloadOwnership] | None = None,
+    defer_admission: bool = False,
+    destination_directory: PinnedDownloadDirectory | None = None,
 ) -> str:
     """Stream *url* to *dest* under byte and monotonic time caps; return SHA-256.
 
     On cap overflow the partial file is removed and ``ResponseTooLargeError`` is
     raised.  A separate end-to-end deadline applies even when every individual
-    read completes before ``STREAM_TIMEOUT.read``.
+    read completes before ``STREAM_TIMEOUT.read``. When ``created_ownership`` is
+    supplied, its caller owns the returned open handle and must close it.
     """
+    if created_ownership is not None and created_ownership:
+        raise ValueError("created_ownership output must be empty")
+    if defer_admission and created_ownership is None:
+        raise ValueError("deferred admission requires retained ownership")
+    if destination_directory is not None and dest.parent != destination_directory.path:
+        raise ValueError("destination path is outside the pinned download directory")
+    ownership = (
+        destination_directory.anonymous(dest.name)
+        if destination_directory is not None
+        else DownloadOwnership.anonymous(dest)
+    )
+    if created_ownership is not None:
+        created_ownership.append(ownership)
     sha = hashlib.sha256()
     total = 0
     deadline_at = monotonic() + deadline_seconds
+    completed = False
     try:
         async with asyncio.timeout(deadline_seconds):
             async with client.stream("GET", url) as resp:
                 _reject_expired_deadline(deadline_at)
                 resp.raise_for_status()
                 _reject_declared_length(resp, max_bytes)
-                with dest.open("wb") as fh:
+                with os.fdopen(ownership.fileno(), "wb", closefd=False) as fh:
                     async for chunk in resp.aiter_bytes(chunk_size):
                         _reject_expired_deadline(deadline_at)
                         total += len(chunk)
@@ -128,14 +141,36 @@ async def stream_to_file(
                             raise ResponseTooLargeError(f"download exceeded {max_bytes} bytes")
                         sha.update(chunk)
                         fh.write(chunk)
-        return sha.hexdigest()
+                    fh.flush()
+                    os.fsync(fh.fileno())
+        _reject_expired_deadline(deadline_at)
+        digest = sha.hexdigest()
+        if not defer_admission:
+            ownership.admit_exact(expected_sha256=digest, expected_size=total)
+        completed = True
+        return digest
     except TimeoutError as exc:
         raise DownloadDeadlineError("download exceeded end-to-end deadline") from exc
-    except (DownloadDeadlineError, ResponseTooLargeError):
-        raise
     finally:
-        if total > max_bytes or monotonic() >= deadline_at:
-            dest.unlink(missing_ok=True)
+        try:
+            if not completed:
+                ownership.unlink_if_owned()
+        finally:
+            if not completed or created_ownership is None:
+                ownership.close()
+
+
+def write_exclusive_bytes(destination: Path, content: bytes) -> None:
+    """Create one download destination without following or replacing paths."""
+    ownership = DownloadOwnership.anonymous(destination)
+    try:
+        ownership.write(content)
+        ownership.sync()
+        ownership.admit_exact(
+            expected_sha256=hashlib.sha256(content).hexdigest(), expected_size=len(content)
+        )
+    finally:
+        ownership.close()
 
 
 async def read_capped(

@@ -46,6 +46,7 @@ def _parse_rows_from_trs(
     tr_nodes: list[Any],
     *,
     strip_header_artifacts: bool = False,
+    column_limit: int | None = None,
 ) -> list[list[str]]:
     """Parse NXML table rows, expanding rowspan and colspan."""
     rows: list[list[str]] = []
@@ -54,7 +55,9 @@ def _parse_rows_from_trs(
     for tr in tr_nodes:
         row: list[str] = []
         col_idx = 0
-        cells = iter(child for child in tr if _local_name(child) in {"td", "th"})
+        cell_nodes = [child for child in tr if _local_name(child) in {"td", "th"}]
+        cells = iter(cell_nodes)
+        cell_index = 0
 
         while True:
             while col_idx in pending:
@@ -75,6 +78,15 @@ def _parse_rows_from_trs(
                 value = _strip_header_artifacts(value)
             colspan = _positive_int_attr(cell, "colspan")
             rowspan = _positive_int_attr(cell, "rowspan")
+            is_final_cell = cell_index == len(cell_nodes) - 1
+            cell_index += 1
+            if (
+                column_limit is not None
+                and colspan > 1
+                and is_final_cell
+                and col_idx < column_limit < col_idx + colspan
+            ):
+                colspan = column_limit - col_idx
 
             for _ in range(colspan):
                 row.append(value)
@@ -147,7 +159,10 @@ def extract_table(table_wrap: Any, *, ordinal: int) -> ExtractedTable:
             header = _flatten_header_rows(header_rows)
         tbody = table.find("tbody")
         if tbody is not None:
-            rows = parse_rows(tbody)
+            rows = _parse_rows_from_trs(
+                list(tbody.findall("tr")),
+                column_limit=len(header) or None,
+            )
 
     # Capture <table-wrap-foot> footnotes.  These often carry clinical
     # qualifiers ("Click here for ...", abbreviation expansions, study

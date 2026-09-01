@@ -15,7 +15,7 @@ as phase tags where a semver release has not yet been cut.
 - Data-only corpus release workflows now use bounded exact-asset retrieval, release attestation,
   archive-TOC allowlisting, non-owner transactional restores, and exact restored-count/search checks.
   Handoff revalidation is no-follow, owner/mode checked, and binds the affirmative rights record to
-  the sealed source, artifact, and release identity. No corpus publication is enabled by this change.
+  the sealed source, artifact, and release identity. No publication was performed by this source change.
 
 ---
 
@@ -207,6 +207,10 @@ so this server composes cleanly behind the `genefoundry-router` gateway under th
 
 ### Fixed
 
+- Production corpus restore now retains the installed application and exact PostgreSQL 18 clients.
+  Publication consumes a durable digest-addressed sealed-handoff locator, resumes only exact partial
+  drafts, uses a final annotated tag transaction, verifies retained prior-manifest identity before
+  staging, and writes the three-volume `verified-v1` readiness proof only after restored semantics.
 - Corpus packaging now writes deterministic, data-only release directories with canonical metadata
   and `SHA256SUMS`. Local sealing and rights-bound publish-handoff verification are fail-closed and
   never contact a release service.

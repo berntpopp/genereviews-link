@@ -7,6 +7,7 @@ mocked -- no real ~600 MB bundle is fetched.
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock
@@ -16,7 +17,11 @@ import pytest
 import respx
 
 from genereview_link.config import settings
-from genereview_link.download_guard import DisallowedURLError, ResponseTooLargeError
+from genereview_link.download_guard import (
+    DisallowedURLError,
+    DownloadOwnership,
+    ResponseTooLargeError,
+)
 from genereview_link.ingest import github_release as gh
 
 BUNDLE_URL = "https://github.com/berntpopp/genereviews-link/releases/download/v1/bundle.tar.gz"
@@ -77,11 +82,16 @@ async def test_checksum_download_passes_its_explicit_deadline(
 async def test_bundle_download_passes_its_explicit_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    digest = "a" * 64
+    digest = hashlib.sha256(b"bundle").hexdigest()
 
-    async def write_part(*args: object, **_: object) -> str:
+    async def write_part(*args: object, **kwargs: object) -> str:
         dest = cast(Path, args[2])
         dest.write_bytes(b"bundle")
+        parent_fd = os.open(dest.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        file_fd = os.open(dest.name, os.O_RDWR | os.O_NOFOLLOW, dir_fd=parent_fd)
+        output = kwargs["created_ownership"]
+        assert isinstance(output, list)
+        output.append(DownloadOwnership(parent_fd=parent_fd, file_fd=file_fd, name=dest.name))
         return digest
 
     stream = AsyncMock(side_effect=write_part)

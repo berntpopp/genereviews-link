@@ -6,9 +6,11 @@ import pytest
 
 from genereview_link.retrieval.embeddings import (
     FakeEmbeddingProvider,
+    SentenceTransformerEmbeddingProvider,
     bge_passage_text,
     bge_query_text,
 )
+from genereview_link.retrieval.model_identity import BGE_MODEL_REVISION
 
 
 def test_bge_query_prefix() -> None:
@@ -28,3 +30,9 @@ async def test_fake_provider_returns_correct_dim() -> None:
     assert len(v) == 384
     vs = await p.embed_passages(["a", "b"])
     assert all(len(x) == 384 for x in vs)
+
+
+def test_real_provider_binds_the_reviewed_model_revision() -> None:
+    provider = SentenceTransformerEmbeddingProvider(device="cpu")
+
+    assert provider.model_revision == BGE_MODEL_REVISION

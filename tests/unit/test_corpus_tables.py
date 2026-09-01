@@ -45,6 +45,32 @@ def test_extract_table_flattens_nested_headers_to_match_rows() -> None:
     ]
 
 
+def test_extract_table_clamps_trailing_colspan_to_header_width() -> None:
+    root = ET.fromstring(
+        """
+        <table-wrap id="upstream-colspan-overflow">
+          <table>
+            <thead>
+              <tr><th>System</th><th>Evaluation</th><th>Comment</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Hearing</td>
+                <td>Audiologic evaluation</td>
+                <td colspan="2">As clinically indicated</td>
+              </tr>
+            </tbody>
+          </table>
+        </table-wrap>
+        """
+    )
+
+    table = extract_table(root, ordinal=1)
+
+    assert table.header == ["System", "Evaluation", "Comment"]
+    assert table.rows == [["Hearing", "Audiologic evaluation", "As clinically indicated"]]
+
+
 def test_render_table_markdown_rejects_width_mismatch() -> None:
     with pytest.raises(ValueError, match="row 1 has 1 cells but header has 2"):
         render_table_markdown(

@@ -12,14 +12,19 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
+import subprocess
 import tarfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+import genereview_link.db.restore as restore
 from genereview_link.db.restore import (
     ArchivePolicyError,
     assert_data_only_archive,
+    ensure_restore_role,
     extract_bundle,
     read_archive_entries,
 )
@@ -78,12 +83,90 @@ def test_an_empty_archive_is_rejected() -> None:
         assert_data_only_archive([])
 
 
+@pytest.mark.asyncio
+async def test_restore_role_is_reduced_to_insert_only_table_rights() -> None:
+    formatted: list[str] = []
+
+    class Connection:
+        async def fetchval(self, query: str, *args: object) -> object:
+            if query.startswith("select 1 from pg_roles"):
+                return 1
+            if query.startswith("select rolsuper"):
+                return False
+            if query.startswith("select count(*) from pg_auth_members"):
+                return 0
+            formatted.append(query)
+            return f"statement-{len(formatted)}"
+
+        async def fetch(self, query: str, *args: object) -> list[object]:
+            return []
+
+        async def execute(self, statement: str) -> None:
+            assert statement.startswith("statement-")
+
+    class Acquire:
+        async def __aenter__(self) -> Connection:
+            return Connection()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    class Pool:
+        def acquire(self) -> Any:
+            return Acquire()
+
+    await ensure_restore_role(
+        Pool(),
+        "genereview_restore",
+        "postgresql://genereview_restore:secret@postgres/genereview",
+        owner_url="postgresql://owner:secret@postgres/genereview",
+    )
+
+    scripts = "\n".join(formatted)
+    assert (
+        "alter role %I login nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit"
+        in scripts
+    )
+    assert "revoke all on %I.%I from %I" in scripts
+    assert "revoke all on schema %I from %I" in scripts
+    assert "grant insert on %I.%I to %I" in scripts
+    assert "grant select, insert, update, delete" not in scripts
+
+
 def test_plain_sql_is_never_opened_as_an_archive(tmp_path: Path) -> None:
     """A downloaded .sql script is arbitrary code: reject it on the magic bytes."""
     script = tmp_path / "corpus.dump"
     script.write_bytes(b"CREATE EXTENSION plpython3u;\nDROP TABLE genereview_chapters;\n")
     with pytest.raises(ArchivePolicyError, match="custom-format"):
         read_archive_entries(script)
+
+
+def test_archive_toc_consumes_the_already_open_descriptor_during_parent_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "source"
+    replacement = tmp_path / "replacement"
+    parent.mkdir()
+    replacement.mkdir()
+    dump = parent / "corpus.dump"
+    dump.write_bytes(b"PGDMP-safe")
+    (replacement / "corpus.dump").write_bytes(b"PGDMP-attacker")
+    descriptor = os.open(dump, os.O_RDONLY | os.O_NOFOLLOW)
+    parent.rename(tmp_path / "original")
+    parent.symlink_to(replacement, target_is_directory=True)
+
+    def inspect_descriptor(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs["pass_fds"] == (descriptor,)
+        assert Path(argv[-1]).read_bytes() == b"PGDMP-safe"
+        return subprocess.CompletedProcess(argv, 0, stdout=DATA_ENTRIES[0] + "\n", stderr="")
+
+    monkeypatch.setattr(restore, "run_bounded_process", inspect_descriptor)
+    try:
+        entries = read_archive_entries(dump, file_descriptor=descriptor)
+    finally:
+        os.close(descriptor)
+
+    assert entries == DATA_ENTRIES[:1]
 
 
 # --- bundle extraction: the committed digest is the trust root -------------------------
@@ -115,6 +198,7 @@ def test_bundle_with_the_reviewed_digest_is_extracted(tmp_path: Path) -> None:
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     bundle = extract_bundle(archive, tmp_path / "out", expected_sha256=digest)
     assert bundle.dump.is_file()
+    assert bundle.dump_sha256 == hashlib.sha256(b"PGDMP-fake").hexdigest()
     assert bundle.corpus_version == "2026-05-10-r6"
 
 
