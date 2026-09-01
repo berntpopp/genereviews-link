@@ -12,11 +12,29 @@ import typer
 import uvicorn
 
 from genereview_link.config import ServerConfig
-from genereview_link.corpus.bundle_builder import build_bundle as _build_bundle
 from genereview_link.logging_config import configure_structlog, get_logger
 
 configure_structlog()
 logger = get_logger("cli")
+
+
+def _build_bundle(
+    *,
+    output: Path | None,
+    release_id: str | None,
+    skip_validation: bool,
+    evaluation_file: Path | None = None,
+) -> Path:
+    """Load offline-only corpus tooling only when its CLI command is invoked."""
+    from genereview_link.corpus.bundle_builder import build_bundle
+
+    return build_bundle(
+        output=output,
+        release_id=release_id,
+        skip_validation=skip_validation,
+        evaluation_file=evaluation_file,
+    )
+
 
 app = typer.Typer(
     name="genereview-link",

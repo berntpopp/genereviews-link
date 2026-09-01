@@ -11,10 +11,23 @@ from typing import Any
 
 import asyncpg
 
-from genereview_link.corpus.bundle_metadata import resolve_app_git_sha
-from genereview_link.corpus.computation_provenance import collect_computation_provenance
-
 _SERVER_VERSION = re.compile(r"^18[0-9]{4}$")
+
+
+def resolve_app_git_sha() -> str:
+    """Load build-only Git provenance code only when recording a new run."""
+    from genereview_link.corpus.bundle_metadata import resolve_app_git_sha as resolve
+
+    return resolve()
+
+
+def collect_computation_provenance(*, app_git_sha: str) -> dict[str, object]:
+    """Load model/build provenance code only when recording a new run."""
+    from genereview_link.corpus.computation_provenance import (
+        collect_computation_provenance as collect,
+    )
+
+    return collect(app_git_sha=app_git_sha)
 
 
 def _database_identity(row: Any) -> dict[str, str]:

@@ -18,7 +18,7 @@ from genereview_link.corpus.evaluation_contract import (
 )
 from genereview_link.retrieval.repository import GeneReviewRepository
 
-EVALUATION_SUITE = Path(__file__).with_name("data") / "genereviews_queries.jsonl"
+EVALUATION_SUITE = Path(__file__).with_name("evaluation-suite.txt")
 
 
 class EvaluationRejectedError(ValueError):

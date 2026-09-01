@@ -105,6 +105,7 @@ WORKDIR /home/app/web
 COPY --chown=app:app ./genereview_link ./genereview_link
 COPY --chown=app:app ./server.py ./mcp_server.py ./pyproject.toml ./README.md ./
 COPY --chown=app:app ./docker/gunicorn_conf.py ./
+COPY ./docker/runtime-corpus-files.txt /tmp/runtime-corpus-files.txt
 
 # Pin the base image's system pip (/usr/local) to an exact patched release so it
 # is not flagged by image scanners (CVE-2025-8869, CVE-2026-1703/3219/6357) and
@@ -118,12 +119,10 @@ RUN /usr/local/bin/python -m pip install --no-cache-dir pip==26.1 && \
 # Production serving and migration tasks use FakeEmbeddingProvider by default.
 # The real BGE embedding stack is used by offline embedding workflows, but its
 # PyTorch artifacts exceed the fleet OCI content policy's file/layer limits.
-# NOTE: numpy and genereview_link.corpus STAY. `pgvector.asyncpg` imports numpy at module
-# import time and genereview_link.db.pool imports that to register the vector codec, so
-# stripping numpy breaks every database connection. The corpus package is pure Python
-# with lazy heavy imports, and the server reads BGE_MODEL_NAME/BGE_DIM from
-# corpus.tokenizer at startup -- stripping it made the app exit on boot. Only the heavy
-# PyTorch artifacts, which exceed the fleet OCI content policy's file limits, are removed.
+# NOTE: numpy stays because `pgvector.asyncpg` imports it while registering the database
+# codec. The full corpus package is offline build/publisher tooling and is not admitted to
+# the public image. A small exact subset is retained below for the no-egress direct-restore
+# readiness proof; every retained path is reviewed in container-release.json.
 RUN rm -rf /opt/venv/lib/python3.12/site-packages/nvidia \
            /opt/venv/lib/python3.12/site-packages/nvidia_*.dist-info \
            /opt/venv/lib/python3.12/site-packages/triton \
@@ -170,6 +169,22 @@ RUN rm -rf /opt/venv/lib/python3.12/site-packages/nvidia \
            /usr/share/postgresql/*/man \
            /root/.cache/pip \
     && find /opt/venv/lib/python3.12/site-packages/numpy -type d -name tests -prune -exec rm -rf '{}' + \
+    && rm -rf /home/app/web/genereview_link \
+    && corpus_root="/opt/venv/lib/python3.12/site-packages/genereview_link/corpus" \
+    && LC_ALL=C sort /tmp/runtime-corpus-files.txt > /tmp/runtime-corpus-files.sorted \
+    && cmp -s /tmp/runtime-corpus-files.txt /tmp/runtime-corpus-files.sorted \
+    && while IFS= read -r relative; do test -n "$relative" && test -f "$corpus_root/$relative"; done \
+         < /tmp/runtime-corpus-files.txt \
+    && find "$corpus_root" -type f -printf '%P\n' | LC_ALL=C sort \
+         > /tmp/all-corpus-files.txt \
+    && comm -23 /tmp/all-corpus-files.txt /tmp/runtime-corpus-files.txt \
+         | while IFS= read -r relative; do rm -f -- "$corpus_root/$relative"; done \
+    && find "$corpus_root" -depth -type d -empty -delete \
+    && find "$corpus_root" -type f -printf '%P\n' | LC_ALL=C sort \
+         > /tmp/admitted-corpus-files.txt \
+    && cmp -s /tmp/runtime-corpus-files.txt /tmp/admitted-corpus-files.txt \
+    && rm -f /tmp/runtime-corpus-files.txt /tmp/runtime-corpus-files.sorted \
+         /tmp/all-corpus-files.txt /tmp/admitted-corpus-files.txt \
     && find /usr/local/lib/python3.12 /opt/venv /home/app/web -type d -name __pycache__ -prune -exec rm -rf '{}' +
 
 RUN find / -xdev -perm /6000 -exec chmod a-s '{}' + \
