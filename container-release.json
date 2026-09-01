@@ -62,6 +62,7 @@
       "opt/venv/lib/python3.12/site-packages/genereview_link/corpus/evaluation-suite.txt",
       "opt/venv/lib/python3.12/site-packages/genereview_link/corpus/evaluation.py",
       "opt/venv/lib/python3.12/site-packages/genereview_link/corpus/evaluation_contract.py",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/corpus/freshness.py",
       "opt/venv/lib/python3.12/site-packages/genereview_link/corpus/readiness.py",
       "opt/venv/lib/python3.12/site-packages/genereview_link/corpus/semantic_identity.py",
       "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0001_base.sql",

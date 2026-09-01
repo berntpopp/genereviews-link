@@ -16,6 +16,7 @@ RUNTIME_CORPUS_FILES = (
     "evaluation-suite.txt",
     "evaluation.py",
     "evaluation_contract.py",
+    "freshness.py",
     "readiness.py",
     "semantic_identity.py",
 )

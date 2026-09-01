@@ -3,5 +3,6 @@ computation_runs.py
 evaluation-suite.txt
 evaluation.py
 evaluation_contract.py
+freshness.py
 readiness.py
 semantic_identity.py
