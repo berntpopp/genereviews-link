@@ -262,6 +262,8 @@ class UnifiedServerManager:
         @app.get("/health", tags=["Health"])
         async def health_check(test_connection: bool = False) -> dict[str, Any]:
             from genereview_link import __version__
+            from genereview_link.config import settings
+            from genereview_link.corpus.freshness import corpus_health
             from genereview_link.retrieval.provider_policy import embedding_health
 
             client_manager = await get_client_manager()
@@ -269,12 +271,18 @@ class UnifiedServerManager:
             # A green health check while semantic ranking is random is how a stub
             # embedding provider survived unnoticed in production: report it here.
             embeddings = embedding_health(app.state)
+            # A green health check while the corpus sat frozen for ~3.7 months was the
+            # same failure class (#145): report data_as_of and go `degraded` past
+            # CORPUS_MAX_AGE_DAYS instead of staying silently "healthy" forever.
+            corpus = corpus_health(app.state, max_age_days=settings.CORPUS_MAX_AGE_DAYS)
+            healthy = embeddings["is_reference_model"] and not corpus["stale"]
             return {
-                "status": "healthy" if embeddings["is_reference_model"] else "degraded",
+                "status": "healthy" if healthy else "degraded",
                 "version": __version__,
                 "transport": "streamable-http-stateless",
                 "client_health": health,
                 "embeddings": embeddings,
+                "corpus": corpus,
             }
 
         @app.get("/metrics", tags=["Observability"], include_in_schema=False)

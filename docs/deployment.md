@@ -158,4 +158,7 @@ limiting through a shared state file.
 ## Health
 
 `GET /health` is the liveness/readiness probe; `GET /health?test_connection=true`
-additionally exercises upstream connectivity.
+additionally exercises upstream connectivity. It also reports the active corpus's identity
+and `data_as_of`, going `degraded` once the corpus is older than `CORPUS_MAX_AGE_DAYS` — see
+[data.md § Corpus freshness](data.md#corpus-freshness) for the exact payload and why it
+exists (#145).

@@ -4,6 +4,22 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.1.8] - 2026-09-02
+
+- Surfaced the active corpus's freshness in `GET /health`. The corpus-refresh scheduler
+  itself was already fixed in 5.1.7 (the advisory-lock-guarded release watcher replaced
+  the bare `pass  # implementation extends Task 6.3`), but a frozen corpus still reported
+  plain `healthy` indefinitely because nothing checked its age. `/health` now reports
+  `corpus.data_as_of` (the active corpus's `ingest_finished_at`, restored verbatim from
+  the release bundle) and goes `degraded` once `CORPUS_MAX_AGE_DAYS` (new setting, default
+  90) is exceeded.
+- Added a repo-wide guard test for the exact shape of the original bug — a `pass`
+  statement whose own trailing comment defers its implementation — so the next one fails a
+  test instead of shipping silently.
+- Documented the fleet deploy contract in `AGENTS.md`: the compose file the external
+  controller deploys vs. the one the release gate validates, the numeric `user: "999:999"`
+  split between them, and the release checklist this repo's own tests enforce.
+
 ## [5.1.7] - 2026-09-01
 
 - Refused placeholder SHA-256 values as corpus bundle identities. Production ran with

@@ -125,15 +125,25 @@ async def _initialize_state(app: FastAPI) -> None:
         app.state.pool = None
         app.state.repository = None
 
-    # --- Active corpus version (cached for _meta.corpus_version) ---
+    # --- Active corpus version (cached for _meta.corpus_version and /health.corpus) ---
     app.state.corpus_version = None
+    # corpus_data_as_of: ingest_finished_at of the active corpus, restored verbatim from
+    # the release bundle (see genereview_link/corpus/freshness.py). Exposed on /health so
+    # a frozen corpus is a visible fact instead of a silent "healthy" (#145).
+    app.state.corpus_data_as_of = None
     if app.state.repository is not None:
         try:
             cv = await app.state.repository.active_corpus_version()
             app.state.corpus_version = cv.version if cv is not None else None
+            app.state.corpus_data_as_of = (
+                cv.ingest_finished_at.isoformat()
+                if cv is not None and cv.ingest_finished_at is not None
+                else None
+            )
             logger.info(
                 "Active corpus version cached on app.state",
                 corpus_version=app.state.corpus_version,
+                corpus_data_as_of=app.state.corpus_data_as_of,
             )
         except Exception as exc:
             logger.warning(
