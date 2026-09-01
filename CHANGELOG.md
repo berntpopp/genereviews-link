@@ -4,6 +4,8 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.1.7] - 2026-09-01
+
 - Refused placeholder SHA-256 values as corpus bundle identities. Production ran with
   `CORPUS_BUNDLE_SHA256` set to 64 zeroes, inherited from this repository's own compose
   default: a syntactically valid digest that made an entirely unpinned deployment classify
