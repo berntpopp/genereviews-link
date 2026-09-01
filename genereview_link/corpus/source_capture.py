@@ -19,6 +19,7 @@ from genereview_link.corpus.archive import (
     parse_file_list_row,
 )
 from genereview_link.corpus.source_identity import SIDEDATA_FILES
+from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -194,6 +195,14 @@ def _read_regular_bounded(path: Path, *, label: str, limit: int) -> bytes:
     return value
 
 
+def _load_bounded_json(path: Path, *, label: str, limit: int) -> object:
+    raw = _read_regular_bounded(path, label=label, limit=limit)
+    try:
+        return load_strict_json(raw, max_bytes=limit)
+    except StrictJsonError as error:
+        raise SourceCaptureError(f"{label} is not valid JSON") from error
+
+
 def load_offline_capture(
     metadata: Path,
     *,
@@ -203,10 +212,7 @@ def load_offline_capture(
     prior_seal_manifest: Path,
 ) -> dict[str, object]:
     """Load one exact capture without fetching or deleting any source file."""
-    try:
-        value = json.loads(_read_regular_bounded(metadata, label="source capture", limit=4 << 20))
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
-        raise SourceCaptureError("source capture metadata is not valid JSON") from error
+    value = _load_bounded_json(metadata, label="source capture metadata", limit=4 << 20)
     if not isinstance(value, dict) or value.get("format") != "genereviews-offline-source-v1":
         raise SourceCaptureError("source capture format is invalid")
     listing = value.get("listing")
@@ -332,12 +338,12 @@ def load_offline_capture(
     if hashlib.sha256(prior_seal_bytes).hexdigest() != prior["object_id"]:
         raise SourceCaptureError("prior object ID does not match retained seal manifest")
     try:
-        prior_record = json.loads(prior_bytes)
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        prior_record = load_strict_json(prior_bytes, max_bytes=4 * 1024 * 1024)
+    except StrictJsonError as error:
         raise SourceCaptureError("prior manifest is not valid JSON") from error
     try:
-        prior_seal = json.loads(prior_seal_bytes)
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        prior_seal = load_strict_json(prior_seal_bytes, max_bytes=4 * 1024 * 1024)
+    except StrictJsonError as error:
         raise SourceCaptureError("prior seal manifest is not valid JSON") from error
     seal_files = prior_seal.get("files") if isinstance(prior_seal, dict) else None
     manifest_entries = (

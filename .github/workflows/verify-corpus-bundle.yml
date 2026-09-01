@@ -224,7 +224,7 @@ jobs:
           printf 'VERIFY_DIR=%s\n' "$verify_dir" >> "$GITHUB_ENV"
           printf 'RELEASE_IDENTITY=%s\n' "$release_identity" >> "$GITHUB_ENV"
       - name: Apply reviewed migrations before restoring data
-        run: genereview-link db migrate
+        run: uv run genereview-link db migrate
       - name: Create exact restricted restore role
         run: |
           set -euo pipefail
@@ -255,7 +255,7 @@ jobs:
           test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select rolsuper or rolcreatedb or rolcreaterole or rolreplication or rolbypassrls or rolinherit from pg_roles where rolname='genereview_restore'")" = f
           test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select count(*) from pg_auth_members m join pg_roles r on r.oid=m.member where r.rolname='genereview_restore'")" = 0
       - name: Rebuild HNSW from reviewed code after data-only restore
-        run: genereview-link embed --index-only
+        run: uv run genereview-link embed --index-only
       - name: Verify exact manifest counts, HNSW, and representative search fixtures
         run: |
           set -euo pipefail

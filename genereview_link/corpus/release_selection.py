@@ -14,12 +14,7 @@ class ReleaseSlot:
 
 
 def select_release_id(source_date: str, slots: list[ReleaseSlot]) -> tuple[str, bool]:
-    """Prefer any exact immutable release; otherwise choose the first wholly free slot."""
-    exact = sorted(
-        slot.suffix for slot in slots if slot.release == "exact" and slot.tag and slot.immutable
-    )
-    if exact:
-        return f"{source_date}-r{exact[0]}", True
+    """Choose the first wholly free slot; protected publication alone decides no-op."""
     occupied = {slot.suffix for slot in slots if slot.release is not None or slot.tag}
     suffix = 1
     while suffix in occupied:

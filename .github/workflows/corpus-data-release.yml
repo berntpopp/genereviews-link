@@ -180,17 +180,6 @@ jobs:
           test "$refs_complete" = true
           jq -sc '.' "$RUNNER_TEMP/tag-ref-pages.jsonl" >"$refs"
           jq -r '.[].ref | sub("^refs/tags/corpus-data-"; "corpus-data-")' "$refs" >>"$tags"
-          psql -h 127.0.0.1 -U genereview -d genereview -At -v ON_ERROR_STOP=1 -c "
-            select jsonb_build_object(
-              'listing_relpath', listing_relpath, 'last_updated', file_list_etag,
-              'tarball', jsonb_build_object('sha256', tarball_sha256, 'size_bytes', tarball_size_bytes),
-              'side_data', jsonb_build_object(
-                'GRtitle_shortname_NBKid.txt', jsonb_build_object('sha256', sidedata_title_sha256, 'size_bytes', sidedata_title_size_bytes),
-                'NBKid_shortname_genesymbol.txt', jsonb_build_object('sha256', sidedata_genes_sha256, 'size_bytes', sidedata_genes_size_bytes),
-                'NBKid_shortname_OMIM.txt', jsonb_build_object('sha256', sidedata_omim_sha256, 'size_bytes', sidedata_omim_size_bytes)))
-            from public.genereview_corpus_version where is_active and ingest_status='completed'" \
-            > "$RUNNER_TEMP/local-source-identity.json"
-          jq -e 'type == "object"' "$RUNNER_TEMP/local-source-identity.json" >/dev/null
           max_suffix="$(sed -n "s/^corpus-data-${source_date}-r\\([1-9][0-9]*\\)$/\\1/p" "$tags" | sort -n | tail -n1)"
           max_suffix="${max_suffix:-0}"
           test "$max_suffix" -le 10000 || {
@@ -199,7 +188,6 @@ jobs:
           }
           scan_limit=$((max_suffix + 1))
           first_free_release_id=""
-          published_noop=""
           for n in $(seq 1 "$scan_limit"); do
             candidate="$source_date-r$n"
             candidate_tag="corpus-data-$candidate"
@@ -207,31 +195,6 @@ jobs:
             match_count="$(jq -er length <<<"$matches")"
             test "$match_count" -le 1
             if test "$match_count" = 1; then
-              manifest_id="$(jq -er '.[0].assets | map(select(.name == "manifest.json")) | select(length == 1) | .[0].id' <<<"$matches")"
-              manifest_size="$(jq -er '.[0].assets | map(select(.name == "manifest.json")) | select(length == 1) | .[0].size' <<<"$matches")"
-              manifest_digest="$(jq -er '.[0].assets | map(select(.name == "manifest.json")) | select(length == 1) | .[0].digest' <<<"$matches")"
-              test "$manifest_size" -le $((1024 * 1024))
-              remote_manifest="$RUNNER_TEMP/existing-manifest-$n.json"
-              timeout 2m curl --fail --silent --show-error --location \
-                --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 \
-                --max-filesize "$manifest_size" --header 'Accept: application/octet-stream' \
-                --header "Authorization: Bearer $GH_TOKEN" \
-                "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$manifest_id" \
-                --output "$remote_manifest"
-              test "$(stat -c %s "$remote_manifest")" = "$manifest_size"
-              test "sha256:$(sha256sum "$remote_manifest" | cut -d' ' -f1)" = "$manifest_digest"
-              if jq -e --argjson local "$(cat "$RUNNER_TEMP/local-source-identity.json")" \
-                --arg tag "$candidate_tag" \
-                '.source == $local' "$remote_manifest" >/dev/null \
-                && jq -e --arg tag "$candidate_tag" \
-                  '.[] | select(.tag_name == $tag and .draft == false and .immutable == true)' \
-                  <<<"$matches" >/dev/null; then
-                if test -z "$published_noop"; then
-                  release_id="$candidate"
-                  published_noop="$candidate_tag"
-                  echo "published_noop source identity candidate: $candidate_tag"
-                fi
-              fi
               continue
             fi
             if test -z "$first_free_release_id" \
@@ -239,10 +202,9 @@ jobs:
               first_free_release_id="$candidate"
             fi
           done
-          if test -z "${release_id:-}"; then release_id="$first_free_release_id"; fi
+          release_id="$first_free_release_id"
           test -n "$release_id"
-          if test -z "$published_noop"; then
-            uv run python - "$source_date" "$tags" "$release_id" <<'PY'
+          uv run python - "$source_date" "$tags" "$release_id" <<'PY'
           import re, sys
           from pathlib import Path
           from genereview_link.corpus.release_selection import ReleaseSlot, select_release_id
@@ -257,79 +219,13 @@ jobs:
           if select_release_id(source_date, slots) != (selected, False):
               raise SystemExit("shell selection disagrees with exhaustive release/ref union")
           PY
-          fi
-          # Drafts, published releases, and tag-only refs were exhausted above. A differing
-          # collision is occupied; an exact source identity is handed to the immutable verifier
-          # as a possible published_noop, never selected by an arbitrary operator-provided rN.
+          # Drafts, published releases, and tag-only refs are occupied. Full eight-asset no-op
+          # is decided only by plan_release in the protected publisher after the sealed object,
+          # wheel, and exact public rights evidence/terms bytes are all independently available.
           # Fresh evaluation runs inside bundle build's locked export-snapshot transaction.
           uv run genereview-link bundle build --release-id "$release_id" \
             --output "$RUNNER_TEMP/source"
           source_dir="$RUNNER_TEMP/source"
-          if test -n "$published_noop"; then
-            existing="$(jq -sc --arg tag "$published_noop" '[.[][] | select(.tag_name == $tag)][0]' "$RUNNER_TEMP"/release-page-*.json)"
-            exact=true
-            for asset in corpus.dump manifest.json SHA256SUMS rights-record.json rights-evidence.json terms-snapshot.html seal-manifest.json publisher-tool.whl; do
-              asset_id="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .id' <<<"$existing")"
-              size="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .size' <<<"$existing")"
-              digest="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .digest' <<<"$existing")"
-              if test "$asset" = corpus.dump; then limit=$((2 * 1024 * 1024 * 1024)); else limit=$((1024 * 1024)); fi
-              test "$size" -gt 0 && test "$size" -le "$limit"
-              remote="$RUNNER_TEMP/existing-$asset"
-              timeout 45m curl --fail --silent --show-error --location \
-                --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 2700 \
-                --max-filesize "$size" --header 'Accept: application/octet-stream' \
-                --header "Authorization: Bearer $GH_TOKEN" \
-                "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
-                --output "$remote"
-              test "$(stat -c %s "$remote")" = "$size"
-              test "sha256:$(sha256sum "$remote" | cut -d' ' -f1)" = "$digest"
-              if test "$asset" = rights-record.json; then
-                uv run python - "$remote" "$source_dir/manifest.json" "$source_dir/corpus.dump" <<'PY' || exact=false
-          import hashlib, json, re, sys
-          from pathlib import Path
-          from genereview_link.corpus.rights import RIGHTS_FIELDS
-          rights_path, manifest_path, dump_path = map(Path, sys.argv[1:])
-          record = json.loads(rights_path.read_bytes())
-          manifest = json.loads(manifest_path.read_bytes())
-          with dump_path.open("rb") as stream:
-              artifact_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
-          unsigned = {key: value for key, value in record.items() if key != "rights_record_sha256"}
-          canonical = (json.dumps(unsigned, sort_keys=True, separators=(",", ":")) + "\n").encode()
-          valid = (
-              isinstance(record, dict)
-              and set(record) == RIGHTS_FIELDS
-              and record.get("decision") == "affirmative"
-              and record.get("corpus_release_id") == manifest.get("corpus_release_id")
-              and record.get("source_sha256") == manifest.get("tarball_source_sha256")
-              and record.get("artifact_sha256") == artifact_sha256
-              and record.get("rights_record_sha256") == hashlib.sha256(canonical).hexdigest()
-              and all(re.fullmatch(r"[0-9a-f]{64}", str(record.get(key, ""))) for key in ("object_id", "terms_sha256", "evidence_sha256"))
-          )
-          if not valid:
-              raise SystemExit("existing rights record is not the exact candidate identity")
-          PY
-              elif test "$asset" = rights-evidence.json || test "$asset" = terms-snapshot.html; then
-                # These public records are verified through the protected rights locator
-                # in the privileged publication phase; source-only builds have no secret.
-                :
-              elif test "$asset" = seal-manifest.json || test "$asset" = publisher-tool.whl; then
-                :
-              else
-                cmp -- "$source_dir/$asset" "$remote" || exact=false
-              fi
-            done
-            if test "$exact" != true; then
-              release_id=""
-              for n in $(seq 1 "$scan_limit"); do
-                candidate="$source_date-r$n"
-                if ! grep -Fxq "corpus-data-$candidate" "$tags"; then release_id="$candidate"; break; fi
-              done
-              test -n "$release_id"
-              source_dir="$RUNNER_TEMP/source-final"
-              uv run genereview-link bundle build --release-id "$release_id" --output "$source_dir"
-              published_noop=""
-            fi
-          fi
           uv run python - "$source_dir/corpus.dump" <<'PY'
           import sys
           from pathlib import Path

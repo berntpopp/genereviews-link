@@ -116,6 +116,68 @@ class _RightsRedirects(HTTPRedirectHandler):
         )
 
 
+def _open_fresh_destination(destination: Path) -> tuple[int, tuple[int, int]]:
+    try:
+        path_info = destination.lstat()
+        destination_fd = os.open(
+            destination,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+    except OSError as error:
+        raise RightsLocatorError("rights destination must be a fresh real directory") from error
+    try:
+        descriptor_info = os.fstat(destination_fd)
+        identity = (descriptor_info.st_dev, descriptor_info.st_ino)
+        if (
+            not stat.S_ISDIR(path_info.st_mode)
+            or not stat.S_ISDIR(descriptor_info.st_mode)
+            or identity != (path_info.st_dev, path_info.st_ino)
+            or os.listdir(destination_fd)
+        ):
+            raise RightsLocatorError("rights destination must be a fresh real directory")
+        return destination_fd, identity
+    except BaseException:
+        os.close(destination_fd)
+        raise
+
+
+def _admit_rights_asset(
+    destination_fd: int,
+    asset: dict[str, object],
+    created_identity: tuple[int, int],
+) -> None:
+    name = str(asset["name"])
+    expected_size = asset["size_bytes"]
+    if type(expected_size) is not int:
+        raise RightsLocatorError("rights asset path does not match its admitted identity")
+    try:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=destination_fd)
+    except OSError as error:
+        raise RightsLocatorError(
+            "rights asset path does not match its admitted identity"
+        ) from error
+    try:
+        info = os.fstat(descriptor)
+        digest = hashlib.sha256()
+        size = 0
+        while chunk := os.read(descriptor, 64 * 1024):
+            size += len(chunk)
+            if size > expected_size:
+                raise RightsLocatorError("rights asset path does not match its admitted identity")
+            digest.update(chunk)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or (info.st_dev, info.st_ino) != created_identity
+            or size != expected_size
+            or digest.hexdigest() != asset["sha256"]
+        ):
+            raise RightsLocatorError("rights asset path does not match its admitted identity")
+    except OSError as error:
+        raise RightsLocatorError("rights asset path could not be admitted safely") from error
+    finally:
+        os.close(descriptor)
+
+
 def fetch_rights_assets(
     raw: bytes,
     *,
@@ -125,14 +187,12 @@ def fetch_rights_assets(
 ) -> dict[str, object]:
     """Fetch exact locator bytes with bounded redirects, sizes, and SHA-256 checks."""
     locator = load_rights_locator(raw, allowed_repositories=allowed_repositories)
-    if destination.is_symlink() or not destination.is_dir() or any(destination.iterdir()):
-        raise RightsLocatorError("rights destination must be a fresh real directory")
     opener = build_opener(_RightsRedirects())
     assets = locator["assets"]
     assert isinstance(assets, list)
     created: dict[str, tuple[int, int]] = {}
     deadline = monotonic() + RIGHTS_TRANSFER_DEADLINE_SECONDS
-    destination_fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    destination_fd, destination_identity = _open_fresh_destination(destination)
     try:
         for asset in assets:
             assert isinstance(asset, dict)
@@ -180,6 +240,24 @@ def fetch_rights_assets(
                 raise RightsLocatorError("rights asset could not be fetched safely") from error
             if remaining != 0 or digest.hexdigest() != asset["sha256"]:
                 raise RightsLocatorError("rights asset bytes do not match locator identity")
+        for asset in assets:
+            assert isinstance(asset, dict)
+            _admit_rights_asset(
+                destination_fd,
+                asset,
+                created[str(asset["name"])],
+            )
+        if set(os.listdir(destination_fd)) != RIGHTS_ASSET_NAMES:
+            raise RightsLocatorError("rights destination contains an unadmitted path")
+        try:
+            current_destination = destination.stat(follow_symlinks=False)
+        except OSError as error:
+            raise RightsLocatorError("rights destination identity changed") from error
+        if (
+            not stat.S_ISDIR(current_destination.st_mode)
+            or (current_destination.st_dev, current_destination.st_ino) != destination_identity
+        ):
+            raise RightsLocatorError("rights destination identity changed")
     except BaseException:
         for name, identity in created.items():
             try:

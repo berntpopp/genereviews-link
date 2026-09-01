@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable
 from typing import Any
 
 DEFAULT_MAX_DEPTH = 64
+MAX_NUMERIC_TOKEN_CHARACTERS = 128
 
 
 class StrictJsonError(ValueError):
@@ -18,6 +20,10 @@ class _DuplicateKeyError(ValueError):
 
 
 class _NonFiniteConstantError(ValueError):
+    pass
+
+
+class _NumericTokenError(ValueError):
     pass
 
 
@@ -59,6 +65,21 @@ def _reject_nonfinite_constant(value: str) -> None:
     raise _NonFiniteConstantError(f"non-standard JSON constant: {value}")
 
 
+def _bounded_integer(value: str) -> int:
+    if len(value.lstrip("-")) > MAX_NUMERIC_TOKEN_CHARACTERS:
+        raise _NumericTokenError("integer token exceeds the reviewed bound")
+    return int(value)
+
+
+def _bounded_finite_float(value: str) -> float:
+    if len(value) > MAX_NUMERIC_TOKEN_CHARACTERS:
+        raise _NumericTokenError("floating-point token exceeds the reviewed bound")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise _NumericTokenError("floating-point token is not finite")
+    return parsed
+
+
 def load_strict_json(
     raw: bytes,
     *,
@@ -77,15 +98,17 @@ def load_strict_json(
             text,
             object_pairs_hook=_object_without_duplicates,
             parse_constant=_reject_nonfinite_constant,
+            parse_int=_bounded_integer,
+            parse_float=_bounded_finite_float,
         )
-    except (
-        UnicodeDecodeError,
-        json.JSONDecodeError,
-        RecursionError,
-        _DuplicateKeyError,
-        _NonFiniteConstantError,
-    ) as error:
+    except _NumericTokenError as error:
+        raise StrictJsonError("JSON numeric token violates the reviewed finite bound") from error
+    except (UnicodeDecodeError, RecursionError, ValueError) as error:
         raise StrictJsonError("JSON input is not strict bounded JSON") from error
 
 
-__all__ = ["StrictJsonError", "load_strict_json"]
+__all__ = [
+    "MAX_NUMERIC_TOKEN_CHARACTERS",
+    "StrictJsonError",
+    "load_strict_json",
+]

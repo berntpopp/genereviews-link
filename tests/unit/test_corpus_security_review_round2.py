@@ -173,6 +173,75 @@ def _write_prior_manifest(tmp_path: Path, capture: dict[str, object]) -> tuple[P
     return manifest, seal
 
 
+@pytest.mark.parametrize(
+    "raw",
+    (
+        b'{"format":"genereviews-offline-source-v1","format":"shadow"}',
+        b'{"format":"genereviews-offline-source-v1","value":NaN}',
+        b"[" * 10_000 + b"]" * 10_000,
+    ),
+    ids=("duplicate", "nonfinite", "deep"),
+)
+def test_offline_capture_maps_strict_metadata_json_errors(tmp_path: Path, raw: bytes) -> None:
+    metadata = tmp_path / "source-capture.json"
+    metadata.write_bytes(raw)
+
+    with pytest.raises(SourceCaptureError, match="source capture metadata is not valid JSON"):
+        load_offline_capture(
+            metadata,
+            archive=tmp_path / "archive",
+            side_data_dir=tmp_path,
+            prior_manifest=tmp_path / "prior-manifest",
+            prior_seal_manifest=tmp_path / "prior-seal",
+        )
+
+
+@pytest.mark.parametrize("target", ("manifest", "seal"))
+@pytest.mark.parametrize(
+    "raw",
+    (
+        b'{"format":"first","format":"shadow"}',
+        b'{"value":Infinity}',
+        b"[" * 10_000 + b"]" * 10_000,
+    ),
+    ids=("duplicate", "nonfinite", "deep"),
+)
+def test_offline_capture_maps_strict_prior_json_errors(
+    tmp_path: Path, target: str, raw: bytes
+) -> None:
+    archive = tmp_path / "gene_NBK1116.tar.gz"
+    member = tmp_path / "NBK1.nxml"
+    member.write_text("<article>retained</article>")
+    with tarfile.open(archive, "w:gz") as retained:
+        retained.add(member, arcname="NBK1/NBK1.nxml")
+    side_dir = tmp_path / "side"
+    side_dir.mkdir()
+    _write_side_data(side_dir)
+    capture = _capture_metadata(archive, side_dir)
+    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture)
+    prior = capture["prior_artifact"]
+    assert isinstance(prior, dict)
+    if target == "manifest":
+        prior_manifest.write_bytes(raw)
+        prior["manifest_sha256"] = hashlib.sha256(raw).hexdigest()
+        expected = "prior manifest is not valid JSON"
+    else:
+        prior_seal.write_bytes(raw)
+        prior["object_id"] = hashlib.sha256(raw).hexdigest()
+        expected = "prior seal manifest is not valid JSON"
+    metadata = tmp_path / "source-capture.json"
+    metadata.write_text(json.dumps(capture))
+
+    with pytest.raises(SourceCaptureError, match=expected):
+        load_offline_capture(
+            metadata,
+            archive=archive,
+            side_data_dir=side_dir,
+            prior_manifest=prior_manifest,
+            prior_seal_manifest=prior_seal,
+        )
+
+
 def test_offline_capture_binds_exact_retained_files_and_is_not_deleted(tmp_path: Path) -> None:
     archive = tmp_path / "gene_NBK1116.tar.gz"
     member = tmp_path / "NBK1.nxml"
@@ -424,7 +493,7 @@ def test_restore_endpoint_must_be_same_database_and_exact_restricted_role() -> N
         )
 
 
-def test_release_selection_scans_all_gaps_before_exact_noop_then_first_free() -> None:
+def test_release_selection_treats_every_remote_release_or_tag_as_occupied() -> None:
     slots = [
         ReleaseSlot(1, release="different", tag=True, immutable=True),
         ReleaseSlot(3, release="exact", tag=True, immutable=True),
@@ -432,7 +501,7 @@ def test_release_selection_scans_all_gaps_before_exact_noop_then_first_free() ->
         ReleaseSlot(6, release=None, tag=True, immutable=False),
     ]
 
-    assert select_release_id("2026-08-31", slots) == ("2026-08-31-r3", True)
+    assert select_release_id("2026-08-31", slots) == ("2026-08-31-r2", False)
     without_exact = [slot for slot in slots if slot.release != "exact"]
     assert select_release_id("2026-08-31", without_exact) == ("2026-08-31-r2", False)
 

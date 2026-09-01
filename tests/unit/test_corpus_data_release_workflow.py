@@ -183,12 +183,11 @@ def test_release_suffix_selection_is_identity_aware_and_exhaustive() -> None:
     workflow = _workflow()
     scripts = "\n".join(str(step.get("run", "")) for step in workflow["jobs"]["build"]["steps"])
     assert "git/matching-refs/tags/corpus-data-" in scripts
-    assert "source identity" in scripts.lower()
-    assert "published_noop" in scripts
+    assert "published_noop source identity candidate" not in scripts
+    assert "Full eight-asset no-op" in scripts
+    assert "only by plan_release" in scripts
     assert "first_free_release_id" in scripts
     assert "max_suffix" in scripts and "reviewed exhaustive bound" in scripts
-    assert "rights-record.json" in scripts
-    assert "existing rights record is not the exact candidate identity" in scripts
 
 
 def test_dispatch_validation_cannot_skip_malformed_input_combinations() -> None:
