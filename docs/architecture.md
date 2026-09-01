@@ -63,8 +63,11 @@ lexical + phrase + dense (BGE-small-en-v1.5 embeddings over pgvector, HNSW index
 role and section-intent boosts. `scripts/bench_ranking.py` and `tests/eval/` guard ranking
 quality; `make eval` reports MRR@10 and section-precision@5.
 
-`GENEREVIEW_EAGER_LOAD_BGE=false` (the default) swaps in a fake embedding provider so the
-server boots fast without GPU/Postgres resources — semantic search needs it set `true`.
+`GENEREVIEW_EMBEDDING_PROVIDER=fake` swaps in a stub embedding provider so the server
+boots fast without GPU/Postgres resources. The stub's vectors are uncorrelated with the
+stored corpus vectors, so the dense path is disabled outright under it and search falls
+back to lexical ranking; semantic search needs `bge`, which production requires by
+default. `GENEREVIEW_EAGER_LOAD_BGE` is the legacy spelling of the same choice.
 
 ## Scraping (NCBI Bookshelf)
 

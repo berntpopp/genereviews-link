@@ -380,7 +380,16 @@ async def search_passages(
     dense_scores: dict[str, float] = {}
     lex: list[LexicalPassageRow]
 
-    if rerank == "rrf":
+    # A stub embedding provider produces query vectors that are uncorrelated with the
+    # stored corpus vectors. Fusing them does not degrade ranking gracefully -- the
+    # random dense ranks DISPLACE correct lexical hits. When the live provider is not the
+    # model the corpus was embedded with, drop to lexical ranking and report that
+    # honestly in `rerank_used` instead of claiming a semantic rank we did not compute.
+    effective_rerank = rerank
+    if rerank == "rrf" and not getattr(request.app.state, "dense_ranking_enabled", True):
+        effective_rerank = "lexical"
+
+    if effective_rerank == "rrf":
         qv = await embedder.embed_query(q)
 
         # Parallel retrieval: lexical-top-200 and dense-top-200, both filter-aware.
@@ -475,7 +484,7 @@ async def search_passages(
             for r in raw_lex
         ]
 
-    if rerank == "off":
+    if effective_rerank == "off":
         # Truly raw lexical order from the repo (no section_priority tiebreak).
         ranked = list(lex)
     else:
@@ -495,9 +504,9 @@ async def search_passages(
         applied_filters.append(f"heading_path_contains={heading_path_contains}")
 
     diagnostics_model = SearchDiagnosticsModel(
-        rerank_used=rerank,
+        rerank_used=effective_rerank,
         lexical_candidate_count=len(lex),
-        dense_candidate_count=len(dense_scores) if rerank == "rrf" else None,
+        dense_candidate_count=len(dense_scores) if effective_rerank == "rrf" else None,
         applied_filters=applied_filters,
         section_filters=list(sections) if sections else [],
         suggestions=[],

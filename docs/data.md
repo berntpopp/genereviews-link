@@ -41,44 +41,62 @@ Web scraping uses **3× longer delays** with exponential-backoff retry on 403/42
 `EutilsClient` enforces these limits; per `AGENTS.md`, do not bypass them. For multi-worker
 deployments, set `RATE_LIMIT_STATE_FILE` so workers coordinate through a shared state file.
 
-## The three corpus-loading modes
+## How a corpus gets loaded
 
-Selected at startup by environment variable.
+### Production: an immutable data release, restored once by a sidecar
 
-### Mode 1 — Restore from a release bundle (`BUNDLE_URL`)
+Production uses exactly one mechanism. The corpus is a digest-pinned GitHub **data
+release**, and it is restored into the Postgres volume once, by the no-egress
+`genereview-corpus-restore` init sidecar. **The serving application has no restore path at
+all** and never downloads anything — that is the point of the design, not an accident of
+it. See [deployment.md § Corpus restore](deployment.md#corpus-restore-production).
 
-The fastest way to a populated corpus. Set `BUNDLE_URL` to a `.tar.gz` asset URL from the
-GitHub Releases page, or to the special value `latest` to auto-resolve the newest release
-(only after a bundle has been published):
+The operator's side is two facts, both of which must be true before the first start:
+
+1. the reviewed release asset is staged in `CORPUS_SEED_DIR` on the host, and
+2. `CORPUS_BUNDLE_SHA256` is the digest published with that release (the same value as
+   `container-release.json` → `.data.digest`).
+
+Both fail closed. An absent artifact and an absent, malformed, or **placeholder** digest
+(64 zeroes, 64 `f`s, the empty file's digest) are all refused, because a checksum that
+verifies nothing while looking like verification is worse than no checksum.
 
 ```bash
-BUNDLE_URL=latest DATABASE_URL=postgresql://... genereview-link serve
+# On the server, once per corpus release:
+tag=corpus-data-2026-07-13-r1
+digest=4486e499337e9f816a2aa0741f2a0e51ca38cda52f96fb57564cfc36f4b3c5bc
+sudo install -d -m 0755 /srv/genefoundry/genereviews-seed
+curl -fsSL --proto '=https' -o /tmp/corpus-bundle.tar.gz \
+  "https://github.com/berntpopp/genereviews-link/releases/download/$tag/corpus-bundle.tar.gz"
+echo "$digest  /tmp/corpus-bundle.tar.gz" | sha256sum -c -   # verify BEFORE staging
+sudo mv /tmp/corpus-bundle.tar.gz /srv/genefoundry/genereviews-seed/
+# then set CORPUS_BUNDLE_SHA256=$digest in .env.docker
 ```
 
-On first boot the server downloads and integrity-verifies the bundle, restores the Postgres
-dump, and starts serving. Subsequent boots detect the active corpus and skip the restore.
+`docker/ci-prepare-smoke.sh` performs exactly these steps for CI, and is the executable
+reference for the shape of the seed directory.
 
-Set `GITHUB_REPO=owner/repo` (default `berntpopp/genereviews-link`) when hosting your own
-releases. Leave `BUNDLE_URL` empty when no release bundle exists: the server still boots,
-but corpus-backed passage search returns 503.
+### Rebuilding the corpus and publishing it as a release asset
 
-> [!WARNING]
-> **`EXPECTED_BUNDLE_SHA256` is a security control.** Set it to an independently-trusted,
-> **out-of-band** SHA-256 of the bundle, reviewed into your deployment config — *not*
-> copied from the download host. The sibling `.sha256` served next to the bundle is a
-> transport-integrity check only: a host that can serve a tampered bundle can serve a
-> matching checksum too, so it MUST NOT be the sole authenticity gate.
->
-> Promotion is **fail-closed**: a downloaded bundle is accepted only when anchored by
-> `EXPECTED_BUNDLE_SHA256` or by the in-repo `BUNDLE_DIGEST_ANCHORS` map. With no anchor
-> configured, promotion is refused. `ALLOW_UNANCHORED_BUNDLE=true` knowingly accepts
-> transport-integrity-only bootstrap (an air-gapped or dev mirror) and nothing else.
+A corpus is built on a workstation and shipped as an artifact; servers only ever restore
+one. The full sequence:
 
-`AUTO_PULL_RELEASES=true` starts an hourly release watcher. `BUNDLE_BOOTSTRAP_DIR`
-(default `/tmp/genereview-link`) is the writable scratch directory for download and
-extraction.
+```bash
+uv sync --group dev --extra cpu --frozen
+make db-migrate                                   # schema from reviewed in-repo migrations
+genereview-link ingest --archive <archive> --side-data-dir <dir> \
+  --source-metadata <capture.json> --prior-manifest <prior-manifest.json> \
+  --prior-seal-manifest <prior-seal-manifest.json>
+make embed                                        # BGE backfill + HNSW index
+make bundle-validate                              # active corpus is publish-ready
+RELEASE_ID=2026-05-12-r1 make bundle-publish-local # corpus.dump + manifest.json + SHA256SUMS
+```
 
-### Mode 2 — Build the corpus locally (`BUILD_LOCAL=true`)
+Publication is deliberately rights-gated and separate; see *Packaging a local corpus*
+below. Once the release exists, update `container-release.json` (`.data.release_tag` and
+`.data.digest`), then stage and pin it on the server as above.
+
+### Development: build locally (`BUILD_LOCAL=true`)
 
 Runs the full ingest pipeline — download from NCBI, parse, embed — on first boot:
 
@@ -87,23 +105,115 @@ BUILD_LOCAL=true DATABASE_URL=postgresql://... genereview-link serve
 ```
 
 Expect **15–30 minutes** on first boot; subsequent boots are instant. Requires
-`NCBI_API_KEY` for reliable rate limits.
+`NCBI_API_KEY` for reliable rate limits. Development only.
 
-### Mode 3 — External Postgres (no corpus env vars)
+### External Postgres (no corpus env vars)
 
-Point `DATABASE_URL` at a pre-populated database (managed RDS, Cloud SQL, …). The server
-assumes the corpus exists and starts immediately:
+Point `DATABASE_URL` at a pre-populated database. The server assumes the corpus exists and
+starts immediately; if the schema is empty, `/passages/search` returns **503** until a
+corpus is loaded externally.
 
-```bash
-DATABASE_URL=postgresql://user:pass@managed-host/genereview genereview-link serve
+> [!NOTE]
+> `BUNDLE_URL` is **inert**. Until 2026-07-13 the serving process downloaded and restored a
+> release bundle itself; that path was removed when the no-egress sidecar landed, because
+> restoring inside the request-serving process gave it exactly the egress and database
+> rights the restored-database contract exists to deny it. A deployment that still sets
+> `BUNDLE_URL=latest` is not downloading anything. `EXPECTED_BUNDLE_SHA256`,
+> `ALLOW_UNANCHORED_BUNDLE`, and `BUNDLE_BOOTSTRAP_DIR` belong to that same removed path.
+
+## Embedding provider
+
+Dense retrieval only works when the query vector and the stored passage vectors come from
+the **same** model. The corpus is embedded with `BAAI/bge-small-en-v1.5` (revision
+`5c38ec7c405ec4b44b94cc5a9bb96e735b38267a`, 384-d), recorded in
+`public.genereview_active_embedding`.
+
+### How the model reaches the container
+
+The weights are 127 MiB, and the fleet OCI content policy caps any single file in an image
+at 64 MiB. PyTorch is further out of reach: its wheel alone is 526 MB. So the serving image
+carries **ONNX Runtime** (largest file 30 MB) and the weights arrive the way every other
+large artifact in this fleet arrives — as a digest-pinned artifact staged on the host and
+materialised once into a named volume by the no-egress init sidecar:
+
+```
+  workstation / CI                host                        containers
+  ────────────────                ────                        ──────────
+  genereview-link model stage ──▶ /srv/genefoundry/           ┌ genereview-corpus-restore
+    (verifies every byte against    genereviews-seed/model/   │   /seed        (bind, ro)
+     the digests pinned in            model.onnx              │   → verifies, copies
+     model_identity.py)               tokenizer.json          │   /data
+                                                              └   (volume, rw)
+                                                              ┌ genereview-link
+                                                              │   /data
+                                                              └   (volume, **ro**) → verifies again
 ```
 
-If the schema is empty, `/passages/search` returns 503 until a corpus is loaded externally.
+Nothing is downloaded at runtime. The artifact is proven twice — once by the sidecar before
+it is written, once by the server before the ONNX session opens — so a substituted model
+never reaches the parser at either end. `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`
+make any stray Hub call fail rather than silently fetch.
 
-> In **production Docker** none of these three run in the serving process. The corpus is an
-> immutable, digest-pinned data release restored *once* by a no-egress init sidecar, and
-> the app image has no restore path at all. See
-> [deployment.md § Corpus restore](deployment.md#corpus-restore-production).
+`model.onnx` is the **same weights** as `model.safetensors`, and parity with the
+sentence-transformers path that built the corpus is measured, not assumed: minimum cosine
+`0.999999999796`, maximum per-dimension delta `1.75e-07`
+(`tests/unit/test_onnx_embedding_parity.py`). CLS pooling, L2 normalisation, the 512-token
+limit and the query prefix are pinned in reviewed code — the artifact supplies tensors, and
+can never change how its own output is computed.
+
+### Staging it
+
+```bash
+# once per model pin, on a workstation or in CI
+genereview-link model stage --output /srv/genefoundry/genereviews-seed/model
+```
+
+It refuses to write anything whose digest does not match
+`genereview_link/retrieval/model_identity.py`, so the download host is not trusted. CI does
+exactly this in `docker/ci-prepare-smoke.sh`.
+
+### Provider selection
+
+| `GENEREVIEW_EMBEDDING_PROVIDER` | What runs | Where |
+|---|---|---|
+| `onnx` *(production default)* | the pinned BGE weights under ONNX Runtime | serving image |
+| `torch` | the same weights under sentence-transformers | offline ingest only (`--extra cpu`) |
+| `fake` | a deterministic stub; vectors **not** comparable with the corpus | tests / local dev |
+
+The stub is not a lightweight approximation. Fusing its nearest neighbours into
+reciprocal-rank fusion promotes arbitrary passages over genuinely matching lexical hits, so
+the server:
+
+- refuses to start in production on the stub unless `GENEREVIEW_ALLOW_FAKE_EMBEDDINGS=true`;
+- disables the dense path and reports `rerank_used: "lexical"` whenever the live provider
+  is not the corpus's model;
+- reports the provider actually loaded in `_meta.dense_model_id` — never the reference
+  model it did not load;
+- refuses to serve when a real provider disagrees with the corpus's recorded model;
+- reports `status: "degraded"` from `/health` while any non-reference provider is active.
+
+Measured on the built image, under `--read-only --cap-drop ALL --network none`: verify +
+load **310 ms**, first query **12 ms**, warm query **6.9 ms**.
+
+## Corpus freshness
+
+`chapter_last_updated` is carried on every passage and search hit. An hourly watcher
+(`RELEASE_WATCHER_ENABLED=true`) compares the newest published corpus release with the
+pinned one and records the result in `public.genereview_refresh_log`:
+
+```sql
+select check_time, decision, detail->>'latest_release_tag'
+from public.genereview_refresh_log order by check_time desc limit 5;
+```
+
+`decision` is one of `current`, `stale`, `no-active-corpus`, `upstream-unavailable`. It
+never pulls: a `stale` row is a prompt to update `container-release.json`, stage the new
+asset, and redeploy.
+
+`AUTO_PULL_RELEASES` is **refused at startup**. It named an automatic pull that was never
+implemented — the branch behind it was a bare `pass` — so for months it read as "corpus
+updates are handled" while doing nothing, which is why `genereview_refresh_log` had zero
+rows and the corpus sat at 2026-05-12 unnoticed.
 
 ## Ingest pipeline (maintainer)
 
@@ -229,8 +339,4 @@ also accepts the exact-eight release directly: its read-only seed directory cont
 final readiness artifact identity both mean the verified `corpus.dump` digest. A pin changes only
 after the immutable release exists; source preparation never invents an unavailable asset.
 
-## Corpus freshness
-
-`chapter_last_updated` is carried on every passage and search hit — surface it so a reader
-can judge freshness. `scripts/refresh_chapter_metadata_dates.py` refreshes those dates
-against NCBI.
+`scripts/refresh_chapter_metadata_dates.py` refreshes chapter dates against NCBI.

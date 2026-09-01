@@ -39,11 +39,14 @@ from genereview_link.strict_json import StrictJsonError, load_strict_json
 __all__ = [
     "ALLOWED_ENTRY_TYPES",
     "CORPUS_TABLES",
+    "PLACEHOLDER_DIGESTS",
     "ArchivePolicyError",
     "CorpusBundle",
     "assert_data_only_archive",
     "ensure_restore_role",
     "extract_bundle",
+    "is_placeholder_digest",
+    "normalize_corpus_digest",
     "read_archive_entries",
     "restore_data_only",
     "seed_identity_mode",
@@ -77,6 +80,58 @@ _MAX_MEMBER_BYTES = 4 * 1024**3
 _MAX_MANIFEST_BYTES = 1 << 20
 _SAFE_MEMBER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
 _SAFE_ROLE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+
+#: A well-formed 64-character hex digest, with or without the ``sha256:`` prefix.
+_DIGEST = re.compile(r"(?:sha256:)?[0-9a-f]{64}")
+
+#: Labels for the three direct-release asset identities, in configuration order.
+_DIRECT_LABELS = (
+    "corpus.dump SHA-256",
+    "manifest.json SHA-256",
+    "SHA256SUMS SHA-256",
+)
+
+#: Digests that are PLACEHOLDERS, never identities.
+#:
+#: A restore path configured with one of these is strictly worse than one configured with
+#: no digest at all: every gate downstream sees a syntactically valid 64-hex value, reports
+#: "identity configured", and passes -- so the deployment *looks* verified while nothing is
+#: verified. Production inherited the all-zero value from a compose default
+#: (``${CORPUS_BUNDLE_SHA256:-000...0}``), which made `seed_identity_mode` classify a
+#: completely unpinned stack as a valid "legacy" identity.
+#:
+#: The set is the three digests a placeholder *generator* produces rather than a real
+#: artifact: 64 zeroes (the canonical null digest, and the one production actually
+#: inherited), 64 ``f``s (the canonical "max" placeholder), and the digest of the empty
+#: file (what checksumming nothing yields). No real corpus artifact can have one of these,
+#: so rejecting them costs nothing.
+PLACEHOLDER_DIGESTS = frozenset({"0" * 64, "f" * 64, hashlib.sha256(b"").hexdigest()})
+
+
+def is_placeholder_digest(value: str) -> bool:
+    """Return True when *value* is a placeholder digest rather than a real identity."""
+    return value.removeprefix("sha256:").lower() in PLACEHOLDER_DIGESTS
+
+
+def normalize_corpus_digest(value: str, *, label: str) -> str:
+    """Return the exact lowercase hex digest for *value*, or fail closed.
+
+    A corpus identity must be an exact SHA-256 that some real artifact actually has.
+    Anything else -- empty, malformed, or a placeholder such as 64 zeroes -- is refused
+    here rather than being carried forward as a checksum that verifies nothing.
+
+    Raises:
+        ArchivePolicyError: the value is not an exact, non-placeholder SHA-256.
+    """
+    normalized = value.strip().removeprefix("sha256:").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", normalized):
+        raise ArchivePolicyError(f"an exact 64-character {label} is required")
+    if normalized in PLACEHOLDER_DIGESTS:
+        raise ArchivePolicyError(
+            f"the configured {label} is a placeholder, not a reviewed identity; "
+            "set it to the digest published with the corpus release"
+        )
+    return normalized
 
 
 def _pg_restore() -> str:
@@ -155,15 +210,26 @@ def seed_identity_mode(
     manifest_sha256: str,
     checksums_sha256: str,
 ) -> str:
-    """Classify an exact legacy or direct seed identity; partial configurations fail."""
+    """Classify an exact legacy or direct seed identity; partial configurations fail.
+
+    This is the first gate the restore sidecar passes, and it runs BEFORE the
+    already-restored short-circuit -- so a deployment whose corpus identity is missing or
+    placeholder is refused even when the database already holds an active corpus. That is
+    deliberate: "a corpus is present" is not evidence that the present corpus is the
+    reviewed one.
+
+    Raises:
+        ArchivePolicyError: the identity is incomplete, malformed, or a placeholder.
+    """
     direct = (dump_sha256, manifest_sha256, checksums_sha256)
-    if all(re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", value) for value in direct):
+    if all(_DIGEST.fullmatch(value.strip()) for value in direct):
+        for value, label in zip(direct, _DIRECT_LABELS, strict=True):
+            normalize_corpus_digest(value, label=label)
         return "direct"
-    if any(direct):
+    if any(value.strip() for value in direct):
         raise ArchivePolicyError("direct corpus seed identity is incomplete")
-    if re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", bundle_sha256):
-        return "legacy"
-    raise ArchivePolicyError("legacy corpus seed identity is incomplete")
+    normalize_corpus_digest(bundle_sha256, label="corpus bundle SHA-256")
+    return "legacy"
 
 
 def extract_bundle(
@@ -180,8 +246,17 @@ def extract_bundle(
     opened, so a substituted or truncated artifact never reaches the tar parser.
 
     Raises:
-        ArchivePolicyError: the digest, member set, or per-member checksums do not match.
+        ArchivePolicyError: the artifact is absent, or the digest, member set, or
+            per-member checksums do not match.
     """
+    if not archive.exists():
+        # Fail closed, and say so in the restore's own vocabulary. Without this the
+        # missing-seed case surfaced as a bare FileNotFoundError traceback out of
+        # sha256_file(), which the CLI does not catch and an operator cannot act on.
+        raise ArchivePolicyError(
+            f"the corpus seed artifact is not present at {archive}; stage the reviewed "
+            "release asset in CORPUS_SEED_DIR before starting the restore"
+        )
     if archive.is_dir() and not archive.is_symlink():
         try:
             direct = extract_direct_seed(
@@ -199,9 +274,7 @@ def extract_bundle(
             manifest=direct.manifest,
             dump_sha256=direct.dump_sha256,
         )
-    normalized_sha256 = expected_sha256.removeprefix("sha256:").lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", normalized_sha256):
-        raise ArchivePolicyError("an exact 64-character corpus bundle SHA-256 is required")
+    normalized_sha256 = normalize_corpus_digest(expected_sha256, label="corpus bundle SHA-256")
     actual = sha256_file(archive)
     if actual != normalized_sha256:
         raise ArchivePolicyError("corpus bundle digest does not match the reviewed identity")

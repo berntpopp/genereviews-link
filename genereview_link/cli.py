@@ -402,6 +402,52 @@ def bundle_publish_handoff(
     )
 
 
+model_app = typer.Typer(name="model", help="Reviewed embedding model artifact operations.")
+app.add_typer(model_app)
+
+
+@model_app.command("stage")
+def model_stage(
+    output: Annotated[Path, typer.Option("--output", help="Directory to stage the model into.")],
+) -> None:
+    """Download the pinned embedding model and prove it against the reviewed identity.
+
+    Maintainer/CI tooling, and the only place the model is fetched. Copy the result to the
+    server's seed directory; the serving container never reaches the network.
+    """
+    from genereview_link.corpus.model_stage import ModelStageError, stage_model
+
+    try:
+        staged = stage_model(output)
+    except ModelStageError as error:
+        typer.echo(f"model staging refused: {error}", err=True)
+        raise typer.Exit(1) from error
+    for member, digest in sorted(staged.items()):
+        typer.echo(f"{digest}  {member}")
+
+
+@app.command("init")
+def init_cmd() -> None:
+    """Materialise the reviewed model, then restore the reviewed corpus.
+
+    This is the entry point of the no-egress `genereview-corpus-restore` init sidecar. It
+    is ONE command because the fleet deployment gate grants the seed bind mount to exactly
+    one init service, so both staged artifacts must be materialised by the same container.
+    Model first: it is the cheaper failure, and an operator debugging a refused deploy
+    should learn about a bad model before waiting out a corpus restore.
+    """
+    from genereview_link.config import settings
+    from genereview_link.db.model_seed import ModelSeedError, materialize_model
+
+    try:
+        staged = materialize_model(Path(settings.MODEL_SEED_PATH), Path(settings.MODEL_DIR))
+    except ModelSeedError as exc:
+        typer.echo(f"model materialisation refused: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    logger.info("embedding model materialised", members=sorted(staged))
+    corpus_restore()
+
+
 corpus_app = typer.Typer(name="corpus", help="Immutable corpus artifact operations.")
 app.add_typer(corpus_app)
 

@@ -45,6 +45,16 @@ dependencies = [
     "pgvector>=0.4.0",
     "apscheduler>=3.11.0,<4.0.0",
     "rapidfuzz>=3.6.0",
+    # Serving-side dense embeddings. The corpus is embedded with BAAI/bge-small-en-v1.5
+    # under sentence-transformers, but PyTorch cannot ship in the serving image: its wheel
+    # is 526 MB and one shared object alone exceeds the fleet OCI content policy's 64 MiB
+    # per-file ceiling. ONNX Runtime executes the SAME weights (largest file 30 MB), with
+    # measured parity against the reference implementation -- see
+    # tests/unit/test_onnx_embedding_parity.py. The weights themselves are a digest-pinned
+    # release asset materialised into a volume, never image content.
+    "onnxruntime>=1.20.0,<2.0.0",
+    "tokenizers>=0.20.0",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]
@@ -172,6 +182,8 @@ exclude = [
 [[tool.mypy.overrides]]
 module = [
     "async_lru.*",
+    "onnxruntime.*",
+    "tokenizers.*",
     "structlog.*",
     "mcp.*",
     "fastmcp.*",

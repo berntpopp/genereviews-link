@@ -262,14 +262,19 @@ class UnifiedServerManager:
         @app.get("/health", tags=["Health"])
         async def health_check(test_connection: bool = False) -> dict[str, Any]:
             from genereview_link import __version__
+            from genereview_link.retrieval.provider_policy import embedding_health
 
             client_manager = await get_client_manager()
             health = await client_manager.health_check(test_connection=test_connection)
+            # A green health check while semantic ranking is random is how a stub
+            # embedding provider survived unnoticed in production: report it here.
+            embeddings = embedding_health(app.state)
             return {
-                "status": "healthy",
+                "status": "healthy" if embeddings["is_reference_model"] else "degraded",
                 "version": __version__,
                 "transport": "streamable-http-stateless",
                 "client_health": health,
+                "embeddings": embeddings,
             }
 
         @app.get("/metrics", tags=["Observability"], include_in_schema=False)

@@ -28,7 +28,8 @@ production and NPM overlays:
 ```bash
 cp .env.docker.example .env.docker
 # Edit .env.docker: set POSTGRES_PASSWORD, CORS_ORIGINS, NCBI_API_KEY, and NPM_NETWORK_NAME.
-# Keep BUNDLE_URL=latest to restore the newest promoted corpus release, or pin a release URL.
+# Stage the reviewed corpus release asset in CORPUS_SEED_DIR and set CORPUS_BUNDLE_SHA256
+# to its published digest; both fail closed. See docs/data.md.
 docker compose \
   --env-file .env.docker \
   -f docker/docker-compose.yml \
@@ -60,19 +61,25 @@ production Docker/NPM deployments. Notable:
 - `NCBI_API_KEY` — strongly recommended for the higher NCBI rate limit.
 - `GENEREVIEW_LINK_PORT` — default 8000.
 - `NPM_NETWORK_NAME` — external Docker network used by Nginx Proxy Manager.
-- `BUNDLE_URL` — set to `latest` or a pinned GitHub Release asset URL to bootstrap a
-  populated corpus without local ingest/backfill.
+- `CORPUS_SEED_DIR` / `CORPUS_BUNDLE_SHA256` — the staged corpus release asset and its
+  published digest. Both fail closed.
+- `GENEREVIEW_EMBEDDING_PROVIDER` — `bge` or `fake`. Production refuses the stub unless
+  `GENEREVIEW_ALLOW_FAKE_EMBEDDINGS=true`.
+- `BUNDLE_URL` — **inert**; the serving process has no restore path. Kept only for the
+  release-watcher helpers.
 
-### Corpus Bundle Restore
+### Corpus restore
 
-Production Docker should restore a precomputed GitHub Release bundle:
+The corpus is restored **once**, by the no-egress `genereview-corpus-restore` init sidecar,
+from an artifact already staged on the host. The serving container downloads nothing.
 
 ```bash
-BUNDLE_URL=latest
+CORPUS_SEED_DIR=/srv/genefoundry/genereviews-seed
+CORPUS_BUNDLE_SHA256=<the digest published with the corpus release>
 ```
 
-For reproducibility, pin the release asset URL instead of using `latest`.
 Docker does not run ingest/backfill unless `BUILD_LOCAL=true` is explicitly set.
+See [../docs/data.md](../docs/data.md) for staging the asset and rebuilding a corpus.
 
 The production compose stack runs `genereview-link serve --transport unified`,
 which preserves both REST and `/mcp` over HTTP. `docker/gunicorn_conf.py` remains

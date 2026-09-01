@@ -1,5 +1,7 @@
 """Application lifecycle helpers for the GeneReview Link server."""
 
+from typing import Any
+
 import asyncpg
 from fastapi import FastAPI
 
@@ -82,9 +84,11 @@ async def _bootstrap() -> None:
 
 async def _initialize_state(app: FastAPI) -> None:
     """Initialize shared application state for request serving."""
+    from genereview_link import __version__
+
     logger.info(
         "Starting GeneReview Link Server",
-        version="3.0.0",
+        version=__version__,
         environment=settings.ENVIRONMENT,
     )
 
@@ -121,12 +125,6 @@ async def _initialize_state(app: FastAPI) -> None:
         app.state.pool = None
         app.state.repository = None
 
-    # --- Dense model metadata (cached for _meta under include=score_breakdown) ---
-    from genereview_link.retrieval.model_identity import BGE_DIM, BGE_MODEL_NAME
-
-    app.state.dense_model_id = BGE_MODEL_NAME
-    app.state.embedding_dim = BGE_DIM
-
     # --- Active corpus version (cached for _meta.corpus_version) ---
     app.state.corpus_version = None
     if app.state.repository is not None:
@@ -157,23 +155,19 @@ async def _initialize_state(app: FastAPI) -> None:
         except Exception as exc:
             logger.warning("gene_index load failed", error=str(exc))
 
-    # --- Embedding provider ---
-    if settings.GENEREVIEW_EAGER_LOAD_BGE:
-        from genereview_link.retrieval.embeddings import SentenceTransformerEmbeddingProvider
-
-        app.state.embedder = SentenceTransformerEmbeddingProvider(
-            device=settings.INGEST_EMBED_DEVICE
-        )
-        logger.info("BGE SentenceTransformer embedding provider loaded.")
-    else:
-        from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
-
-        app.state.embedder = FakeEmbeddingProvider(dim=384)
-        logger.info("FakeEmbeddingProvider active (set GENEREVIEW_EAGER_LOAD_BGE=true for BGE).")
+    # --- Embedding provider (fail-closed; see retrieval/provider_policy.py) ---
+    await _initialize_embeddings(app)
 
     # --- Release watcher scheduler ---
+    if settings.AUTO_PULL_RELEASES:
+        raise RuntimeError(
+            "AUTO_PULL_RELEASES is not implemented and never was: the branch behind it was "
+            "a bare `pass`, so it silently did nothing. The serving process has no restore "
+            "path by design (#97). Unset it, and set RELEASE_WATCHER_ENABLED=true to record "
+            "corpus staleness into public.genereview_refresh_log instead."
+        )
     app.state.scheduler = None
-    if settings.AUTO_PULL_RELEASES and pool is not None:
+    if settings.RELEASE_WATCHER_ENABLED and pool is not None:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         from genereview_link.ingest.scheduler import check_for_new_release
@@ -181,7 +175,66 @@ async def _initialize_state(app: FastAPI) -> None:
         app.state.scheduler = AsyncIOScheduler()
         app.state.scheduler.add_job(check_for_new_release, "cron", minute=17, args=[pool])
         app.state.scheduler.start()
-        logger.info("Release watcher scheduler started (fires at :17 each hour).")
+        logger.info("Corpus staleness watcher started (fires at :17 each hour).")
+
+
+async def _initialize_embeddings(app: FastAPI) -> None:
+    """Select the dense embedding provider and record what actually got loaded.
+
+    Raises:
+        EmbeddingPolicyError: a stub provider is configured for production without an
+            explicit opt-in, or the loaded model disagrees with the corpus's.
+    """
+    from genereview_link.retrieval.provider_policy import (
+        assert_corpus_model_agreement,
+        build_embedding_provider,
+        provider_is_real,
+    )
+
+    provider, kind = await build_embedding_provider(settings)
+    real = provider_is_real(provider)
+    await _assert_corpus_model(app, provider, assert_corpus_model_agreement)
+
+    app.state.embedder = provider
+    app.state.embedding_provider_kind = kind
+    app.state.embedding_provider_real = real
+    # A stub's query vector is uncorrelated with the stored corpus vectors, so fusing it
+    # displaces correct lexical hits instead of improving them. Disable the dense path
+    # rather than serve a ranking that is worse than no ranking.
+    app.state.dense_ranking_enabled = real
+    # Report the model that is actually loaded. Reporting the reference model while a
+    # stub answers queries is misinformation, not a cosmetic defect.
+    app.state.dense_model_id = provider.model_name
+    app.state.embedding_dim = provider.dim
+
+    if real:
+        logger.info("dense embedding provider loaded", model=provider.model_name, kind=kind)
+    else:
+        logger.error(
+            "DEGRADED: stub embedding provider active; dense ranking is disabled and "
+            "search falls back to lexical ranking",
+            model=provider.model_name,
+            kind=kind,
+            environment=settings.ENVIRONMENT,
+        )
+
+
+async def _assert_corpus_model(app: FastAPI, provider: object, assertion: Any) -> None:
+    """Refuse to serve when the corpus was embedded with a different model."""
+    pool = getattr(app.state, "pool", None)
+    corpus_model: str | None = None
+    if pool is not None:
+        try:
+            corpus_model = await pool.fetchval(
+                "select model_name from public.genereview_active_embedding where id = 1"
+            )
+        except asyncpg.PostgresError as exc:
+            # An unreadable identity is not evidence of agreement, but it is also not
+            # evidence of mismatch; the corpus-version gate already covers an absent
+            # corpus. Say so rather than inventing either verdict.
+            logger.warning("could not read the corpus embedding identity", error=str(exc))
+            return
+    assertion(provider, corpus_model)
 
 
 async def _teardown_state(app: FastAPI) -> None:

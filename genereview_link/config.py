@@ -78,10 +78,29 @@ class Settings(BaseSettings):
     INGEST_EMBED_WRITERS: int = 2
     INGEST_EMBED_DEVICE: str = "auto"
 
-    # Retrieval / RAG feature flags
-    # Set to True to load the BGE-small model at boot (adds ~130MB RAM).
-    # When False (default), FakeEmbeddingProvider is used so the server starts
-    # quickly in environments without Postgres/GPU resources.
+    # --- Reviewed embedding model artifact ---
+    # The model is 127 MiB of weights: too large for the OCI image (the fleet content
+    # policy caps a single file at 64 MiB), so it arrives exactly as the corpus does --
+    # a digest-pinned release asset, staged read-only on the host, materialised once into
+    # a named volume by the no-egress init sidecar, and mounted read-only by the server.
+    MODEL_SEED_PATH: str = "/seed/model"
+    MODEL_DIR: str = "/data"
+
+    # --- Dense embedding provider ---
+    # Which model answers query embeddings. "bge" is the pinned reference model the
+    # corpus was embedded with; "fake" is a deterministic stub whose vectors are NOT
+    # comparable with the stored corpus vectors, so it disables dense ranking.
+    # Empty means: production resolves to "bge" (the safe path is the default where
+    # being wrong is expensive), everything else falls back to GENEREVIEW_EAGER_LOAD_BGE.
+    # See genereview_link/retrieval/provider_policy.py.
+    GENEREVIEW_EMBEDDING_PROVIDER: str = ""
+    # Knowingly serve production with the stub provider (lexical-only search). Without
+    # this, a stub in production is a startup error rather than a silent ranking
+    # regression that still advertises the reference model.
+    GENEREVIEW_ALLOW_FAKE_EMBEDDINGS: bool = False
+    # LEGACY. Named as a loading strategy but actually selects real-vs-stub embeddings,
+    # which is how a production deployment ran on stub vectors unnoticed. Retained for
+    # compatibility outside production; GENEREVIEW_EMBEDDING_PROVIDER wins when set.
     GENEREVIEW_EAGER_LOAD_BGE: bool = False
 
     # Set to True to enable the /debug/ranking diagnostic endpoint.
@@ -114,7 +133,11 @@ class Settings(BaseSettings):
     RESTORE_ROLE: str = "genereview_restore"
 
     # Corpus bootstrap modes
-    # BUNDLE_URL: set to a .tar.gz URL (or "latest") to restore from a release bundle.
+    # BUNDLE_URL: INERT since the no-egress restore sidecar landed (#97, 2026-07-13).
+    # The serving process has no restore path, so nothing reads this at request-serving
+    # time; a deployment that still sets BUNDLE_URL=latest (production does) is not
+    # downloading anything. Retained only because the release-watcher helpers in
+    # ingest/github_release.py still resolve release URLs. Tracked for removal in #142.
     BUNDLE_URL: str = ""
     # EXPECTED_BUNDLE_SHA256: independently-trusted, out-of-band authenticity
     # anchor for the release bundle. Set this from a source OTHER than the
@@ -138,7 +161,15 @@ class Settings(BaseSettings):
     BUILD_LOCAL: bool = False
     # GITHUB_REPO: owner/repo for release resolution when BUNDLE_URL="latest".
     GITHUB_REPO: str = "berntpopp/genereviews-link"
-    # AUTO_PULL_RELEASES: start the hourly release watcher scheduler.
+    # RELEASE_WATCHER_ENABLED: run the hourly corpus-staleness watcher. It observes and
+    # records into public.genereview_refresh_log; it never pulls.
+    RELEASE_WATCHER_ENABLED: bool = False
+    # AUTO_PULL_RELEASES: REFUSED. The name promises an automatic corpus pull that was
+    # never implemented -- the branch was literally `pass` -- so for months this silently
+    # did nothing while reading as "corpus updates are handled". Pulling inside the
+    # serving process is also precisely what #97 removed. Setting this true is now a
+    # startup error rather than a no-op; use RELEASE_WATCHER_ENABLED for staleness
+    # reporting, and the reviewed data-release + init-sidecar path to update the corpus.
     AUTO_PULL_RELEASES: bool = False
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

@@ -90,6 +90,30 @@ into the Postgres volume by the `genereview-corpus-restore` init sidecar:
   may write the corpus tables and nothing else. Reviewed in-repo migrations run as the
   owner; the untrusted artifact is loaded with the least rights that can load it.
 - **The serving application has no restore path at all** and never downloads anything.
+- Both the artifact and its digest fail closed. An absent seed file, and an absent,
+  malformed, or **placeholder** digest (64 zeroes, 64 `f`s, the empty file's digest) are
+  each refused. A placeholder is refused *by identity*, before any comparison: a checksum
+  that verifies nothing while presenting itself as verification is worse than none.
+
+### Embedding provider (production)
+
+Semantic ranking is only meaningful when the query and the corpus were embedded by the same
+model, so production runs the pinned `BAAI/bge-small-en-v1.5` weights through ONNX Runtime.
+The weights are **not** image content: they are staged beside the corpus under
+`CORPUS_SEED_DIR` and materialised once into the `genereview_model_data` volume by the same
+no-egress init sidecar, then mounted read-only by the server and re-verified before load.
+
+Stage them once per pin:
+
+```bash
+genereview-link model stage --output /srv/genefoundry/genereviews-seed/model
+```
+
+Production refuses to start on the stub provider unless
+`GENEREVIEW_ALLOW_FAKE_EMBEDDINGS=true`; when a non-reference provider is active the dense
+path is disabled, `rerank_used` reports `lexical`, `_meta.dense_model_id` reports the stub,
+and `/health` reports `degraded`. See
+[data.md § Embedding provider](data.md#embedding-provider).
 
 `GENEREVIEW_LINK_IMAGE` must be a digest-pinned image
 (`ghcr.io/berntpopp/genereviews-link@sha256:…`); the prod overlay fails closed if it is
@@ -112,8 +136,10 @@ can start safely, but it is not controller-deployable evidence. Only a future ve
 | **Total recommended** | **3 GB** |
 
 The production compose overlay caps the app service at 3 GB / 1.0 CPU. Leave
-`GENEREVIEW_EAGER_LOAD_BGE=false` (the default) for API-key-only or "lite" deployments;
-set it `true` only when semantic passage search is required.
+`GENEREVIEW_EMBEDDING_PROVIDER=fake` for API-key-only or "lite" deployments (which
+disables dense ranking outright rather than degrading it); `onnx` (the production default)
+runs the real model. Measured on the built image under full confinement: verify + load
+310 ms, warm query 6.9 ms, ~26 MB added to the image and 127 MiB held in a volume.
 
 For multi-worker deployments, set `RATE_LIMIT_STATE_FILE` so workers coordinate NCBI rate
 limiting through a shared state file.

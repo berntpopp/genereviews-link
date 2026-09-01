@@ -26,10 +26,46 @@ BGE_MODEL_FILES = {
 }
 BGE_DIM = 384  # output embedding dimension for bge-small-en-v1.5
 
+#: The exact two files the SERVING runtime needs, and nothing else.
+#:
+#: The serving image cannot carry PyTorch: `torch`'s wheel alone is 526 MB and the fleet
+#: OCI content policy caps any single file at 64 MiB. It runs the same weights through
+#: ONNX Runtime instead (30 MB largest file), whose vectors reproduce the
+#: sentence-transformers vectors the corpus was embedded with to float32 rounding --
+#: min cosine 0.999999999796, max per-dimension delta 1.75e-07 across the parity suite in
+#: `tests/unit/test_onnx_embedding_parity.py`.
+#:
+#: These are the trust root for the model bundle: the artifact is proven against them
+#: before it is opened, exactly as the corpus artifact is proven against its digest.
+BGE_ONNX_FILE = "model.onnx"
+BGE_ONNX_FILE_SHA256 = "828e1496d7fabb79cfa4dcd84fa38625c0d3d21da474a00f08db0f559940cf35"
+BGE_TOKENIZER_FILE = "tokenizer.json"
+BGE_TOKENIZER_FILE_SHA256 = BGE_MODEL_FILES["tokenizer.json"]
+
+#: `{member: sha256}` for the published model bundle, at the pinned revision.
+BGE_RUNTIME_FILES = {
+    BGE_ONNX_FILE: BGE_ONNX_FILE_SHA256,
+    BGE_TOKENIZER_FILE: BGE_TOKENIZER_FILE_SHA256,
+}
+
+#: bge-small-en-v1.5 is CLS-pooled then L2-normalised (`1_Pooling/config.json` sets
+#: `pooling_mode_cls_token: true`, `modules.json` appends `2_Normalize`). The pipeline is
+#: pinned HERE, in reviewed code, and is deliberately NOT read from the artifact: a
+#: downloaded file must never be able to change how its own output is computed.
+BGE_POOLING = "cls"
+BGE_MAX_SEQ_LENGTH = 512
+
 __all__ = [
     "BGE_DIM",
+    "BGE_MAX_SEQ_LENGTH",
     "BGE_MODEL_FILE",
     "BGE_MODEL_FILE_SHA256",
     "BGE_MODEL_NAME",
     "BGE_MODEL_REVISION",
+    "BGE_ONNX_FILE",
+    "BGE_ONNX_FILE_SHA256",
+    "BGE_POOLING",
+    "BGE_RUNTIME_FILES",
+    "BGE_TOKENIZER_FILE",
+    "BGE_TOKENIZER_FILE_SHA256",
 ]

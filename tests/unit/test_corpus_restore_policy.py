@@ -204,8 +204,24 @@ def test_bundle_with_the_reviewed_digest_is_extracted(tmp_path: Path) -> None:
 
 def test_a_substituted_bundle_never_reaches_the_tar_parser(tmp_path: Path) -> None:
     archive = _bundle(tmp_path)
+    # A well-formed digest that is simply not this artifact's. (It deliberately is not
+    # the all-zero placeholder: that is refused earlier, by identity, not by comparison.)
     with pytest.raises(ArchivePolicyError, match="digest does not match"):
+        extract_bundle(archive, tmp_path / "out", expected_sha256="a1b2c3d4" * 8)
+
+
+def test_a_placeholder_digest_is_refused_before_any_comparison(tmp_path: Path) -> None:
+    """64 zeroes is a placeholder, not an identity: refuse the configuration itself."""
+    archive = _bundle(tmp_path)
+    with pytest.raises(ArchivePolicyError, match="placeholder"):
         extract_bundle(archive, tmp_path / "out", expected_sha256="0" * 64)
+
+
+def test_a_missing_seed_artifact_fails_closed_with_a_restore_error(tmp_path: Path) -> None:
+    """An absent seed must be an ArchivePolicyError, not a bare FileNotFoundError."""
+    digest = "a1b2c3d4" * 8
+    with pytest.raises(ArchivePolicyError, match="not present"):
+        extract_bundle(tmp_path / "absent.tar.gz", tmp_path / "out", expected_sha256=digest)
 
 
 def test_an_unpinned_deployment_fails_closed(tmp_path: Path) -> None:

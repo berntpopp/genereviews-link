@@ -79,8 +79,14 @@ services:
       dockerfile: docker/Dockerfile
       target: production
     image: genereview-link:local
-    # Explicit, shell-free argv: one bounded data process, then exit.
-    command: ["genereview-link", "corpus", "restore"]
+    # Explicit, shell-free argv: one bounded data process, then exit. `init` materialises
+    # the reviewed embedding model and then restores the reviewed corpus. Both artifacts
+    # are staged under the ONE bind mount the fleet deployment gate permits, on the ONE
+    # service it permits it for, so they must be materialised by the same container.
+    command: ["genereview-link", "init"]
+    # Numeric, matching the uid/gid baked into the image. The deployment gate rejects a
+    # user name; a mismatch here leaves the model volume unwritable under cap_drop: ALL.
+    user: "999:999"
     depends_on:
       postgres:
         condition: service_healthy
@@ -90,12 +96,20 @@ services:
       # Reviewed migrations run as the owner; the untrusted archive never does.
       RESTORE_DATABASE_URL: postgresql://genereview_restore:${POSTGRES_PASSWORD:-genereview}@postgres:5432/genereview
       CORPUS_SEED_PATH: "${CORPUS_SEED_PATH:-/seed/corpus-bundle.tar.gz}"
-      CORPUS_BUNDLE_SHA256: "${CORPUS_BUNDLE_SHA256:-0000000000000000000000000000000000000000000000000000000000000000}"
+      # NO DEFAULT, deliberately. This used to fall back to 64 zeroes so that
+      # `docker compose config` would render without an env file. That placeholder is a
+      # syntactically valid SHA-256, so the restore's identity gate accepted it and the
+      # stack reported a pinned corpus while pinning nothing. An empty value is refused
+      # by `seed_identity_mode`, which is the honest outcome: compose still renders, and
+      # the application -- not the compose file -- decides what a valid identity is.
+      CORPUS_BUNDLE_SHA256: "${CORPUS_BUNDLE_SHA256:-}"
       CORPUS_DUMP_SHA256: "${CORPUS_DUMP_SHA256:-}"
       CORPUS_MANIFEST_SHA256: "${CORPUS_MANIFEST_SHA256:-}"
       CORPUS_CHECKSUMS_SHA256: "${CORPUS_CHECKSUMS_SHA256:-}"
       CORPUS_RELEASE_TAG: "${CORPUS_RELEASE_TAG:-}"
       CORPUS_RESTORE_DIR: /var/lib/genereview/restore
+      MODEL_SEED_PATH: /seed/model
+      MODEL_DIR: /data
     volumes:
       # A reviewed, pre-seeded artifact: read-only, never a system path.
       - type: bind
@@ -105,6 +119,14 @@ services:
       - type: volume
         source: genereview_restore_state
         target: /var/lib/genereview/restore
+      # Writable here, read-only in the server. /data is the fleet's canonical reference-
+      # data mount and the only volume target the container-release standard approves for
+      # an application service. Docker seeds an empty named volume from the image
+      # directory, including its app:app ownership, so uid 999 can write it without
+      # CAP_CHOWN and without relaxing the read-only rootfs.
+      - type: volume
+        source: genereview_model_data
+        target: /data
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m,mode=1777
     read_only: true
@@ -148,10 +170,26 @@ services:
       MCP_ALLOWED_HOSTS: '["localhost","127.0.0.1","::1"]'
       GF_HEALTHCHECK_HOST: "${GF_HEALTHCHECK_HOST:-localhost}"
       DATABASE_URL: postgresql://${POSTGRES_USER:-genereview}:${POSTGRES_PASSWORD:-genereview}@postgres:5432/genereview
+      MODEL_DIR: /data
+      # Belt and braces on the no-egress posture: even if a library were to reach for the
+      # Hub, these make it fail rather than silently fetch. The ONNX provider only ever
+      # opens the two verified files in MODEL_DIR.
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HOME: /data
 
     depends_on:
       genereview-corpus-restore:
         condition: service_completed_successfully
+
+    volumes:
+      # Read-only: the serving process consumes the model and can never alter it. It is
+      # verified again in-process before load, so a volume tampered with between the init
+      # sidecar and startup is still refused.
+      - type: volume
+        source: genereview_model_data
+        target: /data
+        read_only: true
 
     # Dev/local only — loopback-bound (127.0.0.1) so copying this file to a
     # server never publishes the unauthenticated backend on the public IP
@@ -210,3 +248,5 @@ volumes:
   genereview_pg_data:
   genereview_pg_run:
   genereview_restore_state:
+  # The reviewed embedding model, materialised once from the staged release asset.
+  genereview_model_data:
