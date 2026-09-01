@@ -8,7 +8,9 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from genereview_link.corpus.computation_runs import load_active_computation
 from genereview_link.corpus.evaluation import canonical_json, evaluate_connection
+from genereview_link.corpus.semantic_identity import collect_content_identity
 from genereview_link.db.locks import CORPUS_WRITE_LOCK_KEY
 
 LOGICAL_VOLUMES = ("genereview_pg_data", "genereview_pg_run", "genereview_restore_state")
@@ -46,6 +48,19 @@ _RELEASE_TAG = re.compile(r"^corpus-data-20[0-9]{2}-[0-9]{2}-[0-9]{2}-r[1-9][0-9
 
 class ReadinessError(RuntimeError):
     """The restored database does not prove the exact release identity."""
+
+
+def assert_runtime_manifest_identity(
+    manifest: Mapping[str, object],
+    *,
+    content_identity: Mapping[str, object],
+    computation: Mapping[str, object],
+) -> None:
+    """Require the restored logical content and computation chain to equal the seal."""
+    if manifest.get("content_identity") != dict(content_identity):
+        raise ReadinessError("restored content identity does not match the release manifest")
+    if manifest.get("computation") != dict(computation):
+        raise ReadinessError("restored computation identity does not match the release manifest")
 
 
 def configured_direct_release(
@@ -194,6 +209,16 @@ async def write_release_readiness(
             "select to_regclass($1) is not null", f"genereview.{index_name}"
         )
         indexes = [index_name] if index_exists else []
+        try:
+            content_identity = await collect_content_identity(connection)
+            computation = await load_active_computation(connection)
+        except ValueError as error:
+            raise ReadinessError("restored runtime identity is incomplete") from error
+        assert_runtime_manifest_identity(
+            manifest,
+            content_identity=content_identity,
+            computation=computation,
+        )
         metrics = await evaluate_connection(connection)
         query_digest = hashlib.sha256(canonical_json(metrics)).hexdigest()
         payload = build_readiness_payload(
@@ -261,6 +286,7 @@ async def require_release_readiness(
 __all__ = [
     "LOGICAL_VOLUMES",
     "ReadinessError",
+    "assert_runtime_manifest_identity",
     "build_readiness_payload",
     "configured_direct_release",
     "require_release_readiness",

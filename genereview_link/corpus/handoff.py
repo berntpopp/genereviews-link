@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from errno import EEXIST, ENOSYS
 from pathlib import Path
 
+from genereview_link.strict_json import StrictJsonError, load_strict_json
+
 MAX_METADATA_BYTES = 1 << 20
 CHUNK_BYTES = 1 << 20
 _SOURCE_FILES = frozenset({"corpus.dump", "manifest.json", "SHA256SUMS"})
@@ -159,8 +161,11 @@ def _canonical_json(value: object) -> bytes:
 
 def _load_json(path: Path, *, parent_fd: int | None = None) -> dict[str, object]:
     try:
-        value = json.loads(_read_capped(path, parent_fd=parent_fd))
-    except json.JSONDecodeError as error:
+        value = load_strict_json(
+            _read_capped(path, parent_fd=parent_fd),
+            max_bytes=MAX_METADATA_BYTES,
+        )
+    except StrictJsonError as error:
         raise HandoffError(f"invalid JSON: {path.name}") from error
     if not isinstance(value, dict):
         raise HandoffError(f"{path.name} must contain a JSON object")

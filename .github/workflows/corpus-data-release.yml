@@ -478,10 +478,54 @@ jobs:
                       raise RuntimeError("handoff redirect left the trusted host allowlist")
                   return Request(newurl, headers={"Accept": "application/octet-stream"})
 
+          def strict_locator_json(raw):
+              try:
+                  text = raw.decode("utf-8")
+                  depth = 0
+                  in_string = False
+                  escaped = False
+                  for character in text:
+                      if in_string:
+                          if escaped:
+                              escaped = False
+                          elif character == "\\":
+                              escaped = True
+                          elif character == '"':
+                              in_string = False
+                      elif character == '"':
+                          in_string = True
+                      elif character in "[{":
+                          depth += 1
+                          if depth > 64:
+                              raise ValueError("JSON nesting exceeds the reviewed depth")
+                      elif character in "]}":
+                          depth -= 1
+                          if depth < 0:
+                              raise ValueError("JSON structure is invalid")
+
+                  def unique_object(pairs):
+                      value = {}
+                      for key, item in pairs:
+                          if key in value:
+                              raise ValueError("duplicate JSON object key")
+                          value[key] = item
+                      return value
+
+                  def finite_constant(value):
+                      raise ValueError(f"non-standard JSON constant: {value}")
+
+                  return json.loads(
+                      text,
+                      object_pairs_hook=unique_object,
+                      parse_constant=finite_constant,
+                  )
+              except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as error:
+                  raise SystemExit("handoff locator is not strict bounded JSON") from error
+
           raw = os.environ["GENEREVIEWS_HANDOFF_LOCATOR"].encode()
           if not 0 < len(raw) <= 48 * 1024:
               raise SystemExit("handoff locator exceeds its protected bound")
-          locator = json.loads(raw)
+          locator = strict_locator_json(raw)
           if (not isinstance(locator, dict)
                   or set(locator) != {"format", "object_id", "build_revision", "assets"}
                   or locator["format"] != "genereviews-handoff-locator-v1"
@@ -499,59 +543,76 @@ jobs:
               raise SystemExit("handoff locator asset names are not exact")
           destination = Path(os.environ["HANDOFF_OBJECT"])
           opener = build_opener(TrustedRedirects())
+          directory_fd = os.open(
+              destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+          )
+          created = {}
           try:
-              for asset in assets:
-                  name = asset["name"]
-                  url = str(asset.get("url"))
-                  parsed = urlsplit(url)
-                  match = re.fullmatch(
-                      r"/repos/([^/]+/[^/]+)/releases/assets/([1-9][0-9]{0,18})",
-                      unquote(parsed.path),
-                  )
-                  if (parsed.scheme != "https" or parsed.hostname != "api.github.com"
-                          or parsed.port is not None or parsed.username or parsed.password
-                          or parsed.query or parsed.fragment or match is None
-                          or match.group(1) not in allowed_repositories):
-                      raise RuntimeError("handoff asset URL is not an exact numeric GitHub API URL")
-                  size = asset.get("size_bytes")
-                  limit = 4 * 1024**3 if name == "corpus.dump" else 64 * 1024**2
-                  digest = asset.get("sha256")
-                  if (type(size) is not int or not 0 < size <= limit
-                          or not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None):
-                      raise RuntimeError("handoff asset identity exceeds its bound")
-                  target = destination / name
-                  fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o400)
-                  remaining = size
-                  actual = hashlib.sha256()
-                  deadline = time.monotonic() + 45 * 60
-                  try:
-                      request = Request(url, headers={"Accept": "application/octet-stream", "Authorization": f"Bearer {os.environ['GH_TOKEN']}"})
-                      with opener.open(request, timeout=60) as response, os.fdopen(fd, "wb", closefd=False) as output:
-                          while True:
-                              if time.monotonic() >= deadline:
-                                  raise RuntimeError("handoff transfer exceeded its deadline")
-                              chunk = response.read(min(1 << 20, remaining + 1))
-                              if not chunk:
-                                  break
-                              remaining -= len(chunk)
-                              if remaining < 0:
-                                  raise RuntimeError("handoff asset exceeded declared size")
-                              actual.update(chunk)
-                              output.write(chunk)
-                          output.flush()
-                          os.fsync(fd)
-                  finally:
-                      os.close(fd)
-                  if remaining != 0 or actual.hexdigest() != digest:
-                      raise RuntimeError("handoff asset size or digest mismatch")
-                  os.chmod(target, 0o400, follow_symlinks=False)
-          except BaseException:
-              for name in names:
-                  if isinstance(name, str):
-                      try: (destination / name).unlink()
-                      except FileNotFoundError: pass
-              raise
-          os.chmod(destination, 0o500)
+              try:
+                  for asset in assets:
+                      name = asset["name"]
+                      url = str(asset.get("url"))
+                      parsed = urlsplit(url)
+                      match = re.fullmatch(
+                          r"/repos/([^/]+/[^/]+)/releases/assets/([1-9][0-9]{0,18})",
+                          unquote(parsed.path),
+                      )
+                      if (parsed.scheme != "https" or parsed.hostname != "api.github.com"
+                              or parsed.port is not None or parsed.username or parsed.password
+                              or parsed.query or parsed.fragment or match is None
+                              or match.group(1) not in allowed_repositories):
+                          raise RuntimeError("handoff asset URL is not an exact numeric GitHub API URL")
+                      size = asset.get("size_bytes")
+                      limit = 4 * 1024**3 if name == "corpus.dump" else 64 * 1024**2
+                      digest = asset.get("sha256")
+                      if (type(size) is not int or not 0 < size <= limit
+                              or not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None):
+                          raise RuntimeError("handoff asset identity exceeds its bound")
+                      fd = os.open(
+                          name,
+                          os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                          0o600,
+                          dir_fd=directory_fd,
+                      )
+                      created_info = os.fstat(fd)
+                      created[name] = (created_info.st_dev, created_info.st_ino)
+                      remaining = size
+                      actual = hashlib.sha256()
+                      deadline = time.monotonic() + 45 * 60
+                      try:
+                          request = Request(url, headers={"Accept": "application/octet-stream", "Authorization": f"Bearer {os.environ['GH_TOKEN']}"})
+                          with opener.open(request, timeout=60) as response, os.fdopen(fd, "wb", closefd=False) as output:
+                              while True:
+                                  if time.monotonic() >= deadline:
+                                      raise RuntimeError("handoff transfer exceeded its deadline")
+                                  chunk = response.read(min(1 << 20, remaining + 1))
+                                  if not chunk:
+                                      break
+                                  remaining -= len(chunk)
+                                  if remaining < 0:
+                                      raise RuntimeError("handoff asset exceeded declared size")
+                                  actual.update(chunk)
+                                  output.write(chunk)
+                              output.flush()
+                              os.fsync(fd)
+                          os.fchmod(fd, 0o400)
+                      finally:
+                          os.close(fd)
+                      if remaining != 0 or actual.hexdigest() != digest:
+                          raise RuntimeError("handoff asset size or digest mismatch")
+                  os.fchmod(directory_fd, 0o500)
+              except BaseException:
+                  for name, created_identity in created.items():
+                      try:
+                          current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                      except FileNotFoundError:
+                          continue
+                      if (stat.S_ISREG(current.st_mode)
+                              and (current.st_dev, current.st_ino) == created_identity):
+                          os.unlink(name, dir_fd=directory_fd)
+                  raise
+          finally:
+              os.close(directory_fd)
           PY
       - name: Verify trusted build provenance before supplied Python
         env:

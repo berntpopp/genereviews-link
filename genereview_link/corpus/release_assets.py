@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import os
 import re
+import stat
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from urllib.parse import quote
@@ -84,14 +84,6 @@ def _assert_fresh_directory(destination: Path) -> None:
         raise ReleaseAssetError("destination must be a fresh real directory")
     if info.st_uid != os.geteuid():
         raise ReleaseAssetError("destination must be owned by the invoking user")
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 async def _release_assets(
@@ -236,14 +228,31 @@ async def download_release_assets(
                 # also guards every redirect before any request can leave the process.
                 event_hooks={"request": [make_url_guard(_DOWNLOAD_HOSTS)]},
             ) as client:
-                await stream_to_file(
-                    client, url, target, max_bytes=limit, deadline_seconds=deadline
-                )
-            info = target.stat(follow_symlinks=False)
-            created[name] = (info.st_dev, info.st_ino)
-            if info.st_size != asset.size:
-                raise ReleaseAssetError(f"downloaded size does not match API identity: {name}")
-            downloaded[name] = _sha256_file(target)
+                output_identity: list[tuple[int, int]] = []
+                try:
+                    digest = await stream_to_file(
+                        client,
+                        url,
+                        target,
+                        max_bytes=limit,
+                        deadline_seconds=deadline,
+                        created_identity=output_identity,
+                    )
+                finally:
+                    if output_identity:
+                        created[name] = output_identity[0]
+            if not output_identity:
+                raise ReleaseAssetError(f"download did not report created identity: {name}")
+            descriptor = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                info = os.fstat(descriptor)
+                if not stat.S_ISREG(info.st_mode) or (info.st_dev, info.st_ino) != created[name]:
+                    raise ReleaseAssetError(f"downloaded identity changed before admission: {name}")
+                if info.st_size != asset.size:
+                    raise ReleaseAssetError(f"downloaded size does not match API identity: {name}")
+            finally:
+                os.close(descriptor)
+            downloaded[name] = digest
             if f"sha256:{downloaded[name]}" != asset.digest:
                 raise ReleaseAssetError(f"downloaded digest does not match API identity: {name}")
     except BaseException:
@@ -252,7 +261,14 @@ async def download_release_assets(
                 current = (destination / name).stat(follow_symlinks=False)
             except FileNotFoundError:
                 continue
-            if (current.st_dev, current.st_ino) == created_identity:
+            if (
+                stat.S_ISREG(current.st_mode)
+                and (
+                    current.st_dev,
+                    current.st_ino,
+                )
+                == created_identity
+            ):
                 (destination / name).unlink()
         raise
     result = replace(

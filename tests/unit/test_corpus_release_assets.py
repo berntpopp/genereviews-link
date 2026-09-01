@@ -1,5 +1,6 @@
 """Adversarial tests for release asset URL and credential boundaries."""
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -72,7 +73,7 @@ async def test_downloader_returns_release_and_downloaded_byte_identity(tmp_path:
     }
     assets = []
     for index, (name, body) in enumerate(bodies.items(), start=1):
-        digest = release_assets.hashlib.sha256(body).hexdigest()
+        digest = hashlib.sha256(body).hexdigest()
         assets.append(
             {
                 "id": index,
@@ -109,7 +110,7 @@ async def test_downloader_returns_release_and_downloaded_byte_identity(tmp_path:
     assert identity.release_id == 99
     assert identity.target_commit == target
     assert {asset.name: asset.downloaded_sha256 for asset in identity.assets} == {
-        name: release_assets.hashlib.sha256(body).hexdigest() for name, body in bodies.items()
+        name: hashlib.sha256(body).hexdigest() for name, body in bodies.items()
     }
     assert (destination / "rights-record.json").is_file()
 
