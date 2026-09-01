@@ -93,9 +93,15 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-RUN groupadd --system app && \
-    useradd --system --gid app --home /home/app --create-home app && \
-    mkdir -p /tmp/genereview-link /var/cache/genereview-link /var/lib/genereview/restore /seed && \
+# Pin the uid/gid explicitly. The fleet deployment gate requires compose to declare a
+# numeric `user:` (`scripts/utils/deployment_preflight.py`), and that number must match the
+# ownership baked into the image or a named volume seeded from these directories lands
+# unwritable under a read-only rootfs with cap_drop: ALL. `useradd --system` happened to
+# pick 999 here, but "happened to" is not a contract.
+RUN groupadd --gid 999 app && \
+    useradd --uid 999 --gid 999 --home /home/app --create-home app && \
+    mkdir -p /tmp/genereview-link /var/cache/genereview-link /var/lib/genereview/restore \
+             /var/lib/genereview/models /seed && \
     chown -R app:app /tmp/genereview-link /var/cache/genereview-link /var/lib/genereview /home/app
 
 COPY --from=builder /opt/venv /opt/venv
@@ -117,9 +123,13 @@ RUN /usr/local/bin/python -m pip install --no-cache-dir pip==26.1 && \
     pg_restore --version | grep -Eq 'PostgreSQL\) 18\.' && \
     psql --version | grep -Eq 'PostgreSQL\) 18\.'
 
-# Production serving and migration tasks use FakeEmbeddingProvider by default.
-# The real BGE embedding stack is used by offline embedding workflows, but its
-# PyTorch artifacts exceed the fleet OCI content policy's file/layer limits.
+# Production serving runs the real BGE model through ONNX Runtime; `onnxruntime`,
+# `tokenizers` and `numpy` therefore STAY (largest file 30 MB, inside the fleet OCI
+# content policy's 64 MiB per-file ceiling). The PyTorch stack below is removed because it
+# cannot fit that ceiling under any policy -- torch's wheel alone is 526 MB -- and it is
+# needed only by the offline ingest/embedding workflows, which run outside this image.
+# The model WEIGHTS are not image content either: they are a digest-pinned release asset
+# materialised into a volume by the init sidecar.
 # NOTE: numpy stays because `pgvector.asyncpg` imports it while registering the database
 # codec. The full corpus package is offline build/publisher tooling and is not admitted to
 # the public image. A small exact subset is retained below for the no-egress direct-restore
@@ -154,8 +164,6 @@ RUN rm -rf /opt/venv/lib/python3.12/site-packages/nvidia \
            /opt/venv/lib/python3.12/site-packages/sympy-*.dist-info \
            /opt/venv/lib/python3.12/site-packages/threadpoolctl.py \
            /opt/venv/lib/python3.12/site-packages/threadpoolctl-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/tokenizers \
-           /opt/venv/lib/python3.12/site-packages/tokenizers-*.dist-info \
            /opt/venv/lib/python3.12/site-packages/torch \
            /opt/venv/lib/python3.12/site-packages/torch-*.dist-info \
            /opt/venv/lib/python3.12/site-packages/torchgen \
@@ -238,7 +246,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TMPDIR=/tmp
 
 WORKDIR /home/app/web
-USER app
+USER 999:999
 
 EXPOSE 8000
 

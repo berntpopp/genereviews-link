@@ -79,8 +79,14 @@ services:
       dockerfile: docker/Dockerfile
       target: production
     image: genereview-link:local
-    # Explicit, shell-free argv: one bounded data process, then exit.
-    command: ["genereview-link", "corpus", "restore"]
+    # Explicit, shell-free argv: one bounded data process, then exit. `init` materialises
+    # the reviewed embedding model and then restores the reviewed corpus. Both artifacts
+    # are staged under the ONE bind mount the fleet deployment gate permits, on the ONE
+    # service it permits it for, so they must be materialised by the same container.
+    command: ["genereview-link", "init"]
+    # Numeric, matching the uid/gid baked into the image. The deployment gate rejects a
+    # user name; a mismatch here leaves the model volume unwritable under cap_drop: ALL.
+    user: "999:999"
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,6 +108,8 @@ services:
       CORPUS_CHECKSUMS_SHA256: "${CORPUS_CHECKSUMS_SHA256:-}"
       CORPUS_RELEASE_TAG: "${CORPUS_RELEASE_TAG:-}"
       CORPUS_RESTORE_DIR: /var/lib/genereview/restore
+      MODEL_SEED_PATH: /seed/model
+      MODEL_DIR: /var/lib/genereview/models
     volumes:
       # A reviewed, pre-seeded artifact: read-only, never a system path.
       - type: bind
@@ -111,6 +119,12 @@ services:
       - type: volume
         source: genereview_restore_state
         target: /var/lib/genereview/restore
+      # Writable here, read-only in the server. Docker seeds an empty named volume from
+      # the image directory, including its app:app ownership, so uid 999 can write it
+      # without CAP_CHOWN and without relaxing the read-only rootfs.
+      - type: volume
+        source: genereview_model_data
+        target: /var/lib/genereview/models
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m,mode=1777
     read_only: true
@@ -154,10 +168,28 @@ services:
       MCP_ALLOWED_HOSTS: '["localhost","127.0.0.1","::1"]'
       GF_HEALTHCHECK_HOST: "${GF_HEALTHCHECK_HOST:-localhost}"
       DATABASE_URL: postgresql://${POSTGRES_USER:-genereview}:${POSTGRES_PASSWORD:-genereview}@postgres:5432/genereview
+      MODEL_DIR: /var/lib/genereview/models
+      # Belt and braces on the no-egress posture: even if a library were to reach for the
+      # Hub, these make it fail rather than silently fetch. The ONNX provider only ever
+      # opens the two verified files in MODEL_DIR.
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HOME: /var/lib/genereview/models
+
+    user: "999:999"
 
     depends_on:
       genereview-corpus-restore:
         condition: service_completed_successfully
+
+    volumes:
+      # Read-only: the serving process consumes the model and can never alter it. It is
+      # verified again in-process before load, so a volume tampered with between the init
+      # sidecar and startup is still refused.
+      - type: volume
+        source: genereview_model_data
+        target: /var/lib/genereview/models
+        read_only: true
 
     # Dev/local only — loopback-bound (127.0.0.1) so copying this file to a
     # server never publishes the unauthenticated backend on the public IP
@@ -216,3 +248,5 @@ volumes:
   genereview_pg_data:
   genereview_pg_run:
   genereview_restore_state:
+  # The reviewed embedding model, materialised once from the staged release asset.
+  genereview_model_data:

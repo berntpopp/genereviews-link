@@ -15,10 +15,16 @@ def test_embedding_accelerators_are_conflicting_explicit_extras() -> None:
         project = tomllib.load(handle)
 
     dependencies = project["project"]["dependencies"]
+    # `tokenizers` is deliberately NOT in this list: the serving image runs the pinned BGE
+    # weights through ONNX Runtime and needs the tokenizer. It is the PyTorch stack that
+    # must stay out -- torch's wheel alone is 526 MB, over the fleet content policy's
+    # 64 MiB per-file ceiling.
     assert all(
-        not str(item).startswith(("sentence-transformers", "tokenizers", "torch", "transformers"))
+        not str(item).startswith(("sentence-transformers", "torch", "transformers"))
         for item in dependencies
     )
+    assert any(str(item).startswith("onnxruntime") for item in dependencies)
+    assert any(str(item).startswith("tokenizers") for item in dependencies)
     extras = project["project"]["optional-dependencies"]
     assert any(str(item).startswith("torch>=2.13.0") for item in extras["cpu"])
     assert any(str(item).startswith("torch>=2.13.0") for item in extras["cu130"])

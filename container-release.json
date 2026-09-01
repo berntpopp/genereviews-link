@@ -41,12 +41,14 @@
         "role": "init",
         "egress": "internal",
         "writable_targets": [
-          "/var/lib/genereview/restore",
-          "/tmp"
+          "/tmp",
+          "/var/lib/genereview/models",
+          "/var/lib/genereview/restore"
         ],
         "read_only_targets": [
           "/seed"
-        ]
+        ],
+        "user": "999:999"
       }
     ]
   },

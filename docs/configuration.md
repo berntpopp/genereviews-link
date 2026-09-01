@@ -89,7 +89,9 @@ MCP_ALLOWED_ORIGINS='["https://genereviews-link.genefoundry.org"]'
 
 | Variable | Default | Notes |
 |---|---|---|
-| `GENEREVIEW_EMBEDDING_PROVIDER` | *(auto)* | `bge` (the model the corpus was embedded with) or `fake` (a deterministic stub). Auto ⇒ `bge` in production, otherwise `GENEREVIEW_EAGER_LOAD_BGE`. |
+| `GENEREVIEW_EMBEDDING_PROVIDER` | *(auto)* | `onnx` (pinned BGE weights via ONNX Runtime — what the serving image runs), `torch` (same weights via sentence-transformers; offline ingest only), or `fake` (a deterministic stub). Auto ⇒ `onnx` in production, otherwise `GENEREVIEW_EAGER_LOAD_BGE`. `bge` is accepted as the pre-ONNX spelling of `onnx`. |
+| `MODEL_SEED_PATH` | `/seed/model` | Staged model members inside the read-only seed bind. |
+| `MODEL_DIR` | `/var/lib/genereview/models` | Volume the sidecar materialises the model into; mounted read-only by the server. |
 | `GENEREVIEW_ALLOW_FAKE_EMBEDDINGS` | `false` | **Fail-closed guard.** Production refuses to start on the stub without this. |
 | `GENEREVIEW_EAGER_LOAD_BGE` | `false` | **Legacy.** Named as a loading strategy but selects real-vs-stub embeddings — which is how production ran on stub vectors unnoticed. Honoured outside production; `GENEREVIEW_EMBEDDING_PROVIDER` wins. |
 | `DEBUG_RANKING_ENABLED` | `false` | Expose the `/debug/ranking` diagnostic endpoint. |
@@ -123,7 +125,8 @@ See [data.md](data.md) for what these mean and which combination to pick.
 | `BUNDLE_BOOTSTRAP_DIR` | `/tmp/genereview-link` | Writable download/extraction scratch. |
 | `BUILD_LOCAL` | `false` | Run a full local ingest on first boot (15–30 min). |
 | `GITHUB_REPO` | `berntpopp/genereviews-link` | Release resolution for `BUNDLE_URL=latest`. |
-| `AUTO_PULL_RELEASES` | `false` | Start the hourly release watcher. |
+| `RELEASE_WATCHER_ENABLED` | `false` | Hourly corpus-staleness watcher; records into `public.genereview_refresh_log`. Never pulls. |
+| `AUTO_PULL_RELEASES` | `false` | **Refused at startup if true.** It named a pull that was never implemented (the branch was a bare `pass`). |
 
 ### Immutable corpus artifact (production Docker)
 

@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     INGEST_EMBED_WRITERS: int = 2
     INGEST_EMBED_DEVICE: str = "auto"
 
+    # --- Reviewed embedding model artifact ---
+    # The model is 127 MiB of weights: too large for the OCI image (the fleet content
+    # policy caps a single file at 64 MiB), so it arrives exactly as the corpus does --
+    # a digest-pinned release asset, staged read-only on the host, materialised once into
+    # a named volume by the no-egress init sidecar, and mounted read-only by the server.
+    MODEL_SEED_PATH: str = "/seed/model"
+    MODEL_DIR: str = "/var/lib/genereview/models"
+
     # --- Dense embedding provider ---
     # Which model answers query embeddings. "bge" is the pinned reference model the
     # corpus was embedded with; "fake" is a deterministic stub whose vectors are NOT
@@ -153,7 +161,15 @@ class Settings(BaseSettings):
     BUILD_LOCAL: bool = False
     # GITHUB_REPO: owner/repo for release resolution when BUNDLE_URL="latest".
     GITHUB_REPO: str = "berntpopp/genereviews-link"
-    # AUTO_PULL_RELEASES: start the hourly release watcher scheduler.
+    # RELEASE_WATCHER_ENABLED: run the hourly corpus-staleness watcher. It observes and
+    # records into public.genereview_refresh_log; it never pulls.
+    RELEASE_WATCHER_ENABLED: bool = False
+    # AUTO_PULL_RELEASES: REFUSED. The name promises an automatic corpus pull that was
+    # never implemented -- the branch was literally `pass` -- so for months this silently
+    # did nothing while reading as "corpus updates are handled". Pulling inside the
+    # serving process is also precisely what #97 removed. Setting this true is now a
+    # startup error rather than a no-op; use RELEASE_WATCHER_ENABLED for staleness
+    # reporting, and the reviewed data-release + init-sidecar path to update the corpus.
     AUTO_PULL_RELEASES: bool = False
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

@@ -159,8 +159,15 @@ async def _initialize_state(app: FastAPI) -> None:
     await _initialize_embeddings(app)
 
     # --- Release watcher scheduler ---
+    if settings.AUTO_PULL_RELEASES:
+        raise RuntimeError(
+            "AUTO_PULL_RELEASES is not implemented and never was: the branch behind it was "
+            "a bare `pass`, so it silently did nothing. The serving process has no restore "
+            "path by design (#97). Unset it, and set RELEASE_WATCHER_ENABLED=true to record "
+            "corpus staleness into public.genereview_refresh_log instead."
+        )
     app.state.scheduler = None
-    if settings.AUTO_PULL_RELEASES and pool is not None:
+    if settings.RELEASE_WATCHER_ENABLED and pool is not None:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         from genereview_link.ingest.scheduler import check_for_new_release
@@ -168,7 +175,7 @@ async def _initialize_state(app: FastAPI) -> None:
         app.state.scheduler = AsyncIOScheduler()
         app.state.scheduler.add_job(check_for_new_release, "cron", minute=17, args=[pool])
         app.state.scheduler.start()
-        logger.info("Release watcher scheduler started (fires at :17 each hour).")
+        logger.info("Corpus staleness watcher started (fires at :17 each hour).")
 
 
 async def _initialize_embeddings(app: FastAPI) -> None:

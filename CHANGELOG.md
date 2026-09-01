@@ -22,8 +22,25 @@ All notable changes to GeneReviews-Link are documented in this file.
   actually loaded, a query/corpus model mismatch is refused, and `/health` reports
   `degraded`. Added `GENEREVIEW_EMBEDDING_PROVIDER` as the honest name for the choice.
 - Logged the installed package version instead of a hardcoded `3.0.0`.
-- Documented that `BUNDLE_URL` has been inert since the no-egress restore sidecar landed,
-  and that the published image cannot currently run the real embedding model.
+- Documented that `BUNDLE_URL` has been inert since the no-egress restore sidecar landed.
+- Made real semantic search actually possible in the serving container. The image could not
+  carry PyTorch (526 MB wheel, over the fleet OCI content policy's 64 MiB per-file ceiling),
+  so it now runs the same pinned BGE weights through ONNX Runtime (largest file 30 MB,
+  +26 MB to the image) and the 127 MiB weights arrive as a digest-pinned artifact staged
+  beside the corpus and materialised once into a volume by the existing no-egress init
+  sidecar, mounted read-only by the server and re-verified before load. ONNX parity with
+  the sentence-transformers path that built the corpus is measured, not assumed: minimum
+  cosine 0.999999999796, maximum per-dimension delta 1.75e-07. Production now defaults to
+  the real model instead of requiring an opt-in to the stub.
+- Added `genereview-link model stage` and `genereview-link init`; the init sidecar now
+  materialises the model and then restores the corpus in one shell-free argv.
+- Declared explicit numeric `user: "999:999"` and a `volumes:` key on every deployed
+  service, so the rendered production compose satisfies the fleet deployment gate's
+  `_APP_REQUIRED` projection.
+- Replaced the release watcher's silent no-op. `AUTO_PULL_RELEASES` gated a branch that was
+  a bare `pass`, so nothing ever wrote `public.genereview_refresh_log` and the corpus sat at
+  2026-05-12 unnoticed. Setting it is now a startup error; `RELEASE_WATCHER_ENABLED` records
+  a `current` / `stale` / `no-active-corpus` / `upstream-unavailable` observation each hour.
 
 ## [5.1.6] - 2026-08-31
 

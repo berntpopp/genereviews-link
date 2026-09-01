@@ -32,6 +32,7 @@ def _settings(**overrides: Any) -> SimpleNamespace:
         "GENEREVIEW_ALLOW_FAKE_EMBEDDINGS": False,
         "GENEREVIEW_EAGER_LOAD_BGE": False,
         "INGEST_EMBED_DEVICE": "cpu",
+        "MODEL_DIR": "/var/lib/genereview/models",
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -53,12 +54,17 @@ def test_a_stub_is_never_real_even_wearing_the_reference_name() -> None:
 
 def test_production_defaults_to_the_real_model_without_any_configuration() -> None:
     """The safe path is the default exactly where being wrong is expensive."""
-    assert resolve_provider_kind(_settings(ENVIRONMENT="production")) == "bge"
+    assert resolve_provider_kind(_settings(ENVIRONMENT="production")) == "onnx"
 
 
 def test_development_keeps_the_historical_stub_default() -> None:
     assert resolve_provider_kind(_settings()) == "fake"
-    assert resolve_provider_kind(_settings(GENEREVIEW_EAGER_LOAD_BGE=True)) == "bge"
+    assert resolve_provider_kind(_settings(GENEREVIEW_EAGER_LOAD_BGE=True)) == "torch"
+
+
+def test_the_pre_onnx_spelling_still_selects_the_real_model() -> None:
+    """`bge` named the real model before there were two ways to run it."""
+    assert resolve_provider_kind(_settings(GENEREVIEW_EMBEDDING_PROVIDER="bge")) == "onnx"
 
 
 def test_the_explicit_setting_wins_over_the_legacy_flag() -> None:
@@ -67,7 +73,7 @@ def test_the_explicit_setting_wins_over_the_legacy_flag() -> None:
 
 
 def test_an_unknown_provider_name_is_refused_rather_than_guessed() -> None:
-    with pytest.raises(EmbeddingPolicyError, match="must be 'bge' or 'fake'"):
+    with pytest.raises(EmbeddingPolicyError, match="must be 'onnx', 'torch' or 'fake'"):
         resolve_provider_kind(_settings(GENEREVIEW_EMBEDDING_PROVIDER="bge-large"))
 
 
@@ -112,11 +118,11 @@ async def test_production_loads_the_real_model_at_startup_not_on_first_query(
         loaded.append(self.model_name)
 
     monkeypatch.setattr(SentenceTransformerEmbeddingProvider, "ensure_ready", _record)
-    settings = _settings(ENVIRONMENT="production", GENEREVIEW_EMBEDDING_PROVIDER="bge")
+    settings = _settings(ENVIRONMENT="production", GENEREVIEW_EMBEDDING_PROVIDER="torch")
 
     provider, kind = await build_embedding_provider(settings)
 
-    assert kind == "bge"
+    assert kind == "torch"
     assert loaded == [BGE_MODEL_NAME]
     assert provider_is_real(provider)
 
@@ -132,7 +138,7 @@ async def test_a_missing_embedding_runtime_is_a_startup_failure_in_production(
         raise EmbeddingProviderUnavailableError("sentence-transformers is not installed")
 
     monkeypatch.setattr(SentenceTransformerEmbeddingProvider, "ensure_ready", _unavailable)
-    settings = _settings(ENVIRONMENT="production", GENEREVIEW_EMBEDDING_PROVIDER="bge")
+    settings = _settings(ENVIRONMENT="production", GENEREVIEW_EMBEDDING_PROVIDER="torch")
 
     with pytest.raises(EmbeddingProviderUnavailableError):
         await build_embedding_provider(settings)
@@ -220,3 +226,33 @@ def test_the_health_endpoint_stays_healthy_with_a_real_provider() -> None:
     assert body["status"] == "healthy"
     assert body["embeddings"]["model"] == BGE_MODEL_NAME
     assert body["embeddings"]["dense_ranking"] == "enabled"
+
+
+@pytest.mark.asyncio
+async def test_production_selects_the_onnx_provider_and_verifies_the_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production runs the ONNX provider, and a missing model artifact stops startup."""
+    from genereview_link.retrieval.onnx_embeddings import (
+        ModelArtifactError,
+        OnnxBgeEmbeddingProvider,
+    )
+
+    settings = _settings(ENVIRONMENT="production", MODEL_DIR="/nonexistent/models")
+    assert resolve_provider_kind(settings) == "onnx"
+
+    seen: list[str] = []
+
+    def _record(self: OnnxBgeEmbeddingProvider) -> None:
+        seen.append(str(self.model_dir))
+
+    monkeypatch.setattr(OnnxBgeEmbeddingProvider, "ensure_ready", _record)
+    provider, kind = await build_embedding_provider(settings)
+    assert kind == "onnx"
+    assert seen == ["/nonexistent/models"]
+    assert provider_is_real(provider)
+
+    # ...and without the monkeypatch, the absent artifact is a hard startup failure.
+    monkeypatch.undo()
+    with pytest.raises(ModelArtifactError):
+        await build_embedding_provider(settings)

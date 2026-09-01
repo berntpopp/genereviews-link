@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tracemalloc
 from pathlib import Path
@@ -97,6 +98,15 @@ def test_production_seed_contract_preserves_current_pin_and_supports_direct_asse
     assert "SHA256SUMS" in docs and "legacy" in docs
 
 
+def _model_pins() -> dict[str, tuple[str, bytes]]:
+    """Synthetic model members plus their digests, so no 127 MiB download is needed."""
+    members = {}
+    for name in ("model.onnx", "tokenizer.json"):
+        payload = f"reviewed-{name}".encode()
+        members[name] = (hashlib.sha256(payload).hexdigest(), payload)
+    return members
+
+
 @pytest.mark.parametrize("mode", ["legacy", "direct"])
 def test_smoke_seed_preparation_stages_the_configured_release_assets(
     tmp_path: Path, mode: str
@@ -107,6 +117,24 @@ def test_smoke_seed_preparation_stages_the_configured_release_assets(
     script = docker / "ci-prepare-smoke.sh"
     script.write_bytes((ROOT / "docker/ci-prepare-smoke.sh").read_bytes())
     script.chmod(0o755)
+    # The hook also stages the embedding model, reading its digest pins from the reviewed
+    # identity module. That module is part of the contract under test, so the fake
+    # repository must carry it rather than the hook degrading when it is absent.
+    identity_dir = repository / "genereview_link/retrieval"
+    identity_dir.mkdir(parents=True)
+    _pins = _model_pins()
+    identity_source = (ROOT / "genereview_link/retrieval/model_identity.py").read_text()
+    identity_source = re.sub(
+        r'BGE_ONNX_FILE_SHA256 = "[0-9a-f]{64}"',
+        f'BGE_ONNX_FILE_SHA256 = "{_pins["model.onnx"][0]}"',
+        identity_source,
+    )
+    identity_source = re.sub(
+        r'"tokenizer\.json": "[0-9a-f]{64}"',
+        f'"tokenizer.json": "{_pins["tokenizer.json"][0]}"',
+        identity_source,
+    )
+    (identity_dir / "model_identity.py").write_text(identity_source)
     assets = tmp_path / "assets"
     assets.mkdir()
     dump = b"PGDMP reviewed direct archive\n"
@@ -115,11 +143,14 @@ def test_smoke_seed_preparation_stages_the_configured_release_assets(
     dump_digest = hashlib.sha256(dump).hexdigest()
     manifest_digest = hashlib.sha256(manifest).hexdigest()
     sums = f"{dump_digest}  corpus.dump\n{manifest_digest}  manifest.json\n".encode()
+    model_identity = _model_pins()
     for name, content in (
         ("corpus.dump", dump),
         ("manifest.json", manifest),
         ("SHA256SUMS", sums),
         ("corpus-bundle.tar.gz", bundle),
+        ("model.onnx", model_identity["model.onnx"][1]),
+        ("tokenizer.json", model_identity["tokenizer.json"][1]),
     ):
         (assets / name).write_bytes(content)
     data = (
@@ -167,6 +198,12 @@ def test_smoke_seed_preparation_stages_the_configured_release_assets(
     )
 
     assert result.returncode == 0, result.stderr
+    # The model members are staged into the same seed directory the sidecar binds, and the
+    # hook proves them against the in-repo pins before writing the smoke env.
+    assert (fixture_dir / "corpus-seed/model/model.onnx").is_file()
+    assert (fixture_dir / "corpus-seed/model/tokenizer.json").is_file()
+    assert "MODEL_SEED_PATH=/seed/model" in env_file.read_text()
+    assert "GENEREVIEW_EMBEDDING_PROVIDER=onnx" in env_file.read_text()
     if mode == "legacy":
         assert (fixture_dir / "corpus-seed/corpus-bundle.tar.gz").read_bytes() == bundle
         assert f"CORPUS_BUNDLE_SHA256={hashlib.sha256(bundle).hexdigest()}" in env_file.read_text()

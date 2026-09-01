@@ -24,6 +24,9 @@ code and this suite would not be a regression test at all.
 
 from __future__ import annotations
 
+import asyncio
+import os
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -238,3 +241,79 @@ async def test_a_real_provider_still_fuses_dense_ranks(
 
     assert body["_meta"]["diagnostics"]["rerank_used"] == "rrf"
     assert body["_meta"]["diagnostics"]["dense_candidate_count"] == len(DENSE_CANDIDATES)
+
+
+# --------------------------------------------------------------------------------------
+# The same fixture, driven by the REAL model.
+#
+# Proving the stub is refused is only half the claim. These prove the positive: with the
+# pinned BGE weights running through ONNX Runtime, dense fusion is ON and the correct
+# passage still ranks first -- so the fix restores semantic ranking rather than merely
+# disabling it. Needs a staged model (GENEREVIEW_TEST_MODEL_DIR); CI stages one in
+# docker/ci-prepare-smoke.sh.
+# --------------------------------------------------------------------------------------
+
+
+def _staged_model() -> Path:
+    configured = os.environ.get("GENEREVIEW_TEST_MODEL_DIR")
+    if not configured or not Path(configured).is_dir():
+        pytest.skip("set GENEREVIEW_TEST_MODEL_DIR to a staged model directory")
+    return Path(configured)
+
+
+async def _real_dense_candidates(query: str) -> list[dict[str, Any]]:
+    """Dense candidates scored by the real model, exactly as the repository would."""
+    from genereview_link.retrieval.onnx_embeddings import OnnxBgeEmbeddingProvider
+
+    provider = OnnxBgeEmbeddingProvider(_staged_model())
+    rows = [*LEXICAL_HITS]
+    passages = {r.passage.passage_id: r.passage.text for r in rows}
+    passages.update({pid: p.text for pid, p in DENSE_ONLY.items()})
+    ids = sorted(passages)
+
+    vectors = await provider.embed_passages([query, *(passages[i] for i in ids)])
+    query_vector, passage_vectors = vectors[0], vectors[1:]
+    scored = [
+        {
+            "passage_id": pid,
+            "dense_score": sum(a * b for a, b in zip(query_vector, vec, strict=True)),
+        }
+        for pid, vec in zip(ids, passage_vectors, strict=True)
+    ]
+    scored.sort(key=lambda row: -float(row["dense_score"]))
+    return scored
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_real_embeddings_rank_the_correct_passage_first(
+    app: FastAPI, fake_repo: GeneReviewRepository, http_client: AsyncClient
+) -> None:
+    """With the real model, dense fusion is ON and the correct passage still wins."""
+    candidates = await _real_dense_candidates(QUERY)
+    fake_repo._dense_candidates_filtered.return_value = candidates  # type: ignore[attr-defined]
+
+    app.state.embedding_provider_kind = "onnx"
+    app.state.embedding_provider_real = True
+    app.state.dense_ranking_enabled = True
+    app.state.dense_model_id = BGE_MODEL_NAME
+
+    body = await _search(http_client)
+    order = [hit["passage_id"] for hit in body["results"]]
+
+    assert body["_meta"]["diagnostics"]["rerank_used"] == "rrf", "dense fusion should be active"
+    assert order[0] == CORRECT_ID, (
+        f"real embeddings did not rank the correct passage first: {order}"
+    )
+
+
+@pytest.mark.slow
+def test_real_embeddings_score_the_relevant_passage_above_the_displacing_one() -> None:
+    """The underlying reason the route ranking is right: the model orders them correctly."""
+    rows = asyncio.run(_real_dense_candidates(QUERY))
+    scores = {row["passage_id"]: float(row["dense_score"]) for row in rows}
+
+    assert scores[CORRECT_ID] > scores[DISPLACING_ID], (
+        f"real model scored the unrelated MTHFR passage ({scores[DISPLACING_ID]:.4f}) at or "
+        f"above the correct CHEK2 passage ({scores[CORRECT_ID]:.4f})"
+    )

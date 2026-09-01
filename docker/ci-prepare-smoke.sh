@@ -92,4 +92,41 @@ case "$asset_name" in
     ;;
 esac
 
-echo "prepared ${release_tag} ${asset_name} at ${seed_dir}"
+# The embedding model is staged into the SAME seed directory: the deployment gate grants
+# exactly one bind mount, so both artifacts reach the sidecar through it. Its bytes are
+# proven against the digests committed in genereview_link/retrieval/model_identity.py --
+# the download host is not trusted here either.
+model_dir="$seed_dir/model"
+mkdir -p "$model_dir"
+identity="$(dirname "$0")/../genereview_link/retrieval/model_identity.py"
+# stdlib only: the runner has python3 but need not have this project installed.
+eval "$(python3 - "$identity" <<'PYEOF'
+import ast, sys, shlex
+tree = ast.parse(open(sys.argv[1]).read())
+const = {}
+for node in tree.body:
+    if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+        const[node.targets[0].id] = node.value.value
+    if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
+        const[node.targets[0].id] = {k.value: v.value for k, v in zip(node.value.keys, node.value.values)
+                                     if isinstance(v, ast.Constant)}
+for name in ("BGE_MODEL_NAME", "BGE_MODEL_REVISION", "BGE_ONNX_FILE_SHA256"):
+    print(f"{name}={shlex.quote(str(const[name]))}")
+print(f"BGE_TOKENIZER_FILE_SHA256={shlex.quote(const['BGE_MODEL_FILES']['tokenizer.json'])}")
+PYEOF
+)"
+for spec in "onnx/model.onnx:model.onnx:$BGE_ONNX_FILE_SHA256" \
+            "tokenizer.json:tokenizer.json:$BGE_TOKENIZER_FILE_SHA256"; do
+  src="${spec%%:*}"; rest="${spec#*:}"; name="${rest%%:*}"; want="${rest#*:}"
+  [[ "$want" =~ ^[0-9a-f]{64}$ ]] || { echo "model identity pin is not a sha256" >&2; exit 1; }
+  curl -fsSL --proto '=https' --tlsv1.2 --max-time 900 --max-filesize 536870912 \
+    -o "$model_dir/$name" \
+    "https://huggingface.co/${BGE_MODEL_NAME}/resolve/${BGE_MODEL_REVISION}/${src}"
+  echo "${want}  ${model_dir}/${name}" | sha256sum -c -
+done
+{
+  echo "MODEL_SEED_PATH=/seed/model"
+  echo "GENEREVIEW_EMBEDDING_PROVIDER=onnx"
+} >> "$GF_SMOKE_ENV_FILE"
+
+echo "prepared ${release_tag} ${asset_name} at ${seed_dir} (model staged at ${model_dir})"

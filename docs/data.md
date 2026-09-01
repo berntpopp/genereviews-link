@@ -128,12 +128,61 @@ the **same** model. The corpus is embedded with `BAAI/bge-small-en-v1.5` (revisi
 `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a`, 384-d), recorded in
 `public.genereview_active_embedding`.
 
-`FakeEmbeddingProvider` is a deterministic stub for tests: it hashes text into a 384-d
-vector. Its output is uncorrelated with real BGE vectors, so it is **not** a lightweight
-approximation — fusing its nearest neighbours into reciprocal-rank fusion promotes
-arbitrary passages over genuinely matching lexical hits.
+### How the model reaches the container
 
-The server therefore:
+The weights are 127 MiB, and the fleet OCI content policy caps any single file in an image
+at 64 MiB. PyTorch is further out of reach: its wheel alone is 526 MB. So the serving image
+carries **ONNX Runtime** (largest file 30 MB) and the weights arrive the way every other
+large artifact in this fleet arrives — as a digest-pinned artifact staged on the host and
+materialised once into a named volume by the no-egress init sidecar:
+
+```
+  workstation / CI                host                        containers
+  ────────────────                ────                        ──────────
+  genereview-link model stage ──▶ /srv/genefoundry/           ┌ genereview-corpus-restore
+    (verifies every byte against    genereviews-seed/model/   │   /seed        (bind, ro)
+     the digests pinned in            model.onnx              │   → verifies, copies
+     model_identity.py)               tokenizer.json          │   /var/lib/genereview/models
+                                                              └   (volume, rw)
+                                                              ┌ genereview-link
+                                                              │   /var/lib/genereview/models
+                                                              └   (volume, **ro**) → verifies again
+```
+
+Nothing is downloaded at runtime. The artifact is proven twice — once by the sidecar before
+it is written, once by the server before the ONNX session opens — so a substituted model
+never reaches the parser at either end. `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`
+make any stray Hub call fail rather than silently fetch.
+
+`model.onnx` is the **same weights** as `model.safetensors`, and parity with the
+sentence-transformers path that built the corpus is measured, not assumed: minimum cosine
+`0.999999999796`, maximum per-dimension delta `1.75e-07`
+(`tests/unit/test_onnx_embedding_parity.py`). CLS pooling, L2 normalisation, the 512-token
+limit and the query prefix are pinned in reviewed code — the artifact supplies tensors, and
+can never change how its own output is computed.
+
+### Staging it
+
+```bash
+# once per model pin, on a workstation or in CI
+genereview-link model stage --output /srv/genefoundry/genereviews-seed/model
+```
+
+It refuses to write anything whose digest does not match
+`genereview_link/retrieval/model_identity.py`, so the download host is not trusted. CI does
+exactly this in `docker/ci-prepare-smoke.sh`.
+
+### Provider selection
+
+| `GENEREVIEW_EMBEDDING_PROVIDER` | What runs | Where |
+|---|---|---|
+| `onnx` *(production default)* | the pinned BGE weights under ONNX Runtime | serving image |
+| `torch` | the same weights under sentence-transformers | offline ingest only (`--extra cpu`) |
+| `fake` | a deterministic stub; vectors **not** comparable with the corpus | tests / local dev |
+
+The stub is not a lightweight approximation. Fusing its nearest neighbours into
+reciprocal-rank fusion promotes arbitrary passages over genuinely matching lexical hits, so
+the server:
 
 - refuses to start in production on the stub unless `GENEREVIEW_ALLOW_FAKE_EMBEDDINGS=true`;
 - disables the dense path and reports `rerank_used: "lexical"` whenever the live provider
@@ -143,16 +192,28 @@ The server therefore:
 - refuses to serve when a real provider disagrees with the corpus's recorded model;
 - reports `status: "degraded"` from `/health` while any non-reference provider is active.
 
-> [!WARNING]
-> The published container image does **not** currently ship the BGE runtime. `torch`,
-> `sentence-transformers`, `transformers`, `tokenizers` and `safetensors` are removed in
-> `docker/Dockerfile`, and the model weights are not baked in. Until an image that carries
-> the model is released, a production deployment must set
-> `GENEREVIEW_ALLOW_FAKE_EMBEDDINGS=true` and knowingly serve **lexical-only** search.
-> Baking the model in is blocked by the fleet OCI content policy, whose `max_file_bytes`
-> is hard-capped at 64 MiB: `model.safetensors` at the pinned revision is 133,466,304
-> bytes (127.3 MiB), and the ONNX export is 133,093,490 bytes. Raising that ceiling is a
-> decision for `genefoundry-router`, not this repository.
+Measured on the built image, under `--read-only --cap-drop ALL --network none`: verify +
+load **310 ms**, first query **12 ms**, warm query **6.9 ms**.
+
+## Corpus freshness
+
+`chapter_last_updated` is carried on every passage and search hit. An hourly watcher
+(`RELEASE_WATCHER_ENABLED=true`) compares the newest published corpus release with the
+pinned one and records the result in `public.genereview_refresh_log`:
+
+```sql
+select check_time, decision, detail->>'latest_release_tag'
+from public.genereview_refresh_log order by check_time desc limit 5;
+```
+
+`decision` is one of `current`, `stale`, `no-active-corpus`, `upstream-unavailable`. It
+never pulls: a `stale` row is a prompt to update `container-release.json`, stage the new
+asset, and redeploy.
+
+`AUTO_PULL_RELEASES` is **refused at startup**. It named an automatic pull that was never
+implemented — the branch behind it was a bare `pass` — so for months it read as "corpus
+updates are handled" while doing nothing, which is why `genereview_refresh_log` had zero
+rows and the corpus sat at 2026-05-12 unnoticed.
 
 ## Ingest pipeline (maintainer)
 
@@ -278,8 +339,4 @@ also accepts the exact-eight release directly: its read-only seed directory cont
 final readiness artifact identity both mean the verified `corpus.dump` digest. A pin changes only
 after the immutable release exists; source preparation never invents an unavailable asset.
 
-## Corpus freshness
-
-`chapter_last_updated` is carried on every passage and search hit — surface it so a reader
-can judge freshness. `scripts/refresh_chapter_metadata_dates.py` refreshes those dates
-against NCBI.
+`scripts/refresh_chapter_metadata_dates.py` refreshes chapter dates against NCBI.

@@ -34,7 +34,14 @@ from genereview_link.retrieval.embeddings import (
 )
 from genereview_link.retrieval.model_identity import BGE_DIM, BGE_MODEL_NAME
 
-ProviderKind = Literal["bge", "fake"]
+#: ``onnx``  - the pinned BGE weights under ONNX Runtime. What the serving image runs.
+#: ``torch`` - the same weights under sentence-transformers. Offline ingest/embedding only;
+#:             PyTorch cannot fit the serving image's per-file size ceiling.
+#: ``fake``  - a deterministic stub for tests. Not comparable with the corpus vectors.
+ProviderKind = Literal["onnx", "torch", "fake"]
+
+#: Accepted spellings, including the pre-ONNX alias.
+_PROVIDER_ALIASES = {"onnx": "onnx", "bge": "onnx", "torch": "torch", "fake": "fake"}
 
 #: Environments in which a stub provider is a hard error rather than a convenience.
 PRODUCTION_ENVIRONMENTS = frozenset({"production", "prod"})
@@ -81,15 +88,17 @@ def resolve_provider_kind(settings: Any) -> ProviderKind:
     test suite need no embedding stack.
     """
     configured = str(getattr(settings, "GENEREVIEW_EMBEDDING_PROVIDER", "")).strip().lower()
-    if configured in {"bge", "fake"}:
-        return configured  # type: ignore[return-value]
     if configured:
-        raise EmbeddingPolicyError(
-            f"GENEREVIEW_EMBEDDING_PROVIDER must be 'bge' or 'fake', not {configured!r}"
-        )
+        resolved = _PROVIDER_ALIASES.get(configured)
+        if resolved is None:
+            raise EmbeddingPolicyError(
+                "GENEREVIEW_EMBEDDING_PROVIDER must be 'onnx', 'torch' or 'fake', "
+                f"not {configured!r}"
+            )
+        return resolved  # type: ignore[return-value]
     if is_production(settings.ENVIRONMENT):
-        return "bge"
-    return "bge" if settings.GENEREVIEW_EAGER_LOAD_BGE else "fake"
+        return "onnx"
+    return "torch" if settings.GENEREVIEW_EAGER_LOAD_BGE else "fake"
 
 
 async def build_embedding_provider(settings: Any) -> tuple[EmbeddingProvider, ProviderKind]:
@@ -116,10 +125,18 @@ async def build_embedding_provider(settings: Any) -> tuple[EmbeddingProvider, Pr
             )
         return FakeEmbeddingProvider(dim=BGE_DIM), "fake"
 
-    provider = SentenceTransformerEmbeddingProvider(device=settings.INGEST_EMBED_DEVICE)
+    provider: EmbeddingProvider
+    if kind == "onnx":
+        from genereview_link.retrieval.onnx_embeddings import OnnxBgeEmbeddingProvider
+
+        provider = OnnxBgeEmbeddingProvider(settings.MODEL_DIR)
+    else:
+        provider = SentenceTransformerEmbeddingProvider(device=settings.INGEST_EMBED_DEVICE)
     if is_production(settings.ENVIRONMENT):
+        # Verify and load now. A missing or substituted model artifact must stop the
+        # deployment, not surface on the first search after it reports itself healthy.
         await asyncio.to_thread(provider.ensure_ready)
-    return provider, "bge"
+    return provider, kind
 
 
 def assert_corpus_model_agreement(provider: object, corpus_model: str | None) -> None:
