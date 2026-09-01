@@ -127,6 +127,7 @@ See [data.md](data.md) for what these mean and which combination to pick.
 | `GITHUB_REPO` | `berntpopp/genereviews-link` | Release resolution for `BUNDLE_URL=latest`. |
 | `RELEASE_WATCHER_ENABLED` | `false` | Hourly corpus-staleness watcher; records into `public.genereview_refresh_log`. Never pulls. |
 | `AUTO_PULL_RELEASES` | `false` | **Refused at startup if true.** It named a pull that was never implemented (the branch was a bare `pass`). |
+| `CORPUS_MAX_AGE_DAYS` | `90` | `GET /health` reports `corpus.stale` (and overall `status: "degraded"`) once the active corpus's `data_as_of` is older than this many days. Visibility only — it does not refresh anything. |
 
 ### Immutable corpus artifact (production Docker)
 

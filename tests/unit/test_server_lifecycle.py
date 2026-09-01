@@ -27,6 +27,7 @@ async def test_initialize_state_with_empty_database_url(monkeypatch: pytest.Monk
     assert app.state.pool is None
     assert app.state.repository is None
     assert app.state.corpus_version is None
+    assert app.state.corpus_data_as_of is None
     assert app.state.gene_index is None
     assert isinstance(app.state.embedder, FakeEmbeddingProvider)
     assert getattr(app.state, "scheduler", None) is None

@@ -213,7 +213,34 @@ asset, and redeploy.
 `AUTO_PULL_RELEASES` is **refused at startup**. It named an automatic pull that was never
 implemented — the branch behind it was a bare `pass` — so for months it read as "corpus
 updates are handled" while doing nothing, which is why `genereview_refresh_log` had zero
-rows and the corpus sat at 2026-05-12 unnoticed.
+rows and the corpus sat at 2026-05-12 unnoticed (#145).
+
+The watcher above only fires hourly, only when explicitly enabled, and only into a log
+table — none of which pages anyone. `GET /health` reports the same fact more directly, on
+every probe: `corpus.data_as_of` is `genereview_corpus_version.ingest_finished_at` for the
+active corpus, restored verbatim from the release bundle, so it is the exact moment that
+bundle's content was finalised upstream. `corpus.stale` (and, once true, an overall
+`status: "degraded"`) flips once `corpus.age_days` exceeds `CORPUS_MAX_AGE_DAYS` (default
+`90`) — no watcher, comparison, or upstream reachability required:
+
+```jsonc
+// GET /health
+{
+  "status": "degraded",
+  "corpus": {
+    "version": "2026-05-12-r1",
+    "data_as_of": "2026-05-12T09:14:03+00:00",
+    "age_days": 113,
+    "max_age_days": 90,
+    "stale": true
+  }
+}
+```
+
+An app assembled outside the normal server lifespan (unit tests, embedded use) reports
+`corpus: null`-shaped facts (`version`/`data_as_of`/`age_days` all `None`) with
+`stale: false` — absence of state is not evidence of staleness, mirroring how
+`embedding_health` treats a never-initialised provider.
 
 ## Ingest pipeline (maintainer)
 

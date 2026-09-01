@@ -171,6 +171,14 @@ class Settings(BaseSettings):
     # startup error rather than a no-op; use RELEASE_WATCHER_ENABLED for staleness
     # reporting, and the reviewed data-release + init-sidecar path to update the corpus.
     AUTO_PULL_RELEASES: bool = False
+    # CORPUS_MAX_AGE_DAYS: /health reports `degraded` once the active corpus's
+    # `data_as_of` (genereview_corpus_version.ingest_finished_at, restored verbatim from
+    # the release bundle) is older than this many days. This is a visibility signal only
+    # -- see genereview_link/corpus/freshness.py -- nothing here refreshes the corpus; the
+    # serving process has no restore path by design (#97). Without this, a frozen corpus
+    # reports plain "healthy" indefinitely, which is exactly how #145 went unnoticed for
+    # ~3.7 months.
+    CORPUS_MAX_AGE_DAYS: int = 90
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
