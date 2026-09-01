@@ -9,6 +9,16 @@ from typing import Literal
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _OBJECT_ID = re.compile(r"^[0-9a-f]{64}$")
+EXPECTED_RELEASE_ASSETS = (
+    "corpus.dump",
+    "manifest.json",
+    "SHA256SUMS",
+    "rights-record.json",
+    "rights-evidence.json",
+    "terms-snapshot.html",
+    "seal-manifest.json",
+    "publisher-tool.whl",
+)
 
 
 class ReleaseTransactionError(ValueError):
@@ -22,10 +32,11 @@ class ReleasePlan:
 
 
 def _expected_assets(value: dict[str, dict[str, object]]) -> dict[str, tuple[int, str]]:
-    expected: dict[str, tuple[int, str]] = {}
-    if len(value) != 8:
+    if set(value) != set(EXPECTED_RELEASE_ASSETS):
         raise ReleaseTransactionError("expected publication asset set is not exact")
-    for name, facts in value.items():
+    expected: dict[str, tuple[int, str]] = {}
+    for name in EXPECTED_RELEASE_ASSETS:
+        facts = value[name]
         if (
             not isinstance(name, str)
             or not name
@@ -148,6 +159,7 @@ def verify_annotated_tag(
 
 
 __all__ = [
+    "EXPECTED_RELEASE_ASSETS",
     "ReleasePlan",
     "ReleaseTransactionError",
     "annotated_tag_message",

@@ -35,7 +35,28 @@ RUN uv sync --frozen --no-dev --active --extra cpu
 # --- Prepared Stage ---
 FROM python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217 AS prepared
 
-COPY --from=pg18-client /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc /usr/share/keyrings/pgdg.asc
+# Keep the PostgreSQL client ABI, binaries, and versioned runtime data together with the
+# exact digest-pinned PG18/pgvector build stage.  Production must not resolve a mutable
+# package repository or key during image construction.
+COPY --from=pg18-client /usr/lib/postgresql/18/bin/pg_dump /usr/local/lib/postgresql/18/bin/pg_dump
+COPY --from=pg18-client /usr/lib/postgresql/18/bin/pg_restore /usr/local/lib/postgresql/18/bin/pg_restore
+COPY --from=pg18-client /usr/lib/postgresql/18/bin/psql /usr/local/lib/postgresql/18/bin/psql
+COPY --from=pg18-client /usr/share/postgresql/18 /usr/share/postgresql/18
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libpq.so.5* /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libldap-2.5.so.0 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/liblber-2.5.so.0 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libsasl2.so.2 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libgnutls.so.30 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libkeyutils.so.1 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libidn2.so.0 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libunistring.so.2 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libtasn1.so.6 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libkrb5.so.3 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libk5crypto.so.3 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libcom_err.so.2 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libkrb5support.so.0 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libgssapi_krb5.so.2 /usr/lib/x86_64-linux-gnu/
+COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libp11-kit.so.0 /usr/lib/x86_64-linux-gnu/
 
 # Release identity is supplied by the central container-release workflow.
 ARG APP_VERSION=0.0.0
@@ -61,12 +82,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     GENEREVIEW_LINK_PORT=8000 \
     TMPDIR=/tmp
 
-RUN test "$(sha256sum /usr/share/keyrings/pgdg.asc | cut -d' ' -f1)" = \
-        0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76 \
-    && printf '%s\n' \
-        'deb [signed-by=/usr/share/keyrings/pgdg.asc] https://apt.postgresql.org/pub/repos/apt trixie-pgdg main' \
-        > /etc/apt/sources.list.d/pgdg.list \
-    && apt-get update \
+RUN apt-get update \
     && apt-get install -y --only-upgrade --no-install-recommends \
     openssl \
     libssl3t64 \
@@ -74,8 +90,6 @@ RUN test "$(sha256sum /usr/share/keyrings/pgdg.asc | cut -d' ' -f1)" = \
     && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
-    libpq5=18.4-1.pgdg13+1 \
-    postgresql-client-18=18.4-1.pgdg13+1 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
@@ -162,13 +176,11 @@ RUN find / -xdev -perm /6000 -exec chmod a-s '{}' + \
     && test -z "$(find / -xdev -perm /6000 -print -quit)"
 
 RUN actual="$(find / -xdev -type f -links +1 -printf '%i %p\n' | sort -k2,2)" \
-    && expected="$(printf '%s %s\n%s %s\n%s %s\n%s %s\n' \
+    && expected="$(printf '%s %s\n%s %s\n' \
          "$(stat -c '%i' /usr/bin/perl)" /usr/bin/perl \
-         "$(stat -c '%i' /usr/bin/perl5.40.1)" /usr/bin/perl5.40.1 \
-         "$(stat -c '%i' /usr/bin/perlbug)" /usr/bin/perlbug \
-         "$(stat -c '%i' /usr/bin/perlthanks)" /usr/bin/perlthanks | sort -k2,2)" \
+         "$(stat -c '%i' /usr/bin/perl5.40.1)" /usr/bin/perl5.40.1 | sort -k2,2)" \
     && { test "$actual" = "$expected" || { printf 'unexpected hardlinks:\n%s\n' "$actual"; exit 1; }; } \
-    && rm -f /usr/bin/perl5.40.1 /usr/bin/perlthanks
+    && rm -f /usr/bin/perl5.40.1
 
 # --- Production Stage ---
 FROM scratch AS production

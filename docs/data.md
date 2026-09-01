@@ -207,6 +207,16 @@ rechecks that same ETag, creates/checks the immutable tag only at the final seri
 the verified ETag as `If-Match`. Publication automatically dispatches the external verifier with the
 exact release ID/tag/target/assets tuple; closure requires its successful acceptance artifact.
 
+The repository owner supplied an affirmative redistribution determination dated 2026-09-01;
+publication remains bound to that durable evidence, the exact source/artifact digests, and required
+University of Washington attribution. The current production pin remains the truthful legacy tar
+release until the authorized replacement is actually published and verified. The restore bridge
+also accepts the exact-eight release directly: its read-only seed directory contains exactly
+`corpus.dump`, `manifest.json`, and `SHA256SUMS`, and `container-release.json` sets `asset_name` to
+`corpus.dump` while anchoring all three asset digests. In that direct shape, `data.digest` and the
+final readiness artifact identity both mean the verified `corpus.dump` digest. A pin changes only
+after the immutable release exists; source preparation never invents an unavailable asset.
+
 ## Corpus freshness
 
 `chapter_last_updated` is carried on every passage and search hit — surface it so a reader

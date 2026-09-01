@@ -198,6 +198,7 @@ def test_bundle_with_the_reviewed_digest_is_extracted(tmp_path: Path) -> None:
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     bundle = extract_bundle(archive, tmp_path / "out", expected_sha256=digest)
     assert bundle.dump.is_file()
+    assert bundle.dump_sha256 == hashlib.sha256(b"PGDMP-fake").hexdigest()
     assert bundle.corpus_version == "2026-05-10-r6"
 
 

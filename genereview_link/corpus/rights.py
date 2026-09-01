@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import cast
 
 MAX_METADATA_BYTES = 1 << 20
+RIGHTS_ATTRIBUTION = (
+    "GeneReviews® content © 1993–present University of Washington; "  # noqa: RUF001
+    "sourced from NCBI Bookshelf — GeneReviews. "
+    "Cite per https://www.ncbi.nlm.nih.gov/books/NBK138602/."
+)
 RIGHTS_FIELDS = frozenset(
     {
         "artifact_sha256",
@@ -135,7 +140,7 @@ def verify_rights_record(
         raise RightsError("rights record requires distinct responsible reviewer and authority")
     if record["permitted_asset_use"] != "immutable research corpus artifact":
         raise RightsError("rights record permitted_asset_use is not the reviewed value")
-    if record["attribution"] != "GeneReviews":
+    if record["attribution"] != RIGHTS_ATTRIBUTION:
         raise RightsError("rights record attribution is not the reviewed value")
     for name in ("source_sha256", "artifact_sha256", "terms_sha256", "evidence_sha256"):
         if not SHA256_RE.fullmatch(record[name]):

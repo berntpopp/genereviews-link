@@ -92,12 +92,16 @@ class Settings(BaseSettings):
     # by the no-egress `genereview-corpus-restore` init sidecar, into the PostgreSQL
     # volume -- never by the serving application, which has no restore path at all.
     #
-    # CORPUS_SEED_PATH: the reviewed bundle, read-only, already on disk. The restoring
-    # container has no route off the internal network, so it can never fetch it itself.
-    CORPUS_SEED_PATH: str = "/seed/corpus.tar.gz"
-    # CORPUS_BUNDLE_SHA256: the exact digest committed in this repository. It is the trust
-    # root: the bytes are proven before the archive is opened. Empty fails closed.
+    # CORPUS_SEED_PATH: either the reviewed legacy bundle file or a directory containing
+    # the exact three direct release assets. The restoring container has no route off the
+    # internal network, so it can never fetch them itself.
+    CORPUS_SEED_PATH: str = "/seed/corpus-bundle.tar.gz"
+    # The currently deployed legacy bundle digest. For a direct release, all three direct
+    # asset identities below are required instead. Empty identities fail closed.
     CORPUS_BUNDLE_SHA256: str = ""
+    CORPUS_DUMP_SHA256: str = ""
+    CORPUS_MANIFEST_SHA256: str = ""
+    CORPUS_CHECKSUMS_SHA256: str = ""
     # CORPUS_RESTORE_DIR: writable scratch (a named volume) for archive expansion.
     CORPUS_RESTORE_DIR: str = "/var/lib/genereview/restore"
     # RESTORE_DATABASE_URL: connection for the RESTORE only, as an unprivileged role that

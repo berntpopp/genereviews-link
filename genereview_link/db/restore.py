@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import IO, Any
 from urllib.parse import unquote, urlsplit
 
+from genereview_link.db.direct_seed import DirectSeedError, extract_direct_seed
+
 __all__ = [
     "ALLOWED_ENTRY_TYPES",
     "CORPUS_TABLES",
@@ -122,6 +124,7 @@ class CorpusBundle:
     root: Path
     dump: Path
     manifest: dict[str, object]
+    dump_sha256: str
 
     @property
     def corpus_version(self) -> str:
@@ -144,7 +147,14 @@ def _sha256_stream(handle: IO[bytes]) -> str:
     return digest.hexdigest()
 
 
-def extract_bundle(archive: Path, destination: Path, *, expected_sha256: str) -> CorpusBundle:
+def extract_bundle(
+    archive: Path,
+    destination: Path,
+    *,
+    expected_sha256: str,
+    expected_manifest_sha256: str | None = None,
+    expected_checksums_sha256: str | None = None,
+) -> CorpusBundle:
     """Verify and expand the corpus bundle into ``destination``.
 
     The committed digest is the trust root: the bytes are proven BEFORE the archive is
@@ -153,7 +163,24 @@ def extract_bundle(archive: Path, destination: Path, *, expected_sha256: str) ->
     Raises:
         ArchivePolicyError: the digest, member set, or per-member checksums do not match.
     """
-    if not expected_sha256 or len(expected_sha256) != 64:
+    if archive.is_dir() and not archive.is_symlink():
+        try:
+            direct = extract_direct_seed(
+                archive,
+                destination,
+                expected_dump_sha256=expected_sha256,
+                expected_manifest_sha256=expected_manifest_sha256,
+                expected_checksums_sha256=expected_checksums_sha256,
+            )
+        except DirectSeedError as error:
+            raise ArchivePolicyError(str(error)) from error
+        return CorpusBundle(
+            root=direct.root,
+            dump=direct.dump,
+            manifest=direct.manifest,
+            dump_sha256=direct.dump_sha256,
+        )
+    if not expected_sha256 or len(expected_sha256.removeprefix("sha256:")) != 64:
         raise ArchivePolicyError("an exact 64-character corpus bundle SHA-256 is required")
     actual = sha256_file(archive)
     if actual != expected_sha256.lower():
@@ -209,7 +236,15 @@ def extract_bundle(archive: Path, destination: Path, *, expected_sha256: str) ->
     dump = destination / "corpus.dump"
     if not dump.is_file():
         raise ArchivePolicyError("the bundle carries no corpus.dump archive")
-    return CorpusBundle(root=destination, dump=dump, manifest=manifest)
+    dump_digest = checksums.get("corpus.dump")
+    if not isinstance(dump_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", dump_digest):
+        raise ArchivePolicyError("the bundle manifest has no exact corpus.dump digest")
+    return CorpusBundle(
+        root=destination,
+        dump=dump,
+        manifest=manifest,
+        dump_sha256=dump_digest,
+    )
 
 
 def read_archive_entries(dump: Path, *, file_descriptor: int | None = None) -> list[str]:

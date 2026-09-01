@@ -477,6 +477,22 @@ jobs:
           printf 'RIGHTS_DIGEST=%s\n' "$rights_digest" >> "$GITHUB_ENV"
           printf 'PUBLISHER_ENV=%s\n' "$publisher_env" >> "$GITHUB_ENV"
           printf 'RIGHTS_BUNDLE=%s\n' "$rights_bundle" >> "$GITHUB_ENV"
+      - name: Stage exact sealed publication inputs for attestation
+        run: |
+          set -euo pipefail
+          handoff="$RUNNER_TEMP/sealed/handoffs/$OBJECT_ID"
+          mkdir -m 0700 -- "$RUNNER_TEMP/publication-attestation"
+          cp -- "$handoff/corpus.dump" "$handoff/seal-manifest.json" \
+            "$handoff/$PUBLISHER_WHEEL_NAME" "$RUNNER_TEMP/publication-attestation/"
+          mv -- "$RUNNER_TEMP/publication-attestation/$PUBLISHER_WHEEL_NAME" \
+            "$RUNNER_TEMP/publication-attestation/publisher-tool.whl"
+      - name: Attest exact sealed publication inputs
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/publication-attestation/corpus.dump
+            ${{ runner.temp }}/publication-attestation/seal-manifest.json
+            ${{ runner.temp }}/publication-attestation/publisher-tool.whl
       - name: Four-state immutable publication gate
         run: |
           set -euo pipefail
@@ -636,9 +652,11 @@ jobs:
           verifier.prepare_publish_handoff(Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4]))
           PY
             )
-            timeout 2m gh attestation verify "$remote/corpus.dump" --repo "$GH_REPO" \
-              --signer-workflow "$GH_REPO/.github/workflows/corpus-data-release.yml" \
-              --source-ref refs/heads/main --source-digest "$build_revision"
+            for subject in "$remote/corpus.dump" "$remote/seal-manifest.json" "$remote/publisher-tool.whl"; do
+              timeout 2m gh attestation verify "$subject" --repo "$GH_REPO" \
+                --signer-workflow "$GH_REPO/.github/workflows/corpus-data-release.yml" \
+                --source-ref refs/heads/main --source-digest "$build_revision"
+            done
           }
 
           immutable_releases="$RUNNER_TEMP/immutable-releases.json"

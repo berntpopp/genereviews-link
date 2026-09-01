@@ -11,8 +11,20 @@ from genereview_link.corpus.release_transaction import (
 )
 
 EXPECTED = {
-    f"asset-{index}": {"size": index, "digest": f"sha256:{index:x}" * 1 + "0" * 63}
-    for index in range(1, 9)
+    name: {"size": index, "digest": f"sha256:{index:x}" + "0" * 63}
+    for index, name in enumerate(
+        (
+            "corpus.dump",
+            "manifest.json",
+            "SHA256SUMS",
+            "rights-record.json",
+            "rights-evidence.json",
+            "terms-snapshot.html",
+            "seal-manifest.json",
+            "publisher-tool.whl",
+        ),
+        1,
+    )
 }
 MARKERS = ("rights-record-sha256: " + "1" * 64, "terms-sha256: " + "2" * 64)
 

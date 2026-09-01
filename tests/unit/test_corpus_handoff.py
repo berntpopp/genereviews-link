@@ -26,6 +26,12 @@ from genereview_link.corpus.handoff import (
 )
 from genereview_link.retrieval.model_identity import BGE_MODEL_FILES
 
+RIGHTS_ATTRIBUTION = (
+    "GeneReviews® content © 1993–present University of Washington; "  # noqa: RUF001
+    "sourced from NCBI Bookshelf — GeneReviews. "
+    "Cite per https://www.ncbi.nlm.nih.gov/books/NBK138602/."
+)
+
 
 @pytest.fixture(autouse=True)
 def _valid_postgres_archive_policy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -447,7 +453,7 @@ def test_rights_record_binds_affirmative_decision_to_exact_object(tmp_path: Path
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
         "permitted_asset_use": "immutable research corpus artifact",
-        "attribution": "GeneReviews",
+        "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "https://example.org/rights-record",
         "source_sha256": "a" * 64,
         "artifact_sha256": hashlib.sha256(
@@ -458,6 +464,11 @@ def test_rights_record_binds_affirmative_decision_to_exact_object(tmp_path: Path
     rights = tmp_path / "rights.json"
     _write_rights(rights, record, tmp_path)
     assert verify_rights_record(rights, sealed.object_id)["decision"] == "affirmative"
+    record["attribution"] = "GeneReviews"
+    _write_rights(rights, record, tmp_path)
+    with pytest.raises(HandoffError, match="attribution"):
+        verify_rights_record(rights, sealed.object_id)
+    record["attribution"] = RIGHTS_ATTRIBUTION
     record["decision"] = "pending"
     _write_rights(rights, record, tmp_path)
     with pytest.raises(HandoffError, match="affirmative"):
@@ -617,7 +628,7 @@ def test_rights_record_must_bind_source_and_artifact_identity(tmp_path: Path) ->
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
         "permitted_asset_use": "immutable research corpus artifact",
-        "attribution": "GeneReviews",
+        "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "https://example.org/rights-record",
     }
     rights = tmp_path / "rights.json"
@@ -639,7 +650,7 @@ def test_publisher_rejects_a_rights_record_for_a_different_source(tmp_path: Path
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
         "permitted_asset_use": "immutable research corpus artifact",
-        "attribution": "GeneReviews",
+        "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "https://example.org/rights-record",
         "source_sha256": "b" * 64,
         "artifact_sha256": hashlib.sha256(
@@ -772,7 +783,7 @@ def test_rights_record_requires_durable_evidence_and_distinct_reviewers(tmp_path
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
         "permitted_asset_use": "immutable research corpus artifact",
-        "attribution": "GeneReviews",
+        "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "/var/lib/genereviews/rights-record.json",
         "source_sha256": "a" * 64,
         "artifact_sha256": hashlib.sha256(
@@ -797,7 +808,7 @@ def test_rights_record_rejects_future_decision_and_relative_evidence(tmp_path: P
         "decision_time": "2999-08-30T12:00:00Z",
         "terms_version": "2026-08",
         "permitted_asset_use": "immutable research corpus artifact",
-        "attribution": "GeneReviews",
+        "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "rights-record.json",
         "source_sha256": "a" * 64,
         "artifact_sha256": hashlib.sha256(
@@ -831,7 +842,7 @@ def test_rights_record_rejects_changed_terms_snapshot(tmp_path: Path) -> None:
         "decision_time": "2026-08-30T12:00:00Z",
         "terms_version": "2026-08",
         "permitted_asset_use": "immutable research corpus artifact",
-        "attribution": "GeneReviews",
+        "attribution": RIGHTS_ATTRIBUTION,
         "source_sha256": "a" * 64,
         "artifact_sha256": hashlib.sha256(
             sealed.path.joinpath("corpus.dump").read_bytes()

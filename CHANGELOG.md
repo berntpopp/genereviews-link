@@ -10,8 +10,9 @@ All notable changes to GeneReviews-Link are documented in this file.
 - Hardened the rights-gated publisher around exact numeric GitHub release IDs, draft-inclusive
   inventory, exact tag/source ownership, bounded asset verification, and immutable promotion.
 - Restored sealed-object permissions after artifact transfer and removed unsealed publisher
-  dependencies from the credentialed job. Corpus publication remains blocked without affirmative
-  dated redistribution evidence.
+  dependencies from the credentialed job. The repository owner supplied an affirmative
+  redistribution determination dated 2026-09-01; publication remains bound to its exact durable
+  evidence, source/artifact digests, and required University of Washington attribution.
 
 ## [5.1.5] - 2026-08-31
 

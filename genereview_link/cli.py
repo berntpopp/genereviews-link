@@ -441,7 +441,9 @@ def corpus_restore() -> None:
             bundle = extract_bundle(
                 Path(settings.CORPUS_SEED_PATH),
                 Path(settings.CORPUS_RESTORE_DIR) / "bundle",
-                expected_sha256=settings.CORPUS_BUNDLE_SHA256,
+                expected_sha256=settings.CORPUS_DUMP_SHA256 or settings.CORPUS_BUNDLE_SHA256,
+                expected_manifest_sha256=settings.CORPUS_MANIFEST_SHA256,
+                expected_checksums_sha256=settings.CORPUS_CHECKSUMS_SHA256,
             )
             assert_data_only_archive(read_archive_entries(bundle.dump))
             logger.info("corpus archive verified data-only", version=bundle.corpus_version)
@@ -468,7 +470,7 @@ def corpus_restore() -> None:
             await write_release_readiness(
                 pool,
                 bundle.manifest,
-                artifact_digest=f"sha256:{settings.CORPUS_BUNDLE_SHA256.lower()}",
+                artifact_digest=f"sha256:{bundle.dump_sha256}",
             )
             logger.info("corpus restored", version=restored)
         finally:
