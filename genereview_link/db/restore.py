@@ -23,7 +23,6 @@ against a digest committed in the repository before it is opened.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import shutil
@@ -35,6 +34,7 @@ from urllib.parse import unquote, urlsplit
 
 from genereview_link.db.direct_seed import DirectSeedError, extract_direct_seed
 from genereview_link.db.process_guard import BoundedProcessError, run_bounded_process
+from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 __all__ = [
     "ALLOWED_ENTRY_TYPES",
@@ -221,9 +221,13 @@ def extract_bundle(
         if manifest_file is None:
             raise ArchivePolicyError("manifest.json is not a regular file")
         try:
-            manifest = json.loads(manifest_file.read(_MAX_MANIFEST_BYTES + 1))
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            manifest = load_strict_json(
+                manifest_file.read(_MAX_MANIFEST_BYTES + 1), max_bytes=_MAX_MANIFEST_BYTES
+            )
+        except StrictJsonError as error:
             raise ArchivePolicyError("manifest.json is not valid bounded JSON") from error
+        if not isinstance(manifest, dict):
+            raise ArchivePolicyError("manifest.json must contain a JSON object")
         checksums = manifest.get("checksums")
         if not isinstance(checksums, dict) or not checksums:
             raise ArchivePolicyError("the bundle manifest declares no member checksums")

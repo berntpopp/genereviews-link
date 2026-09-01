@@ -443,7 +443,13 @@ def corpus_restore() -> None:
             )
             if active:
                 if identity_mode == "direct":
-                    await require_release_readiness(pool)
+                    await require_release_readiness(
+                        pool,
+                        release_tag=settings.CORPUS_RELEASE_TAG,
+                        artifact_digest=settings.CORPUS_DUMP_SHA256,
+                        manifest_digest=settings.CORPUS_MANIFEST_SHA256,
+                        checksums_digest=settings.CORPUS_CHECKSUMS_SHA256,
+                    )
                     logger.info(
                         "active direct corpus and verified-v1 readiness present", version=active
                     )
@@ -489,6 +495,9 @@ def corpus_restore() -> None:
                     pool,
                     bundle.manifest,
                     artifact_digest=f"sha256:{bundle.dump_sha256}",
+                    manifest_digest=settings.CORPUS_MANIFEST_SHA256,
+                    checksums_digest=settings.CORPUS_CHECKSUMS_SHA256,
+                    release_tag=settings.CORPUS_RELEASE_TAG,
                 )
             else:
                 logger.info("legacy corpus restored without a verified-v1 readiness claim")

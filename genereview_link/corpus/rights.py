@@ -10,6 +10,8 @@ import stat
 from datetime import UTC, datetime
 from pathlib import Path
 
+from genereview_link.strict_json import StrictJsonError, load_strict_json
+
 MAX_METADATA_BYTES = 1 << 20
 RIGHTS_AUTHORITY = "Bernt Popp / repository owner"
 RIGHTS_APPROVAL_KIND = "repository-owner redistribution determination"
@@ -88,8 +90,8 @@ def _read_bounded(path: Path) -> bytes:
 
 def _load_json(path: Path) -> dict[str, object]:
     try:
-        value = json.loads(_read_bounded(path))
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        value = load_strict_json(_read_bounded(path), max_bytes=MAX_METADATA_BYTES)
+    except StrictJsonError as error:
         raise RightsError("rights record is not valid JSON") from error
     if not isinstance(value, dict):
         raise RightsError("rights record must contain a JSON object")
@@ -175,8 +177,8 @@ def verify_rights_record(
     if hashlib.sha256(evidence_bytes).hexdigest() != record["evidence_sha256"]:
         raise RightsError("evidence document digest does not match rights record")
     try:
-        evidence = json.loads(evidence_bytes)
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        evidence = load_strict_json(evidence_bytes, max_bytes=MAX_METADATA_BYTES)
+    except StrictJsonError as error:
         raise RightsError("rights evidence is not valid JSON") from error
     evidence_fields = {
         "format",

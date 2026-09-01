@@ -267,6 +267,9 @@ def test_readiness_digest_must_equal_manifest_corpus_dump_digest() -> None:
             source_digest="sha256:" + "1" * 64,
             query_result_sha256="2" * 64,
             artifact_digest="sha256:" + "4" * 64,
+            manifest_digest="sha256:" + "5" * 64,
+            checksums_digest="sha256:" + "6" * 64,
+            release_tag="corpus-data-2026-08-30-r1",
         )
 
 

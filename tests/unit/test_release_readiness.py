@@ -44,11 +44,16 @@ def test_readiness_payload_is_exact_three_volume_last_written_contract() -> None
         source_digest="sha256:" + "1" * 64,
         query_result_sha256="2" * 64,
         artifact_digest="sha256:" + "3" * 64,
+        manifest_digest="sha256:" + "4" * 64,
+        checksums_digest="sha256:" + "5" * 64,
+        release_tag="corpus-data-2026-08-30-r1",
     )
 
     assert set(payload) == {
         "release_tag",
         "artifact_digest",
+        "manifest_digest",
+        "checksums_digest",
         "schema_version",
         "counts",
         "migrations",
@@ -79,6 +84,9 @@ def test_readiness_payload_rejects_self_consistent_but_wrong_restore_facts() -> 
             source_digest="sha256:" + "1" * 64,
             query_result_sha256="2" * 64,
             artifact_digest="sha256:" + "3" * 64,
+            manifest_digest="sha256:" + "4" * 64,
+            checksums_digest="sha256:" + "5" * 64,
+            release_tag="corpus-data-2026-08-30-r1",
         )
 
 

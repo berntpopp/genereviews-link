@@ -81,7 +81,10 @@ into the Postgres volume by the `genereview-corpus-restore` init sidecar:
   `corpus.dump`, `manifest.json`, and `SHA256SUMS`, and the three corresponding digest
   variables are required. No source-only change may point production at unpublished assets.
 - Both shapes verify every byte before restore. Only a manifest-v3 direct release may write the
-  readiness record, which identifies the verified inner `corpus.dump`. A legacy restore remains
+  readiness record, which identifies the verified inner `corpus.dump` and the configured release
+  tag, manifest digest, and checksums digest. Every later start must match that complete direct tuple;
+  changing any configured direct asset or tag fails closed instead of accepting stale readiness.
+  A legacy restore remains
   runnable but deliberately produces no controller readiness claim.
 - The restore runs as `RESTORE_ROLE` (`NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`), which
   may write the corpus tables and nothing else. Reviewed in-repo migrations run as the

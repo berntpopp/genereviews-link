@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from collections.abc import Iterable
 from pathlib import Path
@@ -12,6 +11,7 @@ from urllib.parse import unquote, urlsplit
 import httpx
 
 from genereview_link.download_guard import STREAM_TIMEOUT, make_url_guard, stream_to_file
+from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 SOURCE_ASSETS = frozenset(
     {
@@ -47,8 +47,8 @@ def load_source_locator(raw: bytes, *, allowed_repositories: Iterable[str]) -> d
     if not 0 < len(raw) <= MAX_LOCATOR_BYTES:
         raise SourceLocatorError("source locator exceeds the protected-secret bound")
     try:
-        locator = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        locator = load_strict_json(raw, max_bytes=MAX_LOCATOR_BYTES)
+    except StrictJsonError as error:
         raise SourceLocatorError("source locator is not valid JSON") from error
     if (
         not isinstance(locator, dict)

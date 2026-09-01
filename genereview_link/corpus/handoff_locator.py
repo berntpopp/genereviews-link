@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import stat
@@ -14,6 +13,8 @@ from time import monotonic
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 MAX_LOCATOR_BYTES = 48 * 1024
 MAX_METADATA_BYTES = 64 * 1024**2
@@ -52,8 +53,8 @@ def load_handoff_locator(
     if not 0 < len(raw) <= MAX_LOCATOR_BYTES:
         raise HandoffLocatorError("handoff locator exceeds the protected-secret bound")
     try:
-        locator = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        locator = load_strict_json(raw, max_bytes=MAX_LOCATOR_BYTES)
+    except StrictJsonError as error:
         raise HandoffLocatorError("handoff locator is not valid JSON") from error
     if (
         not isinstance(locator, dict)

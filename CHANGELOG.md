@@ -13,6 +13,8 @@ All notable changes to GeneReviews-Link are documented in this file.
   dependencies from the credentialed job. The repository owner supplied an affirmative
   redistribution determination dated 2026-09-01; publication remains bound to its exact durable
   evidence, source/artifact digests, and required University of Washington attribution.
+- Retained exact attested build subjects through an immutable owner-materialization artifact and
+  required an active no-bypass immutable-tag ruleset before any corpus draft or asset mutation.
 
 ## [5.1.5] - 2026-08-31
 

@@ -173,6 +173,7 @@ def test_smoke_seed_preparation_stages_the_configured_release_assets(
     else:
         assert (fixture_dir / "corpus-seed/corpus.dump").read_bytes() == dump
         assert f"CORPUS_DUMP_SHA256={dump_digest}" in env_file.read_text()
+        assert "CORPUS_RELEASE_TAG=corpus-data-2026-08-30-r1" in env_file.read_text()
 
 
 def test_direct_seed_round_trip_binds_dump_manifest_and_checksum_identity(tmp_path: Path) -> None:

@@ -128,6 +128,7 @@ app has no restore path and never downloads anything. See [deployment.md](deploy
 | `CORPUS_DUMP_SHA256` | *(empty)* | Reviewed `corpus.dump` release-asset digest; required in direct mode. |
 | `CORPUS_MANIFEST_SHA256` | *(empty)* | Reviewed `manifest.json` release-asset digest; required in direct mode. |
 | `CORPUS_CHECKSUMS_SHA256` | *(empty)* | Reviewed `SHA256SUMS` release-asset digest; required in direct mode. |
+| `CORPUS_RELEASE_TAG` | *(empty)* | Exact immutable `corpus-data-YYYY-MM-DD-rN` identity; required in direct mode and matched to readiness. |
 | `CORPUS_RESTORE_DIR` | `/var/lib/genereview/restore` | Writable scratch for verified asset extraction/staging. |
 | `RESTORE_DATABASE_URL` | *(empty)* | Restore-only connection, as an unprivileged role that may write the corpus tables and nothing else. |
 | `RESTORE_ROLE` | `genereview_restore` | The `NOSUPERUSER` / `NOCREATEDB` / `NOCREATEROLE` role the init ensures before restoring. |

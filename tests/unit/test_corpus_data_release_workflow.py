@@ -86,7 +86,7 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     assert "attest=" not in scripts
     assert "dispatch_verifier prepublication" in scripts
     assert "genereview_restore" not in scripts
-    assert "verify_annotated_tag" in scripts
+    assert "verify_existing_tag_state" in scripts
     assert "repos/$GH_REPO/immutable-releases" in scripts
     assert "jq -e '.enabled == true'" in scripts
     assert "gh release delete" not in scripts
@@ -111,9 +111,7 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     assert "sys.path.insert(0" in scripts
     assert "module_file" in scripts
     assert "PYTHONPATH=" not in scripts
-    assert (
-        "retention-days: 90" not in (ROOT / ".github/workflows/corpus-data-release.yml").read_text()
-    )
+    assert "actions/download-artifact" not in scripts
 
 
 def test_publisher_uses_protected_secret_not_repository_variable() -> None:
@@ -142,9 +140,12 @@ def test_each_promotion_path_uses_exact_release_and_tag_identities() -> None:
     assert '--method PATCH "repos/$GH_REPO/releases/$release_id"' in script
     assert "uploads.github.com/repos/$GH_REPO/releases/$release_id/assets" in script
     assert "repos/$GH_REPO/git/ref/tags/$tag" in script
-    assert '-f ref="refs/tags/$tag"' in script
-    assert "repos/$GH_REPO/git/tags" in script
-    assert "verify_annotated_tag" in script
+    assert '--method POST "repos/$GH_REPO/git/refs"' not in script
+    assert '--method POST "repos/$GH_REPO/git/tags"' not in script
+    assert "repos/$GH_REPO/rulesets/$GENEREVIEWS_TAG_RULESET_ID" in script
+    assert "--tag-object-sha" in script
+    assert "--ruleset" in script
+    assert "verify_existing_tag_state" in script
     assert "release_transaction import plan_release" in script
     assert ".draft == true and .immutable == false and .published_at == null" in script
     assert '.draft == false and .immutable == true and (.published_at | type == "string")' in script

@@ -25,6 +25,8 @@ READINESS_KEYS = frozenset(
     {
         "release_tag",
         "artifact_digest",
+        "manifest_digest",
+        "checksums_digest",
         "schema_version",
         "counts",
         "migrations",
@@ -39,10 +41,34 @@ READINESS_KEYS = frozenset(
     }
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_RELEASE_TAG = re.compile(r"^corpus-data-20[0-9]{2}-[0-9]{2}-[0-9]{2}-r[1-9][0-9]*$")
 
 
 class ReadinessError(RuntimeError):
     """The restored database does not prove the exact release identity."""
+
+
+def configured_direct_release(
+    *,
+    release_tag: str,
+    artifact_digest: str,
+    manifest_digest: str,
+    checksums_digest: str,
+) -> dict[str, str]:
+    """Normalize the complete independently reviewed direct-release identity."""
+    if not _RELEASE_TAG.fullmatch(release_tag):
+        raise ReadinessError("configured direct release tag is invalid")
+    result = {"release_tag": release_tag}
+    for name, value in (
+        ("artifact_digest", artifact_digest),
+        ("manifest_digest", manifest_digest),
+        ("checksums_digest", checksums_digest),
+    ):
+        normalized = value.removeprefix("sha256:").lower()
+        if not _SHA256.fullmatch(normalized):
+            raise ReadinessError(f"configured direct release {name} is invalid")
+        result[name] = f"sha256:{normalized}"
+    return result
 
 
 def _manifest_migrations(manifest: Mapping[str, object]) -> list[str]:
@@ -64,6 +90,9 @@ def build_readiness_payload(
     source_digest: str,
     query_result_sha256: str,
     artifact_digest: str,
+    manifest_digest: str,
+    checksums_digest: str,
+    release_tag: str,
 ) -> dict[str, object]:
     """Validate observed facts against the release manifest and build the exact probe JSON."""
     embedding = manifest.get("embedding")
@@ -99,11 +128,20 @@ def build_readiness_payload(
     ):
         raise ReadinessError("artifact digest does not match manifest corpus.dump")
     release_id = manifest.get("corpus_release_id")
-    if not isinstance(release_id, str) or not release_id:
+    configured = configured_direct_release(
+        release_tag=release_tag,
+        artifact_digest=artifact_digest,
+        manifest_digest=manifest_digest,
+        checksums_digest=checksums_digest,
+    )
+    if (
+        not isinstance(release_id, str)
+        or release_tag != f"corpus-data-{release_id}"
+        or artifact_digest != configured["artifact_digest"]
+    ):
         raise ReadinessError("release identity is incomplete")
     return {
-        "release_tag": f"corpus-data-{release_id}",
-        "artifact_digest": artifact_digest,
+        **configured,
         "schema_version": manifest.get("manifest_version"),
         "counts": dict(counts),
         "migrations": sorted(migrations),
@@ -119,7 +157,13 @@ def build_readiness_payload(
 
 
 async def write_release_readiness(
-    pool: Any, manifest: Mapping[str, object], *, artifact_digest: str
+    pool: Any,
+    manifest: Mapping[str, object],
+    *,
+    artifact_digest: str,
+    manifest_digest: str,
+    checksums_digest: str,
+    release_tag: str,
 ) -> dict[str, object]:
     """Recompute semantics and insert the immutable marker as the final restore write."""
     async with pool.acquire() as connection, connection.transaction():
@@ -160,6 +204,9 @@ async def write_release_readiness(
             source_digest=f"sha256:{active['tarball_sha256']}",
             query_result_sha256=query_digest,
             artifact_digest=artifact_digest,
+            manifest_digest=manifest_digest,
+            checksums_digest=checksums_digest,
+            release_tag=release_tag,
         )
         await connection.execute(
             "insert into public.genereview_release_readiness "
@@ -172,7 +219,20 @@ async def write_release_readiness(
     return payload
 
 
-async def require_release_readiness(pool: Any) -> dict[str, object]:
+async def require_release_readiness(
+    pool: Any,
+    *,
+    release_tag: str,
+    artifact_digest: str,
+    manifest_digest: str,
+    checksums_digest: str,
+) -> dict[str, object]:
+    configured = configured_direct_release(
+        release_tag=release_tag,
+        artifact_digest=artifact_digest,
+        manifest_digest=manifest_digest,
+        checksums_digest=checksums_digest,
+    )
     value = await pool.fetchval(
         "select readiness::text from public.genereview_release_readiness "
         "where readiness_key and is_active and ready and readiness_marker = 'verified-v1'"
@@ -193,6 +253,8 @@ async def require_release_readiness(pool: Any) -> dict[str, object]:
         or payload.get("operation_order") != list(OPERATION_ORDER)
     ):
         raise ReadinessError("release readiness facts are invalid")
+    if any(payload[name] != value for name, value in configured.items()):
+        raise ReadinessError("release readiness does not match the configured direct release")
     return payload
 
 
@@ -200,6 +262,7 @@ __all__ = [
     "LOGICAL_VOLUMES",
     "ReadinessError",
     "build_readiness_payload",
+    "configured_direct_release",
     "require_release_readiness",
     "write_release_readiness",
 ]

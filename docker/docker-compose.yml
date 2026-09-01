@@ -94,6 +94,7 @@ services:
       CORPUS_DUMP_SHA256: "${CORPUS_DUMP_SHA256:-}"
       CORPUS_MANIFEST_SHA256: "${CORPUS_MANIFEST_SHA256:-}"
       CORPUS_CHECKSUMS_SHA256: "${CORPUS_CHECKSUMS_SHA256:-}"
+      CORPUS_RELEASE_TAG: "${CORPUS_RELEASE_TAG:-}"
       CORPUS_RESTORE_DIR: /var/lib/genereview/restore
     volumes:
       # A reviewed, pre-seeded artifact: read-only, never a system path.

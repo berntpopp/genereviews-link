@@ -44,13 +44,30 @@ def _frozen() -> dict[str, object]:
         etag='"verified"',
         tag="corpus-data-2026-08-30-r1",
         target_commit="a" * 40,
+        tag_object_sha="b" * 40,
     )
+
+
+def _ruleset() -> dict[str, object]:
+    return {
+        "id": 41,
+        "target": "tag",
+        "enforcement": "active",
+        "bypass_actors": [],
+        "conditions": {"ref_name": {"include": ["refs/tags/corpus-data-*"], "exclude": []}},
+        "rules": [{"type": "deletion"}, {"type": "update"}],
+    }
 
 
 @pytest.mark.parametrize("status", [200, 412])
 def test_prepatch_rejects_mutation_after_semantic_verification(status: int) -> None:
     with pytest.raises(PromotionStateError):
-        assert_prepatch(_frozen(), conditional_status=status)
+        assert_prepatch(
+            _frozen(),
+            conditional_status=status,
+            tag_object_sha="b" * 40,
+            ruleset=_ruleset(),
+        )
 
 
 @pytest.mark.parametrize("mutation", ["asset_id", "asset_digest", "target", "release_id"])

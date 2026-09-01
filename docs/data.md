@@ -158,7 +158,16 @@ the sealed installation target, and proves the verifier module's `__file__` is b
 the source checkout and ambient site packages cannot shadow it in the credentialed job.
 A separately privileged automation may act only on that sealed handoff after the rights record exists.
 
-The privileged workflow never consumes a runner artifact or run ID as a handoff. Its protected
+The build job uploads one immutable, 90-day Actions artifact named from the sealed object ID. It
+contains the exact five attested subjects plus canonical `handoff-materialization.json`, which
+binds their names, sizes, SHA-256 digests, build revision, source repository/ref, and object ID.
+This unprivileged artifact is only a bridge for the owner: download those exact content bytes, verify
+their build-provenance attestations and materialization record, restore the generic
+`publisher-tool.whl` filename to the sealed wheel name recorded in that materialization and
+`seal-manifest.json`, then copy the five subjects to durable immutable release-asset storage and
+construct the numeric-asset handoff locator. Record the
+Actions artifact ID/digest and the resulting durable asset IDs/digests in the owner evidence. The
+privileged publisher never consumes a runner artifact or run ID as a handoff. Its protected
 sub-48-KiB handoff locator names exactly the sealed `corpus.dump`, `manifest.json`, `SHA256SUMS`,
 `seal-manifest.json`, and one publisher wheel by immutable numeric GitHub release-asset URL, size,
 and SHA-256, and binds the object ID and build revision. It reconstructs a fresh owner-only handoff,
@@ -174,10 +183,11 @@ and publisher object reconstructable without publishing private keys, tokens, or
 material. A missing, non-affirmative, malformed, or mismatched record fails before any release or tag
 mutation.
 
-Local handoff roots are durable owner-only storage outside both the repository and serving volumes.
-They are retained through program closure; a workflow artifact retention deadline is not evidence
-that a local handoff object still exists. Record only an object ID together with its exact durable
-absolute path after verifying that path—do not infer or claim an object from an earlier log line.
+Local handoff roots and the final numeric release assets are durable owner-controlled storage outside
+both the repository and serving volumes. They are retained through program closure. The intermediate
+90-day workflow artifact makes the attested bytes retrievable after the build job, but its retention
+deadline is not final durable-publication evidence. Record only verified exact local or release-asset
+identities—do not infer or claim an object from an earlier log line.
 
 The no-input builder uses a separate sub-48-KiB protected locator to download the exact retained
 archive, source-capture metadata, prior release manifest and seal manifest, and three side-data
@@ -202,9 +212,11 @@ The verifier recomputes source/content/provenance identities, exact migration fi
 HNSW presence, representative queries, and the reviewed nonzero evaluation suite from the restored DB.
 Release publication inventories drafts as well as published releases and mutates only the exact numeric
 release ID after verifying its tag, source revision, asset IDs, sizes, digests, and closed lifecycle state.
-Promotion freezes the exact draft representation and ETag before semantic restore, conditionally
-rechecks that same ETag, creates/checks the immutable tag only at the final serialized point, and uses
-the verified ETag as `If-Match`. Publication automatically dispatches the external verifier with the
+Before any draft or asset mutation, the owner-created annotated corpus tag must resolve to the exact
+build/object identity under an active tag ruleset that prohibits deletion and updates with no
+bypass actors. Promotion freezes that tag object plus the exact draft representation and ETag before
+semantic restore, rechecks the protected tag/ruleset and ETag immediately before the only PATCH, and
+uses the verified ETag as `If-Match`. Publication automatically dispatches the external verifier with the
 exact release ID/tag/target/assets tuple; closure requires its successful acceptance artifact.
 
 The repository owner supplied an affirmative redistribution determination dated 2026-09-01;

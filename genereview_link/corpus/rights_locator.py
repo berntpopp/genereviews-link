@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 from collections.abc import Iterable
 from contextlib import suppress
@@ -12,6 +11,8 @@ from time import monotonic
 from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 MAX_SECRET_BYTES = 48 * 1024
 MAX_RIGHTS_ASSET_BYTES = 1 << 20
@@ -40,8 +41,8 @@ def load_rights_locator(raw: bytes, *, allowed_repositories: Iterable[str]) -> d
     if not 0 < len(raw) <= MAX_SECRET_BYTES:
         raise RightsLocatorError("rights locator exceeds the GitHub secret size bound")
     try:
-        locator = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        locator = load_strict_json(raw, max_bytes=MAX_SECRET_BYTES)
+    except StrictJsonError as error:
         raise RightsLocatorError("rights locator is not valid JSON") from error
     if not isinstance(locator, dict) or set(locator) != {"format", "assets"}:
         raise RightsLocatorError("rights locator has missing or extra fields")

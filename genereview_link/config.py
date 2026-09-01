@@ -102,6 +102,7 @@ class Settings(BaseSettings):
     CORPUS_DUMP_SHA256: str = ""
     CORPUS_MANIFEST_SHA256: str = ""
     CORPUS_CHECKSUMS_SHA256: str = ""
+    CORPUS_RELEASE_TAG: str = ""
     # CORPUS_RESTORE_DIR: writable scratch (a named volume) for archive expansion.
     CORPUS_RESTORE_DIR: str = "/var/lib/genereview/restore"
     # RESTORE_DATABASE_URL: connection for the RESTORE only, as an unprivileged role that

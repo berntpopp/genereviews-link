@@ -49,7 +49,12 @@ def _assets(release: dict[str, Any]) -> list[dict[str, object]]:
 
 
 def freeze_release(
-    release: dict[str, Any], *, etag: str, tag: str, target_commit: str
+    release: dict[str, Any],
+    *,
+    etag: str,
+    tag: str,
+    target_commit: str,
+    tag_object_sha: str,
 ) -> dict[str, object]:
     if (
         not etag
@@ -57,6 +62,7 @@ def freeze_release(
         or release.get("tag_name") != tag
         or release.get("target_commitish") != target_commit
         or not SHA.fullmatch(target_commit)
+        or not re.fullmatch(r"[0-9a-f]{40}", tag_object_sha)
         or release.get("draft") is not True
         or release.get("immutable") is not False
     ):
@@ -65,14 +71,47 @@ def freeze_release(
         "release_id": release["id"],
         "tag": tag,
         "target_commit": target_commit,
+        "tag_object_sha": tag_object_sha,
         "etag": etag,
         "assets": _assets(release),
     }
 
 
-def assert_prepatch(frozen: dict[str, Any], *, conditional_status: int) -> None:
+def assert_tag_ruleset(ruleset: dict[str, Any]) -> None:
+    """Require an active, no-bypass rule that makes corpus tag refs immutable."""
+    conditions = ruleset.get("conditions")
+    ref_name = conditions.get("ref_name") if isinstance(conditions, dict) else None
+    rules = ruleset.get("rules")
+    rule_types = (
+        {rule.get("type") for rule in rules if isinstance(rule, dict)}
+        if isinstance(rules, list)
+        else set()
+    )
+    if (
+        type(ruleset.get("id")) is not int
+        or ruleset.get("target") != "tag"
+        or ruleset.get("enforcement") != "active"
+        or ruleset.get("bypass_actors") != []
+        or not isinstance(ref_name, dict)
+        or ref_name.get("include") != ["refs/tags/corpus-data-*"]
+        or ref_name.get("exclude") != []
+        or not {"deletion", "update"}.issubset(rule_types)
+    ):
+        raise PromotionStateError("corpus tag ruleset is not active and immutable without bypass")
+
+
+def assert_prepatch(
+    frozen: dict[str, Any],
+    *,
+    conditional_status: int,
+    tag_object_sha: str,
+    ruleset: dict[str, Any],
+) -> None:
     if conditional_status != 304:
         raise PromotionStateError("release ETag precondition changed after semantic verification")
+    if tag_object_sha != frozen.get("tag_object_sha"):
+        raise PromotionStateError("corpus tag changed after semantic verification")
+    assert_tag_ruleset(ruleset)
 
 
 def assert_postpublication(
@@ -111,10 +150,15 @@ def main() -> None:
     freeze.add_argument("--etag", required=True)
     freeze.add_argument("--tag", required=True)
     freeze.add_argument("--target", required=True)
+    freeze.add_argument("--tag-object-sha", required=True)
     freeze.add_argument("--out", required=True, type=Path)
     prepatch = subparsers.add_parser("prepatch")
     prepatch.add_argument("--frozen", required=True, type=Path)
     prepatch.add_argument("--status", required=True, type=int)
+    prepatch.add_argument("--tag-object-sha", required=True)
+    prepatch.add_argument("--ruleset", required=True, type=Path)
+    ruleset = subparsers.add_parser("ruleset")
+    ruleset.add_argument("--ruleset", required=True, type=Path)
     post = subparsers.add_parser("post")
     post.add_argument("--frozen", required=True, type=Path)
     post.add_argument("--published", required=True, type=Path)
@@ -122,11 +166,22 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "freeze":
         state = freeze_release(
-            _read(args.release), etag=args.etag, tag=args.tag, target_commit=args.target
+            _read(args.release),
+            etag=args.etag,
+            tag=args.tag,
+            target_commit=args.target,
+            tag_object_sha=args.tag_object_sha,
         )
         args.out.write_text(json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n")
     elif args.command == "prepatch":
-        assert_prepatch(_read(args.frozen), conditional_status=args.status)
+        assert_prepatch(
+            _read(args.frozen),
+            conditional_status=args.status,
+            tag_object_sha=args.tag_object_sha,
+            ruleset=_read(args.ruleset),
+        )
+    elif args.command == "ruleset":
+        assert_tag_ruleset(_read(args.ruleset))
     else:
         assert_postpublication(
             _read(args.frozen), published=_read(args.published), tag_ref=_read(args.tag_ref)

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import stat
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 _MAX_DUMP_BYTES = 4 * 1024**3
 _MAX_CONTROL_BYTES = 1024**2
@@ -119,7 +120,7 @@ def extract_direct_seed(
     except OSError as error:
         raise DirectSeedError("direct corpus seed directory is unavailable") from error
     staged: dict[str, Path] = {}
-    created: list[Path] = []
+    created: list[tuple[Path, tuple[int, int]]] = []
     try:
         if set(os.listdir(seed_fd)) != _MEMBERS:
             raise DirectSeedError(
@@ -167,8 +168,8 @@ def extract_direct_seed(
         if dump_digest != dump_anchor:
             raise DirectSeedError("corpus.dump digest does not match the reviewed release asset")
         try:
-            manifest = json.loads(manifest_bytes)
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            manifest = load_strict_json(manifest_bytes, max_bytes=_MAX_CONTROL_BYTES)
+        except StrictJsonError as error:
             raise DirectSeedError("manifest.json is not valid JSON") from error
         if not isinstance(manifest, dict):
             raise DirectSeedError("manifest.json must be a JSON object")
@@ -179,16 +180,35 @@ def extract_direct_seed(
                 os.link(staged[name], target, follow_symlinks=False)
             except OSError as error:
                 raise DirectSeedError(f"restore seed destination could not admit {name}") from error
-            created.append(target)
+            finally:
+                # A BaseException can arrive after link(2) succeeded but before Python
+                # returns. Admit ownership only when the target is our staged inode;
+                # cleanup must never unlink a pre-existing attacker-controlled path.
+                try:
+                    source_info = staged[name].stat()
+                    target_info = target.stat(follow_symlinks=False)
+                except OSError:
+                    pass
+                else:
+                    identity = (source_info.st_dev, source_info.st_ino)
+                    if identity == (target_info.st_dev, target_info.st_ino) and not any(
+                        owned_target == target for owned_target, _ in created
+                    ):
+                        created.append((target, identity))
         return DirectSeed(
             root=destination,
             dump=destination / "corpus.dump",
             manifest=manifest,
             dump_sha256=dump_digest,
         )
-    except Exception:
-        for target in created:
-            target.unlink(missing_ok=True)
+    except BaseException:
+        for target, identity in created:
+            try:
+                current = target.stat(follow_symlinks=False)
+                if (current.st_dev, current.st_ino) == identity:
+                    target.unlink()
+            except FileNotFoundError:
+                pass
         raise
     finally:
         os.close(seed_fd)

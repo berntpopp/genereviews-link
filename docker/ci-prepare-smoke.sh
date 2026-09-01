@@ -82,6 +82,7 @@ case "$asset_name" in
       echo "CORPUS_DUMP_SHA256=${expected_data}"
       echo "CORPUS_MANIFEST_SHA256=${expected_manifest}"
       echo "CORPUS_CHECKSUMS_SHA256=${expected_checksums}"
+      echo "CORPUS_RELEASE_TAG=${release_tag}"
       echo "POSTGRES_PASSWORD=smoke-only-not-a-secret"
     } >> "$GF_SMOKE_ENV_FILE"
     ;;

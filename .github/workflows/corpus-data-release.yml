@@ -146,6 +146,7 @@ jobs:
           uv run genereview-link embed
           uv run genereview-link embed --index-only
       - name: Select identity-aware release suffix and build/evaluate one locked snapshot
+        id: seal
         env:
           GH_TOKEN: ${{ github.token }}
           PGPASSWORD: genereview
@@ -350,6 +351,7 @@ jobs:
           sealed="$handoff_root/$object_id"
           test "$(sha256sum "$sealed/seal-manifest.json" | cut -d' ' -f1)" = "$object_id"
           wheel_name="$(jq -er '.publisher_tool.name | select(test("\\.whl$"))' "$sealed/seal-manifest.json")"
+          printf 'object_id=%s\n' "$object_id" >>"$GITHUB_OUTPUT"
           printf 'SOURCE_DIR=%s\nRELEASE_ID=%s\nSEALED_BUILD=%s\nSEALED_WHEEL=%s\n' \
             "$source_dir" "$release_id" "$sealed" "$wheel_name" >> "$GITHUB_ENV"
       - name: Stage the exact sealed evaluated build output
@@ -360,6 +362,42 @@ jobs:
             "$SEALED_BUILD/SHA256SUMS" "$SEALED_BUILD/seal-manifest.json" \
             "$RUNNER_TEMP/reviewed-build/"
           cp -- "$SEALED_BUILD/$SEALED_WHEEL" "$RUNNER_TEMP/reviewed-build/publisher-tool.whl"
+          python3 -I - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+
+          root = Path(os.environ["RUNNER_TEMP"]) / "reviewed-build"
+          subjects = ["corpus.dump", "manifest.json", "SHA256SUMS", "seal-manifest.json", "publisher-tool.whl"]
+          def digest(path):
+              value = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      value.update(chunk)
+              return value.hexdigest()
+          facts = []
+          for name in subjects:
+              path = root / name
+              facts.append({
+                  "name": name,
+                  "sha256": digest(path),
+                  "size_bytes": path.stat().st_size,
+              })
+          materialization = {
+              "format": "genereviews-handoff-materialization-v1",
+              "object_id": digest(root / "seal-manifest.json"),
+              "build_revision": os.environ["GITHUB_SHA"],
+              "source_ref": os.environ["GITHUB_REF"],
+              "source_repository": os.environ["GITHUB_REPOSITORY"],
+              "sealed_wheel_name": os.environ["SEALED_WHEEL"],
+              "subjects": facts,
+          }
+          expected = os.environ["SEALED_BUILD"].rsplit("/", 1)[-1]
+          if materialization["object_id"] != expected or len(facts) != 5:
+              raise SystemExit("retained handoff identity differs from the sealed build")
+          (root / "handoff-materialization.json").write_text(
+              json.dumps(materialization, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
       - name: Attest the exact evaluated build output
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -369,6 +407,30 @@ jobs:
             ${{ runner.temp }}/reviewed-build/SHA256SUMS
             ${{ runner.temp }}/reviewed-build/seal-manifest.json
             ${{ runner.temp }}/reviewed-build/publisher-tool.whl
+            ${{ runner.temp }}/reviewed-build/handoff-materialization.json
+      - name: Retain the immutable attested handoff for owner materialization
+        id: retain
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sealed-handoff-${{ steps.seal.outputs.object_id }}
+          path: ${{ runner.temp }}/reviewed-build/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false
+      - name: Record retained handoff materialization identity
+        run: |
+          set -euo pipefail
+          grep -Eq '^[1-9][0-9]*$' <<<"${{ steps.retain.outputs.artifact-id }}"
+          grep -Eq '^[0-9a-f]{64}$' <<<"${{ steps.retain.outputs.artifact-digest }}"
+          {
+            echo "sealed handoff object: ${{ steps.seal.outputs.object_id }}"
+            echo "retained artifact id: ${{ steps.retain.outputs.artifact-id }}"
+            echo "retained artifact digest: ${{ steps.retain.outputs.artifact-digest }}"
+            echo "build revision: $GITHUB_SHA"
+            echo "source ref: $GITHUB_REF"
+          } >>"$GITHUB_STEP_SUMMARY"
   publish:
     if: ${{ needs.validate.result == 'success' && inputs.object_id != '' && github.ref == 'refs/heads/main' }}
     needs: validate
@@ -384,6 +446,7 @@ jobs:
       OBJECT_ID: ${{ inputs.object_id }}
       GENEREVIEWS_HANDOFF_REPOSITORIES: ${{ vars.GENEREVIEWS_HANDOFF_REPOSITORIES }}
       GENEREVIEWS_RIGHTS_REPOSITORIES: ${{ vars.GENEREVIEWS_RIGHTS_REPOSITORIES }}
+      GENEREVIEWS_TAG_RULESET_ID: ${{ vars.GENEREVIEWS_TAG_RULESET_ID }}
     steps:
       - name: Fetch durable digest-addressed sealed handoff
         env:
@@ -632,13 +695,22 @@ jobs:
           from pathlib import Path
           target, ref_path, object_path, tag, revision, object_id = sys.argv[1:]
           sys.path.insert(0, target)
-          from genereview_link.corpus.release_transaction import verify_annotated_tag
-          verify_annotated_tag(
+          from genereview_link.corpus.release_transaction import verify_existing_tag_state
+          verify_existing_tag_state(
               json.loads(Path(ref_path).read_text()), json.loads(Path(object_path).read_text()),
               tag=tag, target=revision, object_id=object_id,
           )
           PY
+            REQUIRED_TAG_OBJECT_SHA="$tag_sha"
             jq -n --arg revision "$build_revision" '{object:{type:"commit",sha:$revision}}' >"$response"
+          }
+
+          require_tag_ruleset() {
+            grep -Eq '^[1-9][0-9]{0,18}$' <<<"$GENEREVIEWS_TAG_RULESET_ID"
+            REQUIRED_RULESET_JSON="$RUNNER_TEMP/required-tag-ruleset.json"
+            timeout 60s gh api \
+              "repos/$GH_REPO/rulesets/$GENEREVIEWS_TAG_RULESET_ID" >"$REQUIRED_RULESET_JSON"
+            sealed_python ruleset --ruleset "$REQUIRED_RULESET_JSON"
           }
 
           dispatch_verifier() {
@@ -769,6 +841,11 @@ jobs:
           immutable_releases="$RUNNER_TEMP/immutable-releases.json"
           timeout 60s gh api "repos/$GH_REPO/immutable-releases" >"$immutable_releases"
           jq -e '.enabled == true' "$immutable_releases" >/dev/null
+          # A repository owner reserves the exact annotated tag after reviewing the
+          # retained build artifact. An active no-bypass tag ruleset makes that ref
+          # immutable before this credentialed job may create or upload a draft.
+          require_exact_tag
+          require_tag_ruleset
 
           inventory="$RUNNER_TEMP/release-inventory.jsonl"
           : >"$inventory"
@@ -792,17 +869,6 @@ jobs:
             release_state="$RUNNER_TEMP/release-state.json"
             timeout 60s gh api "repos/$GH_REPO/releases/$release_id" >"$release_state"
           else
-            # The inventory was read before this branch; recheck the canonical tag
-            # immediately before creating the draft to close an external race.
-            recheck_error="$RUNNER_TEMP/pre-create-tag.error"
-            if timeout 60s gh api "repos/$GH_REPO/git/ref/tags/$tag" >/dev/null 2>"$recheck_error"; then
-              echo "release appeared after inventory; refusing duplicate mutation" >&2
-              exit 1
-            elif ! grep -Fq 'HTTP 404' "$recheck_error"; then
-              cat "$recheck_error" >&2
-              echo "release recheck failed; refusing mutation" >&2
-              exit 1
-            fi
             created="$RUNNER_TEMP/created-release.json"
             timeout 60s gh api --method POST "repos/$GH_REPO/releases" \
               -f tag_name="$tag" -f target_commitish="$build_revision" -f name="$tag" \
@@ -817,35 +883,9 @@ jobs:
             release_state="$created"
           fi
 
-          existing_tag_ref="$RUNNER_TEMP/existing-tag-ref.json"
-          existing_tag_object="$RUNNER_TEMP/existing-tag-object.json"
-          tag_error="$RUNNER_TEMP/existing-tag.error"
-          if timeout 60s gh api "repos/$GH_REPO/git/ref/tags/$tag" >"$existing_tag_ref" 2>"$tag_error"; then
-            if tag_sha="$(jq -er '.object | select(.type == "tag") | .sha | select(test("^[0-9a-f]{40}$"))' "$existing_tag_ref")"; then
-              timeout 60s gh api "repos/$GH_REPO/git/tags/$tag_sha" >"$existing_tag_object"
-            fi
-          elif grep -Fq 'HTTP 404' "$tag_error"; then
-            printf 'null\n' >"$existing_tag_ref"
-            printf 'null\n' >"$existing_tag_object"
-          else
-            cat "$tag_error" >&2
-            echo "tag state could not be resolved before publication mutation" >&2
-            exit 1
-          fi
-          test -e "$existing_tag_object" || printf 'null\n' >"$existing_tag_object"
-          python3 -I - "$PUBLISHER_ENV" "$existing_tag_ref" "$existing_tag_object" \
-            "$tag" "$build_revision" "$OBJECT_ID" <<'PY'
-          import json, sys
-          from pathlib import Path
-          target, ref_path, object_path, tag, revision, object_id = sys.argv[1:]
-          sys.path.insert(0, target)
-          from genereview_link.corpus.release_transaction import verify_existing_tag_state
-          verify_existing_tag_state(
-              json.loads(Path(ref_path).read_text()),
-              json.loads(Path(object_path).read_text()),
-              tag=tag, target=revision, object_id=object_id,
-          )
-          PY
+          # Repeat after any draft creation and before the first asset upload.
+          require_exact_tag
+          require_tag_ruleset
 
           expected_assets="$RUNNER_TEMP/expected-assets.json"
           : >"$RUNNER_TEMP/expected-assets.jsonl"
@@ -929,9 +969,12 @@ jobs:
             before="$RUNNER_TEMP/release-$release_id.json"
             after="$RUNNER_TEMP/post-promotion-release.json"
             frozen="$RUNNER_TEMP/verified-release-state.json"
+            require_exact_tag
+            require_tag_ruleset
             sealed_python freeze \
               --release "$before" --etag "$verified_etag" --tag "$tag" \
-              --target "$build_revision" --out "$frozen"
+              --target "$build_revision" --tag-object-sha "$REQUIRED_TAG_OBJECT_SHA" \
+              --out "$frozen"
             dispatch_verifier prepublication "$verified_etag" "$before"
             jq -c '[.assets[] | {id, name, size, digest}] | sort_by(.name)' "$before" \
               >"$RUNNER_TEMP/pre-promotion-assets.json"
@@ -941,22 +984,14 @@ jobs:
               --header "If-None-Match: $verified_etag" \
               "https://api.github.com/repos/$GH_REPO/releases/$release_id" >"$precondition"
             test "$(cat "$precondition")" = 304
-            tag_object="$RUNNER_TEMP/created-tag-object.json"
-            timeout 60s gh api --method POST "repos/$GH_REPO/git/tags" \
-              -f tag="$tag" -f message="GeneReviews sealed object $OBJECT_ID" \
-              -f object="$build_revision" -f type=commit >"$tag_object"
-            tag_object_sha="$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' "$tag_object")"
-            tag_create_error="$RUNNER_TEMP/tag-create.error"
-            if ! timeout 60s gh api --method POST "repos/$GH_REPO/git/refs" \
-              -f ref="refs/tags/$tag" -f sha="$tag_object_sha" 2>"$tag_create_error"; then
-              grep -Eq 'HTTP 409|HTTP 422' "$tag_create_error" || { cat "$tag_create_error" >&2; exit 1; }
-            fi
             require_exact_tag
+            require_tag_ruleset
             timeout 60s curl --silent --show-error --output /dev/null \
               --write-out '%{http_code}\n' --header "Authorization: Bearer $GH_TOKEN" \
               --header "If-None-Match: $verified_etag" \
               "https://api.github.com/repos/$GH_REPO/releases/$release_id" >"$precondition"
-            sealed_python prepatch --frozen "$frozen" --status "$(cat "$precondition")"
+            sealed_python prepatch --frozen "$frozen" --status "$(cat "$precondition")" \
+              --tag-object-sha "$REQUIRED_TAG_OBJECT_SHA" --ruleset "$REQUIRED_RULESET_JSON"
             timeout 60s gh api --method PATCH "repos/$GH_REPO/releases/$release_id" -H "If-Match: $verified_etag" \
               -F draft=false >"$after"
             jq -e --argjson id "$release_id" --arg tag "$tag" --arg revision "$build_revision" \
@@ -967,6 +1002,7 @@ jobs:
               >"$RUNNER_TEMP/post-promotion-assets.json"
             cmp -- "$RUNNER_TEMP/pre-promotion-assets.json" "$RUNNER_TEMP/post-promotion-assets.json"
             require_exact_tag
+            require_tag_ruleset
             sealed_python post \
               --frozen "$frozen" --published "$after" \
               --tag-ref "$RUNNER_TEMP/required-tag-ref.json"
