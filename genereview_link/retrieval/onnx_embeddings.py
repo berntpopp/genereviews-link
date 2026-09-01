@@ -135,9 +135,11 @@ class OnnxBgeEmbeddingProvider:
         tokenizer.enable_truncation(max_length=BGE_MAX_SEQ_LENGTH)
         tokenizer.enable_padding(pad_id=0, pad_token="[PAD]")  # noqa: S106
 
-        # ONNX Runtime otherwise tries to persist a telemetry device id, which a
-        # read-only rootfs refuses noisily. Turning it off keeps the no-egress posture
-        # unambiguous and the logs clean.
+        # Disable telemetry event sending so the no-egress posture is unambiguous at the
+        # library level as well as the network level. NOTE: this does not silence ONNX
+        # Runtime's own "Failed to persist telemetry device ID" warning -- that is emitted
+        # by the native layer when the read-only rootfs refuses its config file, and it
+        # falls back to an in-memory id. The warning is expected and harmless.
         with contextlib.suppress(AttributeError, RuntimeError):
             ort.disable_telemetry_events()
 

@@ -130,11 +130,19 @@ RUN /usr/local/bin/python -m pip install --no-cache-dir pip==26.1 && \
 # needed only by the offline ingest/embedding workflows, which run outside this image.
 # The model WEIGHTS are not image content either: they are a digest-pinned release asset
 # materialised into a volume by the init sidecar.
+#
+# onnxruntime/datasets ships four sample .onnx graphs. The fleet content gate denies them
+# by name (`denied_paths`), and rightly so: the serving image is code-only, and the one
+# model it may run is the reviewed one from the volume. Its `transformers`/`quantization`
+# helpers are model-authoring tooling with no runtime role, so they go too.
 # NOTE: numpy stays because `pgvector.asyncpg` imports it while registering the database
 # codec. The full corpus package is offline build/publisher tooling and is not admitted to
 # the public image. A small exact subset is retained below for the no-egress direct-restore
 # readiness proof; every retained path is reviewed in container-release.json.
-RUN rm -rf /opt/venv/lib/python3.12/site-packages/nvidia \
+RUN rm -rf /opt/venv/lib/python3.12/site-packages/onnxruntime/datasets \
+           /opt/venv/lib/python3.12/site-packages/onnxruntime/transformers \
+           /opt/venv/lib/python3.12/site-packages/onnxruntime/quantization \
+           /opt/venv/lib/python3.12/site-packages/nvidia \
            /opt/venv/lib/python3.12/site-packages/nvidia_*.dist-info \
            /opt/venv/lib/python3.12/site-packages/triton \
            /opt/venv/lib/python3.12/site-packages/triton-*.dist-info \
