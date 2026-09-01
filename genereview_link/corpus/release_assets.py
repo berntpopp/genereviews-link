@@ -215,6 +215,7 @@ async def download_release_assets(
         headers["Authorization"] = f"Bearer {token}"
     downloaded: dict[str, str] = {}
     created: dict[str, DownloadOwnership] = {}
+    retained: list[DownloadOwnership] = []
     try:
         for name in PUBLICATION_ASSET_NAMES:
             asset = assets[name]
@@ -240,31 +241,41 @@ async def download_release_assets(
                         max_bytes=limit,
                         deadline_seconds=deadline,
                         created_ownership=ownership_output,
+                        defer_admission=True,
                     )
                 finally:
-                    if ownership_output:
-                        created[name] = ownership_output[0]
+                    retained.extend(ownership_output)
             if len(ownership_output) != 1 or ownership_output[0].closed:
                 raise ReleaseAssetError(f"download did not report created identity: {name}")
+            created[name] = ownership_output[0]
             ownership = created[name]
             info = ownership.stat()
-            if not ownership.matches_path():
-                raise ReleaseAssetError(f"downloaded identity changed before admission: {name}")
             if info.st_size != asset.size:
                 raise ReleaseAssetError(f"downloaded size does not match API identity: {name}")
             downloaded[name] = digest
             if f"sha256:{downloaded[name]}" != asset.digest:
                 raise ReleaseAssetError(f"downloaded digest does not match API identity: {name}")
+            try:
+                ownership.admit_exact(
+                    expected_sha256=asset.digest.removeprefix("sha256:"),
+                    expected_size=asset.size,
+                    mode=0o400,
+                )
+            except Exception as error:
+                raise ReleaseAssetError(
+                    f"downloaded digest failed exact admission: {name}"
+                ) from error
         if len(created) != len(PUBLICATION_ASSET_NAMES) or any(
-            not ownership.matches_path() for ownership in created.values()
+            not ownership.matches_path() or not ownership.parent_matches_path()
+            for ownership in created.values()
         ):
             raise ReleaseAssetError("release asset path changed before complete admission")
     except BaseException:
-        for ownership in created.values():
+        for ownership in retained:
             ownership.unlink_if_owned()
         raise
     finally:
-        for ownership in created.values():
+        for ownership in retained:
             ownership.close()
     result = replace(
         identity,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
@@ -12,6 +13,20 @@ import asyncpg
 
 from genereview_link.corpus.bundle_metadata import resolve_app_git_sha
 from genereview_link.corpus.computation_provenance import collect_computation_provenance
+
+_SERVER_VERSION = re.compile(r"^18[0-9]{4}$")
+
+
+def _database_identity(row: Any) -> dict[str, str]:
+    server_version = str(row["server_version_num"])
+    pgvector = str(row["pgvector"])
+    if not _SERVER_VERSION.fullmatch(server_version) or pgvector != "0.8.2":
+        raise RuntimeError("database runtime does not match the reviewed PostgreSQL 18 identity")
+    return {
+        "server_version_num": server_version,
+        "server_major": str(int(server_version) // 10_000),
+        "pgvector": pgvector,
+    }
 
 
 def _canonical(value: object) -> bytes:
@@ -57,13 +72,7 @@ async def begin_embedding_run(
     exact = deepcopy(provenance)
     database = exact["database"]
     assert isinstance(database, dict)
-    database.update(
-        {
-            "server_version_num": str(row["server_version_num"]),
-            "server_major": str(int(row["server_version_num"]) // 10_000),
-            "pgvector": str(row["pgvector"]),
-        }
-    )
+    database.update(_database_identity(row))
     corpus_version = str(row["version"])
     run_id = computation_run_id(
         phase="embedding",
@@ -99,9 +108,21 @@ async def record_ingest_run(
     expected_row_count: int,
 ) -> str:
     """Insert immutable ingest-time environment/source evidence."""
+    database_row = await connection.fetchrow(
+        """
+        select current_setting('server_version_num') as server_version_num,
+               (select extversion from pg_extension where extname = 'vector') as pgvector
+        """
+    )
+    if database_row is None:
+        raise RuntimeError("database runtime identity is unavailable")
     app_git_sha = resolve_app_git_sha()
-    provenance = collect_computation_provenance(app_git_sha=app_git_sha)
-    provenance = {**provenance, "source_capture": source_capture}
+    provenance = deepcopy(collect_computation_provenance(app_git_sha=app_git_sha))
+    database = provenance["database"]
+    if not isinstance(database, dict):
+        raise RuntimeError("computation provenance database identity is invalid")
+    database.update(_database_identity(database_row))
+    provenance["source_capture"] = source_capture
     run_id = computation_run_id(
         phase="ingest",
         corpus_version=corpus_version,

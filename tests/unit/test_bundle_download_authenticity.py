@@ -82,13 +82,13 @@ async def test_checksum_download_passes_its_explicit_deadline(
 async def test_bundle_download_passes_its_explicit_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    digest = "a" * 64
+    digest = hashlib.sha256(b"bundle").hexdigest()
 
     async def write_part(*args: object, **kwargs: object) -> str:
         dest = cast(Path, args[2])
         dest.write_bytes(b"bundle")
         parent_fd = os.open(dest.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        file_fd = os.open(dest.name, os.O_WRONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        file_fd = os.open(dest.name, os.O_RDWR | os.O_NOFOLLOW, dir_fd=parent_fd)
         output = kwargs["created_ownership"]
         assert isinstance(output, list)
         output.append(DownloadOwnership(parent_fd=parent_fd, file_fd=file_fd, name=dest.name))

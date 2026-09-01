@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from genereview_link.download_admission import DownloadOwnership
 from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 MAX_SECRET_BYTES = 48 * 1024
@@ -141,43 +142,6 @@ def _open_fresh_destination(destination: Path) -> tuple[int, tuple[int, int]]:
         raise
 
 
-def _admit_rights_asset(
-    destination_fd: int,
-    asset: dict[str, object],
-    created_identity: tuple[int, int],
-) -> None:
-    name = str(asset["name"])
-    expected_size = asset["size_bytes"]
-    if type(expected_size) is not int:
-        raise RightsLocatorError("rights asset path does not match its admitted identity")
-    try:
-        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=destination_fd)
-    except OSError as error:
-        raise RightsLocatorError(
-            "rights asset path does not match its admitted identity"
-        ) from error
-    try:
-        info = os.fstat(descriptor)
-        digest = hashlib.sha256()
-        size = 0
-        while chunk := os.read(descriptor, 64 * 1024):
-            size += len(chunk)
-            if size > expected_size:
-                raise RightsLocatorError("rights asset path does not match its admitted identity")
-            digest.update(chunk)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or (info.st_dev, info.st_ino) != created_identity
-            or size != expected_size
-            or digest.hexdigest() != asset["sha256"]
-        ):
-            raise RightsLocatorError("rights asset path does not match its admitted identity")
-    except OSError as error:
-        raise RightsLocatorError("rights asset path could not be admitted safely") from error
-    finally:
-        os.close(descriptor)
-
-
 def fetch_rights_assets(
     raw: bytes,
     *,
@@ -190,7 +154,7 @@ def fetch_rights_assets(
     opener = build_opener(_RightsRedirects())
     assets = locator["assets"]
     assert isinstance(assets, list)
-    created: dict[str, tuple[int, int]] = {}
+    created: dict[str, DownloadOwnership] = {}
     deadline = monotonic() + RIGHTS_TRANSFER_DEADLINE_SECONDS
     destination_fd, destination_identity = _open_fresh_destination(destination)
     try:
@@ -208,45 +172,40 @@ def fetch_rights_assets(
             remaining = int(asset["size_bytes"])
             try:
                 with opener.open(request, timeout=60) as response:
-                    output_fd = os.open(
-                        name,
-                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                        0o600,
-                        dir_fd=destination_fd,
+                    ownership = DownloadOwnership.named_at(
+                        parent_fd=destination_fd,
+                        parent_path=destination,
+                        name=name,
                     )
-                    info = os.fstat(output_fd)
-                    created[name] = (info.st_dev, info.st_ino)
-                    output = os.fdopen(output_fd, "wb")
-                    with output:
-                        while True:
-                            if monotonic() >= deadline:
-                                raise RightsLocatorError(
-                                    "rights asset exceeded its monotonic deadline"
-                                )
-                            chunk = response.read(min(64 * 1024, remaining + 1))
-                            if not chunk:
-                                break
-                            remaining -= len(chunk)
-                            if remaining < 0:
-                                raise RightsLocatorError("rights asset exceeds its declared size")
-                            digest.update(chunk)
-                            output.write(chunk)
+                    created[name] = ownership
+                    while True:
                         if monotonic() >= deadline:
                             raise RightsLocatorError("rights asset exceeded its monotonic deadline")
-                        output.flush()
-                        os.fsync(output.fileno())
-                        os.fchmod(output.fileno(), 0o400)
+                        chunk = response.read(min(64 * 1024, remaining + 1))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
+                        if remaining < 0:
+                            raise RightsLocatorError("rights asset exceeds its declared size")
+                        digest.update(chunk)
+                        ownership.write(chunk)
+                    if monotonic() >= deadline:
+                        raise RightsLocatorError("rights asset exceeded its monotonic deadline")
+                    ownership.sync()
             except (HTTPError, URLError, TimeoutError, OSError) as error:
                 raise RightsLocatorError("rights asset could not be fetched safely") from error
             if remaining != 0 or digest.hexdigest() != asset["sha256"]:
                 raise RightsLocatorError("rights asset bytes do not match locator identity")
-        for asset in assets:
-            assert isinstance(asset, dict)
-            _admit_rights_asset(
-                destination_fd,
-                asset,
-                created[str(asset["name"])],
-            )
+            try:
+                ownership.admit_exact(
+                    expected_sha256=str(asset["sha256"]),
+                    expected_size=int(asset["size_bytes"]),
+                    mode=0o400,
+                )
+            except Exception as error:
+                raise RightsLocatorError(
+                    "rights asset path does not match its admitted identity"
+                ) from error
         if set(os.listdir(destination_fd)) != RIGHTS_ASSET_NAMES:
             raise RightsLocatorError("rights destination contains an unadmitted path")
         try:
@@ -259,15 +218,12 @@ def fetch_rights_assets(
         ):
             raise RightsLocatorError("rights destination identity changed")
     except BaseException:
-        for name, identity in created.items():
-            try:
-                current = os.stat(name, dir_fd=destination_fd, follow_symlinks=False)
-            except FileNotFoundError:
-                continue
-            if stat.S_ISREG(current.st_mode) and (current.st_dev, current.st_ino) == identity:
-                os.unlink(name, dir_fd=destination_fd)
+        for ownership in created.values():
+            ownership.unlink_if_owned()
         raise
     finally:
+        for ownership in created.values():
+            ownership.close()
         os.close(destination_fd)
     return locator
 

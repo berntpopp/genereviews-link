@@ -116,6 +116,7 @@ async def fetch_source_assets(
     assets = locator["assets"]
     assert isinstance(assets, list)
     created: dict[str, DownloadOwnership] = {}
+    retained: list[DownloadOwnership] = []
     try:
         for asset in assets:
             assert isinstance(asset, dict)
@@ -137,31 +138,38 @@ async def fetch_source_assets(
                         max_bytes=int(asset["size_bytes"]),
                         deadline_seconds=deadline,
                         created_ownership=ownership_output,
+                        defer_admission=True,
                     )
                 finally:
-                    if ownership_output:
-                        created[name] = ownership_output[0]
+                    retained.extend(ownership_output)
                 if len(ownership_output) != 1 or ownership_output[0].closed:
                     raise SourceLocatorError("source download did not report file ownership")
+                created[name] = ownership_output[0]
             ownership = created[name]
             info = ownership.stat()
-            if (
-                not ownership.matches_path()
-                or info.st_size != asset["size_bytes"]
-                or digest != asset["sha256"]
-            ):
+            if info.st_size != asset["size_bytes"] or digest != asset["sha256"]:
                 raise SourceLocatorError("downloaded source bytes do not match locator")
-            ownership.chmod(0o400)
+            try:
+                ownership.admit_exact(
+                    expected_sha256=str(asset["sha256"]),
+                    expected_size=int(asset["size_bytes"]),
+                    mode=0o400,
+                )
+            except Exception as error:
+                raise SourceLocatorError(
+                    "downloaded source bytes failed exact admission"
+                ) from error
         if len(created) != len(SOURCE_ASSETS) or any(
-            not ownership.matches_path() for ownership in created.values()
+            not ownership.matches_path() or not ownership.parent_matches_path()
+            for ownership in created.values()
         ):
             raise SourceLocatorError("source asset path changed before complete admission")
     except BaseException:
-        for ownership in created.values():
+        for ownership in retained:
             ownership.unlink_if_owned()
         raise
     finally:
-        for ownership in created.values():
+        for ownership in retained:
             ownership.close()
     return locator
 

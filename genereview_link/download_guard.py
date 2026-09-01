@@ -15,13 +15,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-import stat
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from time import monotonic
 from urllib.parse import urlsplit
 
 import httpx
+
+from genereview_link.download_admission import DisallowedURLError as DisallowedURLError
+from genereview_link.download_admission import DownloadDeadlineError as DownloadDeadlineError
+from genereview_link.download_admission import DownloadOwnership as DownloadOwnership
+from genereview_link.download_admission import ResponseTooLargeError as ResponseTooLargeError
 
 # Per-read deadlines protect a stalled socket.  The independent end-to-end
 # deadline ensures a peer cannot keep a transfer alive forever by dripping
@@ -31,76 +35,6 @@ STREAM_TIMEOUT = httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=30.0)
 MAX_DOWNLOAD_SECONDS = 20 * 60.0
 
 RequestHook = Callable[[httpx.Request], Awaitable[None]]
-
-
-class DisallowedURLError(Exception):
-    """Outbound request/redirect targets a non-allowlisted URL. NON-RETRYABLE."""
-
-
-class ResponseTooLargeError(Exception):
-    """A streamed download exceeded its byte ceiling. NON-RETRYABLE."""
-
-
-class DownloadDeadlineError(Exception):
-    """A download exceeded its monotonic end-to-end deadline. NON-RETRYABLE."""
-
-
-class DownloadOwnership:
-    """Keep the created inode and its parent directory pinned until admission."""
-
-    __slots__ = ("_file_fd", "_parent_fd", "name")
-
-    def __init__(self, *, parent_fd: int, file_fd: int, name: str) -> None:
-        if not name or Path(name).name != name:
-            raise ValueError("download ownership name must be one path component")
-        self._parent_fd: int | None = parent_fd
-        self._file_fd: int | None = file_fd
-        self.name = name
-
-    @property
-    def closed(self) -> bool:
-        return self._file_fd is None
-
-    def stat(self) -> os.stat_result:
-        if self._file_fd is None:
-            raise ValueError("download ownership is closed")
-        return os.fstat(self._file_fd)
-
-    def matches_path(self) -> bool:
-        if self._parent_fd is None:
-            return False
-        owned = self.stat()
-        try:
-            current = os.stat(self.name, dir_fd=self._parent_fd, follow_symlinks=False)
-        except OSError:
-            return False
-        return (
-            stat.S_ISREG(owned.st_mode)
-            and stat.S_ISREG(current.st_mode)
-            and (current.st_dev, current.st_ino) == (owned.st_dev, owned.st_ino)
-        )
-
-    def chmod(self, mode: int) -> None:
-        if self._file_fd is None:
-            raise ValueError("download ownership is closed")
-        os.fchmod(self._file_fd, mode)
-
-    def unlink_if_owned(self) -> bool:
-        if self._parent_fd is None or not self.matches_path():
-            return False
-        os.unlink(self.name, dir_fd=self._parent_fd)
-        return True
-
-    def close(self) -> None:
-        file_fd, parent_fd = self._file_fd, self._parent_fd
-        self._file_fd = None
-        self._parent_fd = None
-        try:
-            if file_fd is not None:
-                os.close(file_fd)
-        finally:
-            if parent_fd is not None:
-                os.close(parent_fd)
 
 
 def build_host_allowlist(*urls: str) -> frozenset[str]:
@@ -165,6 +99,7 @@ async def stream_to_file(
     chunk_size: int = 1 << 20,
     deadline_seconds: float = MAX_DOWNLOAD_SECONDS,
     created_ownership: list[DownloadOwnership] | None = None,
+    defer_admission: bool = False,
 ) -> str:
     """Stream *url* to *dest* under byte and monotonic time caps; return SHA-256.
 
@@ -175,19 +110,9 @@ async def stream_to_file(
     """
     if created_ownership is not None and created_ownership:
         raise ValueError("created_ownership output must be empty")
-    try:
-        parent_fd = os.open(dest.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        output_fd = os.open(
-            dest.name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o600,
-            dir_fd=parent_fd,
-        )
-    except OSError:
-        if "parent_fd" in locals():
-            os.close(parent_fd)
-        raise
-    ownership = DownloadOwnership(parent_fd=parent_fd, file_fd=output_fd, name=dest.name)
+    if defer_admission and created_ownership is None:
+        raise ValueError("deferred admission requires retained ownership")
+    ownership = DownloadOwnership.anonymous(dest)
     if created_ownership is not None:
         created_ownership.append(ownership)
     sha = hashlib.sha256()
@@ -200,7 +125,7 @@ async def stream_to_file(
                 _reject_expired_deadline(deadline_at)
                 resp.raise_for_status()
                 _reject_declared_length(resp, max_bytes)
-                with os.fdopen(output_fd, "wb", closefd=False) as fh:
+                with os.fdopen(ownership.fileno(), "wb", closefd=False) as fh:
                     async for chunk in resp.aiter_bytes(chunk_size):
                         _reject_expired_deadline(deadline_at)
                         total += len(chunk)
@@ -211,8 +136,11 @@ async def stream_to_file(
                     fh.flush()
                     os.fsync(fh.fileno())
         _reject_expired_deadline(deadline_at)
+        digest = sha.hexdigest()
+        if not defer_admission:
+            ownership.admit_exact(expected_sha256=digest, expected_size=total)
         completed = True
-        return sha.hexdigest()
+        return digest
     except TimeoutError as exc:
         raise DownloadDeadlineError("download exceeded end-to-end deadline") from exc
     finally:
@@ -226,34 +154,15 @@ async def stream_to_file(
 
 def write_exclusive_bytes(destination: Path, content: bytes) -> None:
     """Create one download destination without following or replacing paths."""
-    parent_fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    ownership = DownloadOwnership.anonymous(destination)
     try:
-        descriptor = os.open(
-            destination.name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-            0o600,
-            dir_fd=parent_fd,
+        ownership.write(content)
+        ownership.sync()
+        ownership.admit_exact(
+            expected_sha256=hashlib.sha256(content).hexdigest(), expected_size=len(content)
         )
-        created = os.fstat(descriptor)
-        try:
-            view = memoryview(content)
-            while view:
-                view = view[os.write(descriptor, view) :]
-            os.fsync(descriptor)
-        except BaseException:
-            os.close(descriptor)
-            try:
-                current = os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
-            except FileNotFoundError:
-                pass
-            else:
-                if (current.st_dev, current.st_ino) == (created.st_dev, created.st_ino):
-                    os.unlink(destination.name, dir_fd=parent_fd)
-            raise
-        else:
-            os.close(descriptor)
     finally:
-        os.close(parent_fd)
+        ownership.close()
 
 
 async def read_capped(

@@ -219,7 +219,6 @@ class _Response:
         self.calls += 1
         if self.calls == 1: return b"owned"
         target = Path(os.environ["HANDOFF_OBJECT"]) / "corpus.dump"
-        target.unlink()
         target.write_bytes(b"foreign")
         raise OSError("forced substitution")
 class _Opener:

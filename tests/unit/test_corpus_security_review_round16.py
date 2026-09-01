@@ -85,7 +85,7 @@ async def test_stream_closes_retained_descriptors_when_cancellation_cleanup_fail
         )
 
     assert len(ownership) == 1 and ownership[0].closed
-    target.unlink()
+    assert not target.exists()
 
 
 def _substituting_stream(

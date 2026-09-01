@@ -356,7 +356,7 @@ jobs:
           handoff_object="$handoff_root/$OBJECT_ID"
           mkdir -m 0700 -p -- "$handoff_object"
           HANDOFF_OBJECT="$handoff_object" python3 -I - <<'PY'
-          import hashlib, json, os, re, stat, time
+          import ctypes, hashlib, json, os, re, secrets, stat, time
           from pathlib import Path
           from urllib.parse import unquote, urlsplit
           from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -442,7 +442,19 @@ jobs:
           directory_fd = os.open(
               destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
           )
+          libc = ctypes.CDLL(None, use_errno=True)
+
+          def rename_noreplace(source, target):
+              result = libc.renameat2(
+                  directory_fd, ctypes.c_char_p(os.fsencode(source)),
+                  directory_fd, ctypes.c_char_p(os.fsencode(target)), 1,
+              )
+              if result != 0:
+                  error = ctypes.get_errno()
+                  raise OSError(error, os.strerror(error))
+
           created = {}
+          admitted = set()
           try:
               try:
                   for asset in assets:
@@ -464,50 +476,72 @@ jobs:
                       if (type(size) is not int or not 0 < size <= limit
                               or not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None):
                           raise RuntimeError("handoff asset identity exceeds its bound")
-                      fd = os.open(
-                          name,
-                          os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                          0o600,
-                          dir_fd=directory_fd,
-                      )
-                      created_info = os.fstat(fd)
-                      created[name] = (created_info.st_dev, created_info.st_ino)
+                      fd = os.open(".", os.O_RDWR | os.O_TMPFILE, 0o600, dir_fd=directory_fd)
+                      created[name] = fd
                       remaining = size
                       actual = hashlib.sha256()
                       deadline = time.monotonic() + 45 * 60
-                      try:
-                          request = Request(url, headers={"Accept": "application/octet-stream", "Authorization": f"Bearer {os.environ['GH_TOKEN']}"})
-                          with opener.open(request, timeout=60) as response, os.fdopen(fd, "wb", closefd=False) as output:
-                              while True:
-                                  if time.monotonic() >= deadline:
-                                      raise RuntimeError("handoff transfer exceeded its deadline")
-                                  chunk = response.read(min(1 << 20, remaining + 1))
-                                  if not chunk:
-                                      break
-                                  remaining -= len(chunk)
-                                  if remaining < 0:
-                                      raise RuntimeError("handoff asset exceeded declared size")
-                                  actual.update(chunk)
-                                  output.write(chunk)
-                              output.flush()
-                              os.fsync(fd)
-                          os.fchmod(fd, 0o400)
-                      finally:
-                          os.close(fd)
+                      request = Request(url, headers={"Accept": "application/octet-stream", "Authorization": f"Bearer {os.environ['GH_TOKEN']}"})
+                      with opener.open(request, timeout=60) as response, os.fdopen(fd, "wb", closefd=False) as output:
+                          while True:
+                              if time.monotonic() >= deadline:
+                                  raise RuntimeError("handoff transfer exceeded its deadline")
+                              chunk = response.read(min(1 << 20, remaining + 1))
+                              if not chunk:
+                                  break
+                              remaining -= len(chunk)
+                              if remaining < 0:
+                                  raise RuntimeError("handoff asset exceeded declared size")
+                              actual.update(chunk)
+                              output.write(chunk)
+                          output.flush()
+                          os.fsync(fd)
                       if remaining != 0 or actual.hexdigest() != digest:
                           raise RuntimeError("handoff asset size or digest mismatch")
+                      os.lseek(fd, 0, os.SEEK_SET)
+                      retained = hashlib.sha256()
+                      retained_size = 0
+                      while chunk := os.read(fd, 1 << 20):
+                          retained_size += len(chunk)
+                          if retained_size > size:
+                              raise RuntimeError("handoff pinned object exceeded declared size")
+                          retained.update(chunk)
+                      if retained_size != size or retained.hexdigest() != digest:
+                          raise RuntimeError("handoff pinned object changed before admission")
+                      os.fchmod(fd, 0o400)
+                  for name, fd in created.items():
+                      result = libc.linkat(
+                          fd, ctypes.c_char_p(b""), directory_fd,
+                          ctypes.c_char_p(os.fsencode(name)), 0x1000,  # AT_EMPTY_PATH
+                      )
+                      if result != 0:
+                          error = ctypes.get_errno()
+                          raise OSError(error, "descriptor-bound handoff admission failed")
+                      admitted.add(name)
                   os.fchmod(directory_fd, 0o500)
+                  os.fsync(directory_fd)
               except BaseException:
-                  for name, created_identity in created.items():
+                  os.fchmod(directory_fd, 0o700)
+                  for name in admitted:
+                      quarantine = f".handoff-cleanup-{secrets.token_hex(16)}"
                       try:
-                          current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                          rename_noreplace(name, quarantine)
                       except FileNotFoundError:
                           continue
+                      current = os.stat(quarantine, dir_fd=directory_fd, follow_symlinks=False)
+                      owned = os.fstat(created[name])
                       if (stat.S_ISREG(current.st_mode)
-                              and (current.st_dev, current.st_ino) == created_identity):
-                          os.unlink(name, dir_fd=directory_fd)
+                              and (current.st_dev, current.st_ino) == (owned.st_dev, owned.st_ino)):
+                          os.unlink(quarantine, dir_fd=directory_fd)
+                      else:
+                          try:
+                              rename_noreplace(quarantine, name)
+                          except FileExistsError:
+                              pass
                   raise
           finally:
+              for fd in created.values():
+                  os.close(fd)
               os.close(directory_fd)
           PY
       - name: Verify trusted build provenance before supplied Python
@@ -822,12 +856,31 @@ jobs:
               digest="$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$release_json")"
             if test "$asset" = corpus.dump; then limit=$((2 * 1024 * 1024 * 1024)); else limit=$((1024 * 1024)); fi
               test "$size" -le "$limit"
-              timeout 45m curl --fail --silent --show-error --location \
-                --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 2700 \
-                --max-filesize "$size" --header 'Accept: application/octet-stream' \
-                --header "Authorization: Bearer $GH_TOKEN" \
+              timeout 45m python3 -I - "$PUBLISHER_ENV" \
                 "https://api.github.com/repos/$GH_REPO/releases/assets/$asset_id" \
-                --output "$remote/$asset"
+                "$remote/$asset" "$size" "$digest" "$GH_TOKEN" <<'PY'
+          import sys
+          from pathlib import Path
+          package, url, destination, raw_size, digest, token = sys.argv[1:]
+          sys.path.insert(0, str(Path(package).resolve()))
+          from genereview_link.download_admission import download_exact_https
+          download_exact_https(
+              url,
+              Path(destination),
+              allowed_initial_hosts=frozenset({"api.github.com"}),
+              allowed_redirect_hosts=frozenset({
+                  "github.com",
+                  "release-assets.githubusercontent.com",
+                  "objects.githubusercontent.com",
+                  "github-releases.githubusercontent.com",
+              }),
+              expected_sha256=digest.removeprefix("sha256:"),
+              expected_size=int(raw_size),
+              max_bytes=2 * 1024 * 1024 * 1024,
+              authorization=f"Bearer {token}",
+              deadline_seconds=45 * 60,
+          )
+          PY
               test "$(stat -c %s "$remote/$asset")" = "$size"
               test "sha256:$(sha256sum "$remote/$asset" | cut -d' ' -f1)" = "$digest"
               expected_asset="$handoff/$asset"

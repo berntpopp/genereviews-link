@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 from pathlib import Path
 
@@ -124,7 +123,6 @@ async def download_with_integrity(url: str, dest: Path, *, expected_sha256: str)
     byte cap, and dual verification: an independently-committed authenticity
     anchor and the transport-level sibling sha256. Writes atomically."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    part = dest.parent / (dest.name + ".part")
     ownership_output: list[DownloadOwnership] = []
     ownership: DownloadOwnership | None = None
     try:
@@ -132,10 +130,11 @@ async def download_with_integrity(url: str, dest: Path, *, expected_sha256: str)
             digest = await stream_to_file(
                 c,
                 url,
-                part,
+                dest,
                 max_bytes=MAX_BUNDLE_BYTES,
                 deadline_seconds=BUNDLE_DOWNLOAD_DEADLINE_SECONDS,
                 created_ownership=ownership_output,
+                defer_admission=True,
             )
         if len(ownership_output) != 1 or ownership_output[0].closed:
             raise RuntimeError("bundle download did not retain file ownership")
@@ -169,9 +168,14 @@ async def download_with_integrity(url: str, dest: Path, *, expected_sha256: str)
         # Integrity (transport check against the sibling .sha256).
         if digest != expected_sha256:
             raise RuntimeError(f"bundle sha256 mismatch: expected {expected_sha256}, got {digest}")
-        if not ownership.matches_path():
-            raise RuntimeError("bundle path changed before verified promotion")
-        os.replace(part, dest)
+        try:
+            ownership.admit_exact(
+                expected_sha256=digest,
+                expected_size=ownership.stat().st_size,
+                mode=0o400,
+            )
+        except Exception as error:
+            raise RuntimeError("bundle failed descriptor-bound verified promotion") from error
     except BaseException:
         if ownership is not None:
             ownership.unlink_if_owned()
