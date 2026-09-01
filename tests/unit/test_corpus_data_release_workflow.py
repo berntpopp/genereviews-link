@@ -208,6 +208,20 @@ def test_external_verifier_uses_frozen_cpu_runtime_and_exact_retained_sources() 
     assert "tests/eval/run_eval.py" not in scripts
 
 
+def test_model_downloads_allow_only_the_reviewed_immutable_file_set() -> None:
+    for workflow_name in ("corpus-data-release.yml", "verify-corpus-bundle.yml"):
+        workflow = yaml.safe_load((ROOT / ".github/workflows" / workflow_name).read_text())
+        scripts = "\n".join(
+            str(step.get("run", ""))
+            for job in workflow["jobs"].values()
+            for step in job.get("steps", [])
+            if isinstance(job, dict)
+        )
+        assert "snapshot_download" in scripts
+        assert "allow_patterns=sorted(BGE_MODEL_FILES)" in scripts
+        assert "revision=BGE_MODEL_REVISION" in scripts
+
+
 def test_release_suffix_selection_is_identity_aware_and_exhaustive() -> None:
     workflow = _workflow()
     scripts = "\n".join(str(step.get("run", "")) for step in workflow["jobs"]["build"]["steps"])
