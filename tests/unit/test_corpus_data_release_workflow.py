@@ -48,6 +48,7 @@ def test_data_release_build_is_data_only_and_unprivileged() -> None:
     assert "genereview-link ingest" in scripts
     assert "GENEREVIEWS_SOURCE_LOCATOR" in scripts
     assert "--archive" in scripts and "--source-metadata" in scripts
+    assert "--prior-manifest" in scripts and "--prior-seal-manifest" in scripts
     assert "pg18-client" in scripts
     assert "--index-only" in scripts
     assert "evaluation" in scripts
@@ -78,15 +79,15 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     assert "publish-handoff" in scripts
     assert "verify_handoff" in scripts
     assert "gh attestation verify" in scripts
-    assert "seal-retention-receipt.json" in scripts
-    assert (
-        'for subject in "$handoff_object/corpus.dump" "$seal_manifest" "$tool" "$receipt"'
-        in scripts
-    )
+    assert "GENEREVIEWS_HANDOFF_LOCATOR" in scripts
+    assert "handoff-locator.json" in scripts
+    assert "actions/download-artifact" not in str(steps)
+    assert '.sha256 | select(test("^[0-9a-f]{64}$"))' in scripts
+    assert 'test "$(stat -c %s "$target")" = "$size"' in scripts
     assert "attest=" not in scripts
     assert "dispatch_verifier prepublication" in scripts
     assert "genereview_restore" not in scripts
-    assert "tag-status" in scripts
+    assert "verify_annotated_tag" in scripts
     assert "repos/$GH_REPO/immutable-releases" in scripts
     assert "jq -e '.enabled == true'" in scripts
     assert "gh release delete" not in scripts
@@ -139,8 +140,10 @@ def test_each_promotion_path_uses_exact_release_and_tag_identities() -> None:
     assert '--method PATCH "repos/$GH_REPO/releases/$release_id"' in script
     assert "uploads.github.com/repos/$GH_REPO/releases/$release_id/assets" in script
     assert "repos/$GH_REPO/git/ref/tags/$tag" in script
-    assert '-f ref="refs/tags/$tag"' not in script
-    assert 'test "$(cat "$tag_precondition")" = 404' in script
+    assert '-f ref="refs/tags/$tag"' in script
+    assert "repos/$GH_REPO/git/tags" in script
+    assert "verify_annotated_tag" in script
+    assert "release_transaction import plan_release" in script
     assert ".draft == true and .immutable == false and .published_at == null" in script
     assert '.draft == false and .immutable == true and (.published_at | type == "string")' in script
     assert script.count("verify_remote") >= 3
@@ -168,6 +171,7 @@ def test_external_verifier_uses_frozen_cpu_runtime_and_exact_retained_sources() 
     assert "GENEREVIEWS_SOURCE_LOCATOR" in scripts
     assert "fetch_source_assets" in scripts
     assert "load_offline_capture" in scripts
+    assert "prior-seal-manifest.json" in scripts
     assert "evaluate_connection" in scripts
     assert "tests/eval/run_eval.py" not in scripts
 
@@ -190,7 +194,7 @@ def test_dispatch_validation_cannot_skip_malformed_input_combinations() -> None:
     assert validate["if"] == "${{ always() }}"
     assert validate["permissions"] == {"contents": "read"}
     assert "object_id" in str(validate["steps"])
-    assert "handoff_run_id" in str(validate["steps"])
+    assert "handoff_run_id" not in str(validate["steps"])
     assert workflow["jobs"]["build"]["needs"] == "validate"
     assert workflow["jobs"]["publish"]["needs"] == "validate"
 
@@ -208,12 +212,12 @@ def test_dispatch_shell_state_machine_executes_all_four_input_states(tmp_path: P
         shim.chmod(0o755)
 
     states = (
-        ("", "", "refs/heads/topic", 0),
-        ("a" * 64, "42", "refs/heads/main", 0),
-        ("a" * 64, "", "refs/heads/main", 1),
-        ("not-a-digest", "42", "refs/heads/topic", 1),
+        ("", "refs/heads/topic", 0),
+        ("a" * 64, "refs/heads/main", 0),
+        ("a" * 64, "refs/heads/topic", 1),
+        ("not-a-digest", "refs/heads/main", 1),
     )
-    for object_id, run_id, ref_name, expected in states:
+    for object_id, ref_name, expected in states:
         result = subprocess.run(  # noqa: S603 - repository workflow shell is the test subject
             ["/bin/bash", "-c", script],
             check=False,
@@ -223,7 +227,6 @@ def test_dispatch_shell_state_machine_executes_all_four_input_states(tmp_path: P
                 **os.environ,
                 "PATH": f"{fake_bin}:{os.environ['PATH']}",
                 "OBJECT_ID": object_id,
-                "HANDOFF_RUN_ID": run_id,
                 "REF_NAME": ref_name,
             },
         )

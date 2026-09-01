@@ -13,11 +13,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import asyncpg
 
-from genereview_link.corpus.archive import ArchiveListing, download_tarball, fetch_listing
+from genereview_link.corpus.archive import ArchiveListing
 from genereview_link.corpus.nxml import extract_primary_gene_symbols
 from genereview_link.corpus.parallel import copy_chapters, copy_passages, parse_pipeline
 from genereview_link.corpus.records import ChapterRecord, PassageRecord
@@ -36,9 +35,7 @@ from genereview_link.download_guard import (
 
 logger = logging.getLogger(__name__)
 
-# The three sidedata index files are small; cap each fail-closed so a hostile
-# NCBI mirror cannot exhaust RAM via an oversized response.
-MAX_SIDEDATA_BYTES = 64 * 1024 * 1024  # 64 MiB
+MAX_SIDEDATA_BYTES = 64 * 1024 * 1024
 SIDEDATA_DOWNLOAD_DEADLINE_SECONDS = 2 * 60.0
 
 
@@ -87,13 +84,14 @@ async def record_corpus_version_start(
     async with pool.acquire() as conn:
         await conn.execute("select pg_advisory_lock($1)", CORPUS_WRITE_LOCK_KEY)
         try:
-            return await _record_corpus_version_start_locked(
-                conn,
-                listing=listing,
-                source=source,
-                exact_side_data=exact_side_data,
-                source_capture=source_capture,
-            )
+            async with conn.transaction():
+                return await _record_corpus_version_start_locked(
+                    conn,
+                    listing=listing,
+                    source=source,
+                    exact_side_data=exact_side_data,
+                    source_capture=source_capture,
+                )
         finally:
             await conn.execute("select pg_advisory_unlock($1)", CORPUS_WRITE_LOCK_KEY)
 
@@ -255,19 +253,33 @@ async def cleanup_old(pool: asyncpg.Pool, *, retain: int = 2) -> int:
 async def run_full_ingest(
     pool: asyncpg.Pool,
     *,
-    work_dir: Path | None = None,
     archive: Path | None = None,
     side_data_dir: Path | None = None,
     source_metadata: Path | None = None,
+    prior_manifest: Path | None = None,
+    prior_seal_manifest: Path | None = None,
 ) -> IngestResult:
     """End-to-end stages 0-9 (excluding embeddings, which run separately)."""
-    offline = (archive, side_data_dir, source_metadata)
+    offline = (archive, side_data_dir, source_metadata, prior_manifest, prior_seal_manifest)
     if any(value is not None for value in offline):
         if not all(value is not None for value in offline):
-            raise ValueError("offline ingest requires archive, side-data directory, and metadata")
-        assert archive is not None and side_data_dir is not None and source_metadata is not None
+            raise ValueError(
+                "offline ingest requires archive, side-data directory, metadata, prior manifest, "
+                "and prior seal manifest"
+            )
+        assert (
+            archive is not None
+            and side_data_dir is not None
+            and source_metadata is not None
+            and prior_manifest is not None
+            and prior_seal_manifest is not None
+        )
         capture = load_offline_capture(
-            source_metadata, archive=archive, side_data_dir=side_data_dir
+            source_metadata,
+            archive=archive,
+            side_data_dir=side_data_dir,
+            prior_manifest=prior_manifest,
+            prior_seal_manifest=prior_seal_manifest,
         )
         listing_data = capture["listing"]
         archive_data = capture["archive"]
@@ -292,25 +304,7 @@ async def run_full_ingest(
             side_data_identity=side_data_identity,
             source_capture=capture,
         )
-    listing = await fetch_listing()
-    with TemporaryDirectory(dir=work_dir) as td:
-        td_path = Path(td)
-        tarball = td_path / "gene_NBK1116.tar.gz"
-        logger.info("downloading %s …", listing.relpath)
-        sha = await download_tarball(listing, dest=tarball)
-        # sidedata: download the three files alongside
-        sidedata_dir = td_path / "sidedata"
-        sidedata_dir.mkdir()
-        side_data_identity = await _download_sidedata(sidedata_dir)
-        return await _ingest_files(
-            pool,
-            listing=listing,
-            tarball=tarball,
-            sidedata_dir=sidedata_dir,
-            tarball_sha256=sha,
-            side_data_identity=side_data_identity,
-            source_capture=None,
-        )
+    raise ValueError("mutating ingest requires the complete retained offline source set")
 
 
 async def _ingest_files(
@@ -328,7 +322,6 @@ async def _ingest_files(
         expected_ids = source_capture.get("chapter_ids")
         if expected_ids != sorted(sidedata.short_name_by_nbk):
             raise ValueError("retained title mapping does not match captured chapter IDs")
-    await prepare_staging(pool)
     version = await record_corpus_version_start(
         pool,
         listing=listing,
@@ -337,6 +330,7 @@ async def _ingest_files(
         side_data=side_data_identity,
         source_capture=source_capture,
     )
+    await prepare_staging(pool)
 
     chapter_count = 0
     passage_count = 0
@@ -406,6 +400,7 @@ async def _flush(
 
 
 async def _download_sidedata(target: Path) -> dict[str, dict[str, str | int]]:
+    """Fetch bounded side data for non-mutating capture tooling only."""
     import httpx
 
     base = "https://ftp.ncbi.nlm.nih.gov/pub/GeneReviews"

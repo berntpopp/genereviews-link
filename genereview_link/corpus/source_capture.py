@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import stat
 import tarfile
@@ -108,13 +109,43 @@ def _file_identity(path: Path, expected: object, *, label: str) -> None:
         raise SourceCaptureError(f"{label} digest does not match capture")
 
 
+def _read_regular_bounded(path: Path, *, label: str, limit: int) -> bytes:
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as error:
+        raise SourceCaptureError(f"{label} is missing or unsafe") from error
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > limit:
+            raise SourceCaptureError(f"{label} is not a bounded regular file")
+        chunks: list[bytes] = []
+        remaining = limit + 1
+        while remaining:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    finally:
+        os.close(descriptor)
+    value = b"".join(chunks)
+    if len(value) > limit:
+        raise SourceCaptureError(f"{label} exceeds its reviewed bound")
+    return value
+
+
 def load_offline_capture(
-    metadata: Path, *, archive: Path, side_data_dir: Path
+    metadata: Path,
+    *,
+    archive: Path,
+    side_data_dir: Path,
+    prior_manifest: Path,
+    prior_seal_manifest: Path,
 ) -> dict[str, object]:
     """Load one exact capture without fetching or deleting any source file."""
     try:
-        value = json.loads(metadata.read_bytes())
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as error:
+        value = json.loads(_read_regular_bounded(metadata, label="source capture", limit=4 << 20))
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise SourceCaptureError("source capture metadata is not valid JSON") from error
     if not isinstance(value, dict) or value.get("format") != "genereviews-offline-source-v1":
         raise SourceCaptureError("source capture format is invalid")
@@ -176,6 +207,9 @@ def load_offline_capture(
         raise SourceCaptureError("capture chapter IDs must be exact, unique, and sorted")
     if not isinstance(prior, Mapping) or set(prior) != {
         "object_id",
+        "manifest_sha256",
+        "corpus_release_id",
+        "app_git_sha",
         "chapter_ids",
         "chapter_count",
         "chapter_digests",
@@ -187,6 +221,11 @@ def load_offline_capture(
     prior_digests = prior.get("chapter_digests")
     if (
         not SHA256.fullmatch(str(prior.get("object_id", "")))
+        or not SHA256.fullmatch(str(prior.get("manifest_sha256", "")))
+        or not re.fullmatch(
+            r"20\d{2}-\d{2}-\d{2}-r[1-9]\d*", str(prior.get("corpus_release_id", ""))
+        )
+        or not re.fullmatch(r"[0-9a-f]{40}", str(prior.get("app_git_sha", "")))
         or not isinstance(prior_ids, list)
         or prior_ids != sorted(set(prior_ids))
         or not all(isinstance(item, str) and re.fullmatch(r"NBK\d+", item) for item in prior_ids)
@@ -198,6 +237,61 @@ def load_offline_capture(
         or not SHA256.fullmatch(str(prior.get("passages_sha256", "")))
     ):
         raise SourceCaptureError("prior artifact logical identity is invalid")
+    prior_bytes = _read_regular_bounded(
+        prior_manifest, label="prior manifest", limit=4 * 1024 * 1024
+    )
+    if hashlib.sha256(prior_bytes).hexdigest() != prior["manifest_sha256"]:
+        raise SourceCaptureError("prior manifest digest does not match retained bytes")
+    prior_seal_bytes = _read_regular_bounded(
+        prior_seal_manifest, label="prior seal manifest", limit=4 * 1024 * 1024
+    )
+    if hashlib.sha256(prior_seal_bytes).hexdigest() != prior["object_id"]:
+        raise SourceCaptureError("prior object ID does not match retained seal manifest")
+    try:
+        prior_record = json.loads(prior_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise SourceCaptureError("prior manifest is not valid JSON") from error
+    try:
+        prior_seal = json.loads(prior_seal_bytes)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise SourceCaptureError("prior seal manifest is not valid JSON") from error
+    seal_files = prior_seal.get("files") if isinstance(prior_seal, dict) else None
+    manifest_entries = (
+        [
+            entry
+            for entry in seal_files
+            if isinstance(entry, dict) and entry.get("name") == "manifest.json"
+        ]
+        if isinstance(seal_files, list)
+        else []
+    )
+    if (
+        not isinstance(prior_seal, dict)
+        or prior_seal.get("format") != "genereviews-local-handoff-v1"
+        or prior_seal.get("corpus_release_id") != prior["corpus_release_id"]
+        or len(manifest_entries) != 1
+        or manifest_entries[0].get("sha256") != prior["manifest_sha256"]
+        or manifest_entries[0].get("size") != len(prior_bytes)
+    ):
+        raise SourceCaptureError("prior seal manifest does not bind the retained prior manifest")
+    prior_content = prior_record.get("content_identity") if isinstance(prior_record, dict) else None
+    logical_keys = {
+        "chapter_ids",
+        "chapter_count",
+        "chapter_digests",
+        "chapters_sha256",
+        "passages_sha256",
+    }
+    if (
+        not isinstance(prior_record, dict)
+        or prior_record.get("manifest_version") != "3"
+        or prior_record.get("corpus_release_id") != prior["corpus_release_id"]
+        or prior_record.get("app_git_sha") != prior["app_git_sha"]
+        or not isinstance(prior_content, Mapping)
+        or {key: prior_content.get(key) for key in logical_keys}
+        != {key: prior.get(key) for key in logical_keys}
+    ):
+        raise SourceCaptureError("prior manifest does not prove the claimed logical identity")
     _file_identity(archive, archive_identity, label="archive")
     members_sha256, expanded_sha256 = archive_content_identities(archive)
     if archive_identity.get("members_sha256") != members_sha256:

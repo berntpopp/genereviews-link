@@ -109,7 +109,10 @@ If the schema is empty, `/passages/search` returns 503 until a corpus is loaded 
 
 ```bash
 make db-migrate     # apply control + data migrations against $DATABASE_URL
-make ingest         # download → parse → write → swap
+genereview-link ingest --archive <archive> --side-data-dir <dir> \
+  --source-metadata <capture.json> --prior-manifest <prior-manifest.json> \
+  --prior-seal-manifest <prior-seal-manifest.json>
+                    # verify retained bytes → record identity → parse → write → swap
 make embed          # backfill embeddings + build the HNSW index
 make db-reset       # DROP and recreate the genereview schemas (dev only)
 ```
@@ -155,6 +158,12 @@ the sealed installation target, and proves the verifier module's `__file__` is b
 the source checkout and ambient site packages cannot shadow it in the credentialed job.
 A separately privileged automation may act only on that sealed handoff after the rights record exists.
 
+The privileged workflow never consumes a runner artifact or run ID as a handoff. Its protected
+sub-48-KiB handoff locator names exactly the sealed `corpus.dump`, `manifest.json`, `SHA256SUMS`,
+`seal-manifest.json`, and one publisher wheel by immutable numeric GitHub release-asset URL, size,
+and SHA-256, and binds the object ID and build revision. It reconstructs a fresh owner-only handoff,
+then the sealed wheel re-verifies its object identity before rights or release logic is reached.
+
 The protected publisher consumes a sub-48-KiB locator for exactly three immutable, numeric GitHub
 release assets: `rights-record.json`, `rights-evidence.json`, and `terms-snapshot.html`. Repository,
 host, byte-size, and SHA-256 allowlists are enforced before those durable bytes are accepted. The
@@ -171,12 +180,18 @@ that a local handoff object still exists. Record only an object ID together with
 absolute path after verifying that path—do not infer or claim an object from an earlier log line.
 
 The no-input builder uses a separate sub-48-KiB protected locator to download the exact retained
-archive, source-capture metadata, and three side-data files from immutable numeric release assets.
+archive, source-capture metadata, prior release manifest and seal manifest, and three side-data
+files from immutable numeric release assets.
 Ingest never substitutes a live fetch for this publication path. The corpus manifest binds the
 canonical upstream URLs, exact raw listing response digest/size/capture time, archive digest/size and
 sorted member/expanded-content identities, exact sorted chapter IDs, and digest/size identity for
 each side-data file. These fields and compute-time runtime/model provenance are stored immutably with
 the active corpus rows; packaging refuses older database rows that lack the complete identity.
+The prior release ID, application revision, manifest digest, and full logical content tuple are
+verified from the retained prior manifest before staging is touched. Restore writes the immutable
+`public.genereview_release_readiness` marker only after migrations, exactly one data-only restore,
+counts, HNSW, source digest, and the reviewed semantic suite succeed; it binds the three logical
+volumes `genereview_pg_data`, `genereview_pg_run`, and `genereview_restore_state`.
 
 The privileged workflow downloads only the exact eight public reconstruction assets through byte-
 and deadline-bounded allowlisted streams, verifies their API asset IDs/sizes/digests and attestation,

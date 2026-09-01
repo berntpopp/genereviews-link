@@ -16,6 +16,8 @@ from genereview_link.download_guard import STREAM_TIMEOUT, make_url_guard, strea
 SOURCE_ASSETS = frozenset(
     {
         "source-capture.json",
+        "prior-manifest.json",
+        "prior-seal-manifest.json",
         "gene_NBK1116.tar.gz",
         "GRtitle_shortname_NBKid.txt",
         "NBKid_shortname_genesymbol.txt",

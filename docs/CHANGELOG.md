@@ -207,6 +207,10 @@ so this server composes cleanly behind the `genefoundry-router` gateway under th
 
 ### Fixed
 
+- Production corpus restore now retains the installed application and exact PostgreSQL 18 clients.
+  Publication consumes a durable digest-addressed sealed-handoff locator, resumes only exact partial
+  drafts, uses a final annotated tag transaction, verifies retained prior-manifest identity before
+  staging, and writes the three-volume `verified-v1` readiness proof only after restored semantics.
 - Corpus packaging now writes deterministic, data-only release directories with canonical metadata
   and `SHA256SUMS`. Local sealing and rights-bound publish-handoff verification are fail-closed and
   never contact a release service.

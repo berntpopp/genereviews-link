@@ -70,11 +70,9 @@ def freeze_release(
     }
 
 
-def assert_prepatch(frozen: dict[str, Any], *, conditional_status: int, tag_status: int) -> None:
+def assert_prepatch(frozen: dict[str, Any], *, conditional_status: int) -> None:
     if conditional_status != 304:
         raise PromotionStateError("release ETag precondition changed after semantic verification")
-    if tag_status != 404:
-        raise PromotionStateError("tag existed before the final release promotion point")
 
 
 def assert_postpublication(
@@ -117,7 +115,6 @@ def main() -> None:
     prepatch = subparsers.add_parser("prepatch")
     prepatch.add_argument("--frozen", required=True, type=Path)
     prepatch.add_argument("--status", required=True, type=int)
-    prepatch.add_argument("--tag-status", required=True, type=int)
     post = subparsers.add_parser("post")
     post.add_argument("--frozen", required=True, type=Path)
     post.add_argument("--published", required=True, type=Path)
@@ -129,9 +126,7 @@ def main() -> None:
         )
         args.out.write_text(json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n")
     elif args.command == "prepatch":
-        assert_prepatch(
-            _read(args.frozen), conditional_status=args.status, tag_status=args.tag_status
-        )
+        assert_prepatch(_read(args.frozen), conditional_status=args.status)
     else:
         assert_postpublication(
             _read(args.frozen), published=_read(args.published), tag_ref=_read(args.tag_ref)

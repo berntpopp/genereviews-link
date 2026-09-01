@@ -47,17 +47,10 @@ def _frozen() -> dict[str, object]:
     )
 
 
-@pytest.mark.parametrize("mutation", ["etag", "tag_appeared"])
-def test_prepatch_rejects_mutation_after_semantic_verification(mutation: str) -> None:
-    status = 304
-    tag_status = 404
-    if mutation == "etag":
-        status = 200
-    else:
-        tag_status = 200
-
+@pytest.mark.parametrize("status", [200, 412])
+def test_prepatch_rejects_mutation_after_semantic_verification(status: int) -> None:
     with pytest.raises(PromotionStateError):
-        assert_prepatch(_frozen(), conditional_status=status, tag_status=tag_status)
+        assert_prepatch(_frozen(), conditional_status=status)
 
 
 @pytest.mark.parametrize("mutation", ["asset_id", "asset_digest", "target", "release_id"])

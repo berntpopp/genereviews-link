@@ -10,6 +10,7 @@ EXPECTED_CONTROL_MIGRATIONS = frozenset(
         "0004_active_embedding",
         "0005_corpus_source_identity",
         "0006_computation_runs",
+        "0007_release_readiness",
     }
 )
 EXPECTED_DATA_MIGRATIONS = frozenset(

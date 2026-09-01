@@ -199,6 +199,8 @@ jobs:
               destination / "source-capture.json",
               archive=destination / "gene_NBK1116.tar.gz",
               side_data_dir=destination,
+              prior_manifest=destination / "prior-manifest.json",
+              prior_seal_manifest=destination / "prior-seal-manifest.json",
           )
           manifest = json.loads((Path(os.environ["VERIFY_DIR"]) / "manifest.json").read_bytes())
           if capture != manifest["source_capture"]:
@@ -377,6 +379,24 @@ jobs:
           PY
           jq -e --argjson expected "$(jq -c '.evaluation.results' "$VERIFY_DIR/manifest.json")" \
             '.results == $expected' "$RUNNER_TEMP/restored-evaluation.json" >/dev/null
+          DATABASE_URL="$DATABASE_URL" uv run python - "$VERIFY_DIR/manifest.json" <<'PY'
+          import asyncio, json, sys
+          from genereview_link.corpus.readiness import write_release_readiness
+          from genereview_link.db.pool import create_pool
+          async def main():
+              pool = await create_pool()
+              try:
+                  manifest = json.load(open(sys.argv[1]))
+                  await write_release_readiness(
+                      pool, manifest,
+                      artifact_digest="sha256:" + manifest["evaluation"]["dump_sha256"],
+                  )
+              finally:
+                  await pool.close()
+          asyncio.run(main())
+          PY
+          test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
+            "select count(*) from public.genereview_release_readiness where is_active and ready and readiness_marker='verified-v1' and readiness->>'restore_mode'='data-only' and (readiness->>'restore_count')::int=1")" = 1
           printf '{"release_id":%s,"tag":%s,"target_commit":%s,"assets_sha256":%s,"nonce":%s,"dispatch_time":%s,"run_id":%s,"run_started_at":%s,"head_sha":%s,"source_ref":%s,"phase":%s,"release_etag":%s,"status":"passed"}\n' \
             "$EXPECTED_RELEASE_ID" \
             "$(jq -Rn --arg value "$EXPECTED_RELEASE_TAG" '$value')" \

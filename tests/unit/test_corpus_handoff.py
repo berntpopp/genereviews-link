@@ -45,13 +45,14 @@ def _source(tmp_path: Path) -> Path:
 
 
 def _write_rights(path: Path, record: dict[str, object], tmp_path: Path) -> None:
-    evidence = tmp_path / "rights-evidence.json"
+    del tmp_path
+    evidence = path.parent / "rights-evidence.json"
     evidence.write_text('{"decision":"affirmative"}\n')
-    terms = tmp_path / "terms-snapshot.html"
+    terms = path.parent / "terms-snapshot.html"
     terms.write_text("<html>reviewed terms 2026-08</html>\n")
-    record["terms_uri"] = str(terms)
+    record["terms_uri"] = "bundle:terms-snapshot.html"
     record["terms_sha256"] = hashlib.sha256(terms.read_bytes()).hexdigest()
-    record["evidence_uri"] = str(evidence)
+    record["evidence_uri"] = "bundle:rights-evidence.json"
     record["evidence_sha256"] = hashlib.sha256(evidence.read_bytes()).hexdigest()
     unsigned = dict(record)
     record["rights_record_sha256"] = hashlib.sha256(
@@ -809,12 +810,12 @@ def test_rights_record_rejects_future_decision_and_relative_evidence(tmp_path: P
     record["evidence_uri"] = "rights-record.json"
     _rewrite_rights_digest(record)
     rights.write_text(json.dumps(record))
-    with pytest.raises(HandoffError, match="durable"):
+    with pytest.raises(HandoffError, match="bundle"):
         verify_rights_record(rights, sealed.object_id)
     record["evidence_uri"] = "/var/lib/rights-record.json"
     _rewrite_rights_digest(record)
     rights.write_text(json.dumps(record))
-    with pytest.raises(HandoffError, match="durable"):
+    with pytest.raises(HandoffError, match="bundle"):
         verify_rights_record(rights, sealed.object_id)
 
 
@@ -839,7 +840,7 @@ def test_rights_record_rejects_changed_terms_snapshot(tmp_path: Path) -> None:
     }
     rights = tmp_path / "rights.json"
     _write_rights(rights, record, tmp_path)
-    Path(str(record["terms_uri"])).write_text("changed after review\n")
+    rights.with_name("terms-snapshot.html").write_text("changed after review\n")
 
     with pytest.raises(HandoffError, match="terms document digest"):
         prepare_publish_handoff(tmp_path / "handoffs", sealed.object_id, rights)

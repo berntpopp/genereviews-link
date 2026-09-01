@@ -1,5 +1,9 @@
 # Multi-stage Dockerfile for GeneReview-Link
 
+# Exact client binaries for data-only dump/restore compatibility. The same immutable
+# PostgreSQL 18/pgvector image is used by corpus build and verification workflows.
+FROM pgvector/pgvector:0.8.2-pg18@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d AS pg18-client
+
 # --- Builder Stage ---
 FROM python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217 AS builder
 
@@ -31,6 +35,7 @@ RUN uv sync --frozen --no-dev --active --extra cpu
 # --- Prepared Stage ---
 FROM python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217 AS prepared
 
+COPY --from=pg18-client /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc /usr/share/keyrings/pgdg.asc
 
 # Release identity is supplied by the central container-release workflow.
 ARG APP_VERSION=0.0.0
@@ -50,13 +55,18 @@ ENV VCS_REF="${VCS_REF}"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:$PATH" \
+    PATH="/opt/venv/bin:/usr/local/lib/postgresql/18/bin:$PATH" \
     PYTHONPATH="/home/app/web" \
     GENEREVIEW_LINK_HOST=0.0.0.0 \
     GENEREVIEW_LINK_PORT=8000 \
     TMPDIR=/tmp
 
-RUN apt-get update \
+RUN test "$(sha256sum /usr/share/keyrings/pgdg.asc | cut -d' ' -f1)" = \
+        0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76 \
+    && printf '%s\n' \
+        'deb [signed-by=/usr/share/keyrings/pgdg.asc] https://apt.postgresql.org/pub/repos/apt trixie-pgdg main' \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
     && apt-get install -y --only-upgrade --no-install-recommends \
     openssl \
     libssl3t64 \
@@ -64,7 +74,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
-    postgresql-client \
+    libpq5=18.4-1.pgdg13+1 \
+    postgresql-client-18=18.4-1.pgdg13+1 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
@@ -85,7 +96,10 @@ COPY --chown=app:app ./docker/gunicorn_conf.py ./
 # is not flagged by image scanners (CVE-2025-8869, CVE-2026-1703/3219/6357) and
 # the bootstrap stays reproducible, then install the project into the virtualenv.
 RUN /usr/local/bin/python -m pip install --no-cache-dir pip==26.1 && \
-    /opt/venv/bin/pip install . --no-deps
+    /opt/venv/bin/pip install . --no-deps && \
+    pg_dump --version | grep -Eq 'PostgreSQL\) 18\.' && \
+    pg_restore --version | grep -Eq 'PostgreSQL\) 18\.' && \
+    psql --version | grep -Eq 'PostgreSQL\) 18\.'
 
 # Production serving and migration tasks use FakeEmbeddingProvider by default.
 # The real BGE embedding stack is used by offline embedding workflows, but its
@@ -133,7 +147,6 @@ RUN rm -rf /opt/venv/lib/python3.12/site-packages/nvidia \
            /opt/venv/lib/python3.12/site-packages/torchgen \
            /opt/venv/lib/python3.12/site-packages/transformers \
            /opt/venv/lib/python3.12/site-packages/transformers-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/genereview_link/corpus \
            /opt/venv/lib/python3.12/site-packages/docutils/writers/odf_odt \
            /opt/venv/lib/python3.12/site-packages/pkg_resources/tests \
            /usr/lib/x86_64-linux-gnu/perl/5.40.1/Data \
@@ -142,7 +155,6 @@ RUN rm -rf /opt/venv/lib/python3.12/site-packages/nvidia \
            /usr/share/man \
            /usr/share/postgresql/*/man \
            /root/.cache/pip \
-           /home/app/web/genereview_link \
     && find /opt/venv/lib/python3.12/site-packages/numpy -type d -name tests -prune -exec rm -rf '{}' + \
     && find /usr/local/lib/python3.12 /opt/venv /home/app/web -type d -name __pycache__ -prune -exec rm -rf '{}' +
 
@@ -180,7 +192,7 @@ ENV VCS_REF="${VCS_REF}"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:$PATH" \
+    PATH="/opt/venv/bin:/usr/local/lib/postgresql/18/bin:$PATH" \
     PYTHONPATH="/home/app/web" \
     GENEREVIEW_LINK_HOST=0.0.0.0 \
     GENEREVIEW_LINK_PORT=8000 \

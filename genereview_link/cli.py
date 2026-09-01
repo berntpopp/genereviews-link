@@ -210,6 +210,8 @@ def ingest_cmd(
     archive: Annotated[Path | None, typer.Option("--archive")] = None,
     side_data_dir: Annotated[Path | None, typer.Option("--side-data-dir")] = None,
     source_metadata: Annotated[Path | None, typer.Option("--source-metadata")] = None,
+    prior_manifest: Annotated[Path | None, typer.Option("--prior-manifest")] = None,
+    prior_seal_manifest: Annotated[Path | None, typer.Option("--prior-seal-manifest")] = None,
 ) -> None:
     """Run the full ingest pipeline against DATABASE_URL."""
     import asyncio
@@ -228,6 +230,8 @@ def ingest_cmd(
                 archive=archive,
                 side_data_dir=side_data_dir,
                 source_metadata=source_metadata,
+                prior_manifest=prior_manifest,
+                prior_seal_manifest=prior_seal_manifest,
             )
             typer.echo(
                 f"ingested {result.chapter_count} chapters / "
@@ -399,6 +403,11 @@ def corpus_restore() -> None:
     definition is ever taken from the artifact either.
     """
     from genereview_link.config import settings
+    from genereview_link.corpus.readiness import (
+        ReadinessError,
+        require_release_readiness,
+        write_release_readiness,
+    )
     from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
     from genereview_link.db.pool import create_pool
     from genereview_link.db.restore import (
@@ -425,7 +434,8 @@ def corpus_restore() -> None:
                 "select version from public.genereview_corpus_version where is_active"
             )
             if active:
-                logger.info("active corpus already present; nothing to restore", version=active)
+                await require_release_readiness(pool)
+                logger.info("active corpus and readiness already present", version=active)
                 return
 
             bundle = extract_bundle(
@@ -455,13 +465,18 @@ def corpus_restore() -> None:
             )
             if not restored:
                 raise ArchivePolicyError("restore completed with no active corpus version")
+            await write_release_readiness(
+                pool,
+                bundle.manifest,
+                artifact_digest=f"sha256:{settings.CORPUS_BUNDLE_SHA256.lower()}",
+            )
             logger.info("corpus restored", version=restored)
         finally:
             await pool.close()
 
     try:
         asyncio.run(run())
-    except ArchivePolicyError as exc:
+    except (ArchivePolicyError, ReadinessError) as exc:
         typer.echo(f"corpus restore refused: {exc}", err=True)
         raise typer.Exit(1) from exc
 

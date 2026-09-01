@@ -120,6 +120,57 @@ def _write_side_data(side_dir: Path) -> None:
     (side_dir / "NBKid_shortname_OMIM.txt").write_text("NBK1\tone\t100001\nNBK2\ttwo\t100002\n")
 
 
+def _write_prior_manifest(tmp_path: Path, capture: dict[str, object]) -> tuple[Path, Path]:
+    prior = capture["prior_artifact"]
+    assert isinstance(prior, dict)
+    manifest = tmp_path / "prior-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "manifest_version": "3",
+                "corpus_release_id": "2026-08-01-r1",
+                "app_git_sha": "1" * 40,
+                "content_identity": {
+                    key: prior[key]
+                    for key in (
+                        "chapter_ids",
+                        "chapter_count",
+                        "chapter_digests",
+                        "chapters_sha256",
+                        "passages_sha256",
+                    )
+                },
+            },
+            sort_keys=True,
+        )
+    )
+    prior["manifest_sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    prior["corpus_release_id"] = "2026-08-01-r1"
+    prior["app_git_sha"] = "1" * 40
+    seal = tmp_path / "prior-seal-manifest.json"
+    seal.write_text(
+        json.dumps(
+            {
+                "format": "genereviews-local-handoff-v1",
+                "corpus_release_id": prior["corpus_release_id"],
+                "files": [
+                    {
+                        "name": "manifest.json",
+                        "sha256": prior["manifest_sha256"],
+                        "size": manifest.stat().st_size,
+                        "mode": 0o400,
+                    }
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    prior["object_id"] = hashlib.sha256(seal.read_bytes()).hexdigest()
+    return manifest, seal
+
+
 def test_offline_capture_binds_exact_retained_files_and_is_not_deleted(tmp_path: Path) -> None:
     archive = tmp_path / "gene_NBK1116.tar.gz"
     member = tmp_path / "NBK1.nxml"
@@ -130,16 +181,81 @@ def test_offline_capture_binds_exact_retained_files_and_is_not_deleted(tmp_path:
     side_dir.mkdir()
     _write_side_data(side_dir)
     metadata = tmp_path / "source-capture.json"
-    metadata.write_text(json.dumps(_capture_metadata(archive, side_dir)))
+    capture_metadata = _capture_metadata(archive, side_dir)
+    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture_metadata)
+    metadata.write_text(json.dumps(capture_metadata))
 
-    capture = load_offline_capture(metadata, archive=archive, side_data_dir=side_dir)
+    capture = load_offline_capture(
+        metadata,
+        archive=archive,
+        side_data_dir=side_dir,
+        prior_manifest=prior_manifest,
+        prior_seal_manifest=prior_seal,
+    )
 
     assert capture["chapter_ids"] == ["NBK1", "NBK2"]
     assert archive.is_file()
     assert all(path.is_file() for path in side_dir.iterdir())
     archive.write_bytes(b"tampered archive")
     with pytest.raises(SourceCaptureError, match=r"archive (size|digest)"):
-        load_offline_capture(metadata, archive=archive, side_data_dir=side_dir)
+        load_offline_capture(
+            metadata,
+            archive=archive,
+            side_data_dir=side_dir,
+            prior_manifest=prior_manifest,
+            prior_seal_manifest=prior_seal,
+        )
+
+
+def test_offline_capture_rejects_fabricated_prior_tuple(tmp_path: Path) -> None:
+    archive = tmp_path / "gene_NBK1116.tar.gz"
+    member = tmp_path / "NBK1.nxml"
+    member.write_text("<article>retained</article>")
+    with tarfile.open(archive, "w:gz") as retained:
+        retained.add(member, arcname="NBK1/NBK1.nxml")
+    side_dir = tmp_path / "side"
+    side_dir.mkdir()
+    _write_side_data(side_dir)
+    capture = _capture_metadata(archive, side_dir)
+    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture)
+    prior = capture["prior_artifact"]
+    assert isinstance(prior, dict)
+    prior["chapters_sha256"] = "9" * 64
+    metadata = tmp_path / "source-capture.json"
+    metadata.write_text(json.dumps(capture))
+
+    with pytest.raises(SourceCaptureError, match="prior manifest"):
+        load_offline_capture(
+            metadata,
+            archive=archive,
+            side_data_dir=side_dir,
+            prior_manifest=prior_manifest,
+            prior_seal_manifest=prior_seal,
+        )
+
+    prior["chapters_sha256"] = "f" * 64
+    metadata.write_text(json.dumps(capture))
+    unsafe_prior = tmp_path / "unsafe-prior-manifest.json"
+    unsafe_prior.symlink_to(prior_manifest)
+    with pytest.raises(SourceCaptureError, match="unsafe"):
+        load_offline_capture(
+            metadata,
+            archive=archive,
+            side_data_dir=side_dir,
+            prior_manifest=unsafe_prior,
+            prior_seal_manifest=prior_seal,
+        )
+
+    prior["object_id"] = "0" * 64
+    metadata.write_text(json.dumps(capture))
+    with pytest.raises(SourceCaptureError, match="object ID"):
+        load_offline_capture(
+            metadata,
+            archive=archive,
+            side_data_dir=side_dir,
+            prior_manifest=prior_manifest,
+            prior_seal_manifest=prior_seal,
+        )
 
 
 def test_offline_capture_rejects_chapter_ids_not_derived_from_retained_mapping(
@@ -154,12 +270,19 @@ def test_offline_capture_rejects_chapter_ids_not_derived_from_retained_mapping(
     side_dir.mkdir()
     _write_side_data(side_dir)
     capture = _capture_metadata(archive, side_dir)
+    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture)
     capture["chapter_ids"] = ["NBK1", "NBK3"]
     metadata = tmp_path / "source-capture.json"
     metadata.write_text(json.dumps(capture))
 
     with pytest.raises(SourceCaptureError, match="authoritative side mapping"):
-        load_offline_capture(metadata, archive=archive, side_data_dir=side_dir)
+        load_offline_capture(
+            metadata,
+            archive=archive,
+            side_data_dir=side_dir,
+            prior_manifest=prior_manifest,
+            prior_seal_manifest=prior_seal,
+        )
 
 
 def test_archive_identity_accepts_safe_directory_members(tmp_path: Path) -> None:
@@ -188,12 +311,19 @@ def test_offline_capture_rejects_noncanonical_upstream_urls(tmp_path: Path) -> N
     side_dir.mkdir()
     _write_side_data(side_dir)
     capture = _capture_metadata(archive, side_dir)
+    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture)
     capture["listing"]["url"] = "https://attacker.example/file_list.csv"  # type: ignore[index]
     metadata = tmp_path / "source-capture.json"
     metadata.write_text(json.dumps(capture))
 
     with pytest.raises(SourceCaptureError, match="canonical"):
-        load_offline_capture(metadata, archive=archive, side_data_dir=side_dir)
+        load_offline_capture(
+            metadata,
+            archive=archive,
+            side_data_dir=side_dir,
+            prior_manifest=prior_manifest,
+            prior_seal_manifest=prior_seal,
+        )
 
 
 @pytest.mark.parametrize(
