@@ -301,10 +301,10 @@ def test_rights_record_rejects_nontransferable_filesystem_references(
         "responsible_reviewer": "reviewer@example.org",
         "rights_authority": "Bernt Popp / repository owner",
         "authorization_uri": "https://github.com/berntpopp/genereviews-link/issues/27",
-        "decision_time": "2026-08-30T12:00:00Z",
+        "decision_time": "2026-09-01T00:00:00Z",
         "terms_uri": uri,
         "terms_sha256": hashlib.sha256(document.read_bytes()).hexdigest(),
-        "terms_version": "2026-08",
+        "terms_version": "2026-09-01",
         "terms_source_uri": "https://www.genereviews.org/",
         "permitted_asset_use": (
             "immutable GeneReviews research corpus artifact for noncommercial research purposes "

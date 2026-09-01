@@ -40,7 +40,7 @@ jobs:
             exit 1
           }
   build:
-    if: ${{ needs.validate.result == 'success' && inputs.object_id == '' }}
+    if: ${{ needs.validate.result == 'success' && inputs.object_id == '' && github.ref == 'refs/heads/main' }}
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -641,25 +641,88 @@ jobs:
               "$PUBLISHER_ENV" "$@"
           }
 
-          require_exact_tag() {
+          read_tag_state() {
             response="$RUNNER_TEMP/required-tag-ref.json"
-            timeout 60s gh api "repos/$GH_REPO/git/ref/tags/$tag" >"$response"
+            status="$(timeout 60s curl --silent --show-error --proto '=https' \
+              --connect-timeout 15 --max-time 60 --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer $GH_TOKEN" --output "$response" \
+              --write-out '%{http_code}' \
+              "https://api.github.com/repos/$GH_REPO/git/ref/tags/$tag")"
+            if test "$status" = 404; then
+              TAG_STATE=absent
+              REQUIRED_TAG_OBJECT_SHA=""
+              printf 'null\n' >"$response"
+              return
+            fi
+            test "$status" = 200
             tag_sha="$(jq -er '.object | select(.type == "tag") | .sha | select(test("^[0-9a-f]{40}$"))' "$response")"
             tag_object="$RUNNER_TEMP/required-tag-object.json"
             timeout 60s gh api "repos/$GH_REPO/git/tags/$tag_sha" >"$tag_object"
             python3 -I - "$PUBLISHER_ENV" "$response" "$tag_object" "$tag" "$build_revision" "$OBJECT_ID" <<'PY'
-          import json, sys
+          import sys
           from pathlib import Path
           target, ref_path, object_path, tag, revision, object_id = sys.argv[1:]
           sys.path.insert(0, target)
           from genereview_link.corpus.release_transaction import verify_existing_tag_state
+          from genereview_link.strict_json import load_strict_json
           verify_existing_tag_state(
-              json.loads(Path(ref_path).read_text()), json.loads(Path(object_path).read_text()),
+              load_strict_json(Path(ref_path).read_bytes(), max_bytes=1024 * 1024),
+              load_strict_json(Path(object_path).read_bytes(), max_bytes=1024 * 1024),
               tag=tag, target=revision, object_id=object_id,
           )
           PY
+            TAG_STATE=exact
             REQUIRED_TAG_OBJECT_SHA="$tag_sha"
+            # The post-publication checker consumes the independently verified peeled target.
             jq -n --arg revision "$build_revision" '{object:{type:"commit",sha:$revision}}' >"$response"
+          }
+
+          require_exact_tag() {
+            read_tag_state
+            test "$TAG_STATE" = exact
+          }
+
+          ensure_exact_tag() {
+            read_tag_state
+            test "$TAG_STATE" = absent || test "$TAG_STATE" = exact
+            if test "$TAG_STATE" = exact; then return; fi
+            created_object="$RUNNER_TEMP/created-tag-object.json"
+            timeout 60s gh api --method POST "repos/$GH_REPO/git/tags" \
+              -f tag="$tag" -f message="GeneReviews sealed object $OBJECT_ID" \
+              -f object="$build_revision" -f type=commit >"$created_object"
+            created_tag_sha="$(jq -er '.sha | select(test("^[0-9a-f]{40}$"))' "$created_object")"
+            python3 -I - "$PUBLISHER_ENV" "$created_object" "$tag" "$build_revision" "$OBJECT_ID" <<'PY'
+          import sys
+          from pathlib import Path
+          target, object_path, tag, revision, object_id = sys.argv[1:]
+          sys.path.insert(0, target)
+          from genereview_link.corpus.release_transaction import verify_annotated_tag
+          from genereview_link.strict_json import load_strict_json
+          tag_object = load_strict_json(Path(object_path).read_bytes(), max_bytes=1024 * 1024)
+          verify_annotated_tag(
+              {"object": {"type": "tag", "sha": tag_object.get("sha")}}, tag_object,
+              tag=tag, target=revision, object_id=object_id,
+          )
+          PY
+            # A concurrent exact creator wins safely; any conflicting state fails closed.
+            read_tag_state
+            if test "$TAG_STATE" = exact; then
+              echo "tag race resolved to the exact annotated object"
+              return
+            fi
+            created_ref="$RUNNER_TEMP/created-tag-ref.json"
+            if ! timeout 60s gh api --method POST "repos/$GH_REPO/git/refs" \
+              -f ref="refs/tags/$tag" -f sha="$created_tag_sha" >"$created_ref"; then
+              read_tag_state
+              test "$TAG_STATE" = exact
+              echo "tag race resolved to the exact annotated object"
+              return
+            fi
+            jq -e --arg sha "$created_tag_sha" --arg tag "$tag" \
+              '.ref == ("refs/tags/" + $tag) and .object.type == "tag" and .object.sha == $sha' \
+              "$created_ref" >/dev/null
+            read_tag_state
+            test "$TAG_STATE" = exact
           }
 
           require_tag_ruleset() {
@@ -798,10 +861,9 @@ jobs:
           immutable_releases="$RUNNER_TEMP/immutable-releases.json"
           timeout 60s gh api "repos/$GH_REPO/immutable-releases" >"$immutable_releases"
           jq -e '.enabled == true' "$immutable_releases" >/dev/null
-          # A repository owner reserves the exact annotated tag after reviewing the
-          # retained build artifact. An active no-bypass tag ruleset makes that ref
-          # immutable before this credentialed job may create or upload a draft.
-          require_exact_tag
+          # Reject a conflicting tag before any mutation. An absent tag is created only
+          # after independent prepublication acceptance at the serialized final gate.
+          read_tag_state
           require_tag_ruleset
 
           inventory="$RUNNER_TEMP/release-inventory.jsonl"
@@ -841,7 +903,7 @@ jobs:
           fi
 
           # Repeat after any draft creation and before the first asset upload.
-          require_exact_tag
+          read_tag_state
           require_tag_ruleset
 
           expected_assets="$RUNNER_TEMP/expected-assets.json"
@@ -926,12 +988,8 @@ jobs:
             before="$RUNNER_TEMP/release-$release_id.json"
             after="$RUNNER_TEMP/post-promotion-release.json"
             frozen="$RUNNER_TEMP/verified-release-state.json"
-            require_exact_tag
+            read_tag_state
             require_tag_ruleset
-            sealed_python freeze \
-              --release "$before" --etag "$verified_etag" --tag "$tag" \
-              --target "$build_revision" --tag-object-sha "$REQUIRED_TAG_OBJECT_SHA" \
-              --out "$frozen"
             dispatch_verifier prepublication "$verified_etag" "$before"
             jq -c '[.assets[] | {id, name, size, digest}] | sort_by(.name)' "$before" \
               >"$RUNNER_TEMP/pre-promotion-assets.json"
@@ -941,8 +999,12 @@ jobs:
               --header "If-None-Match: $verified_etag" \
               "https://api.github.com/repos/$GH_REPO/releases/$release_id" >"$precondition"
             test "$(cat "$precondition")" = 304
-            require_exact_tag
             require_tag_ruleset
+            ensure_exact_tag
+            sealed_python freeze \
+              --release "$before" --etag "$verified_etag" --tag "$tag" \
+              --target "$build_revision" --tag-object-sha "$REQUIRED_TAG_OBJECT_SHA" \
+              --out "$frozen"
             timeout 60s curl --silent --show-error --output /dev/null \
               --write-out '%{http_code}\n' --header "Authorization: Bearer $GH_TOKEN" \
               --header "If-None-Match: $verified_etag" \

@@ -140,8 +140,8 @@ def test_each_promotion_path_uses_exact_release_and_tag_identities() -> None:
     assert '--method PATCH "repos/$GH_REPO/releases/$release_id"' in script
     assert "uploads.github.com/repos/$GH_REPO/releases/$release_id/assets" in script
     assert "repos/$GH_REPO/git/ref/tags/$tag" in script
-    assert '--method POST "repos/$GH_REPO/git/refs"' not in script
-    assert '--method POST "repos/$GH_REPO/git/tags"' not in script
+    assert '--method POST "repos/$GH_REPO/git/refs"' in script
+    assert '--method POST "repos/$GH_REPO/git/tags"' in script
     assert "repos/$GH_REPO/rulesets/$GENEREVIEWS_TAG_RULESET_ID" in script
     assert "--tag-object-sha" in script
     assert "--ruleset" in script
@@ -151,6 +151,7 @@ def test_each_promotion_path_uses_exact_release_and_tag_identities() -> None:
     assert '.draft == false and .immutable == true and (.published_at | type == "string")' in script
     assert script.count("verify_remote") >= 3
     assert "require_exact_tag" in script
+    assert "ensure_exact_tag" in script
     assert "published_noop: exact immutable release verified" in script
     assert "If-Match: $verified_etag" in script
     assert "If-None-Match: $verified_etag" in script

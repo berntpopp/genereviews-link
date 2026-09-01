@@ -21,6 +21,7 @@ from genereview_link.download_guard import (
     read_capped,
     stream_to_file,
 )
+from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 GITHUB_API = "https://api.github.com"
 ASSET_NAMES = ("corpus.dump", "manifest.json", "SHA256SUMS")
@@ -120,11 +121,13 @@ async def _release_assets(
         except Exception as error:
             raise ReleaseAssetError("release metadata could not be read safely") from error
     try:
-        release = json.loads(payload)
+        release = load_strict_json(payload, max_bytes=MAX_METADATA_BYTES)
         if not isinstance(release, dict):
             raise TypeError("release metadata is not an object")
         assets = release["assets"]
-    except (KeyError, TypeError, json.JSONDecodeError) as error:
+    except StrictJsonError as error:
+        raise ReleaseAssetError("release metadata is not strict bounded JSON") from error
+    except (KeyError, TypeError) as error:
         raise ReleaseAssetError("release metadata is malformed") from error
     if not isinstance(assets, list):
         raise ReleaseAssetError("release metadata assets are malformed")

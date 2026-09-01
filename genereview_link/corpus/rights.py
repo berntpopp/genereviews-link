@@ -16,7 +16,9 @@ MAX_METADATA_BYTES = 1 << 20
 RIGHTS_AUTHORITY = "Bernt Popp / repository owner"
 RIGHTS_APPROVAL_KIND = "repository-owner redistribution determination"
 RIGHTS_AUTHORIZATION_URI = "https://github.com/berntpopp/genereviews-link/issues/27"
+RIGHTS_AUTHORIZATION_DATE = "2026-09-01"
 RIGHTS_TERMS_SOURCE_URI = "https://www.genereviews.org/"
+RIGHTS_TERMS_VERSION = "2026-09-01"
 RIGHTS_PERMITTED_ASSET_USE = (
     "immutable GeneReviews research corpus artifact for noncommercial research purposes only; "
     "no further modifications"
@@ -139,12 +141,27 @@ def verify_rights_record(
         raise RightsError("rights record authority is not the repository owner")
     if record["authorization_uri"] != RIGHTS_AUTHORIZATION_URI:
         raise RightsError("rights record is not bound to the durable owner authorization")
+    decision_time = str(record["decision_time"])
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z", decision_time):
+        raise RightsError("rights record decision_time must be dated UTC")
+    try:
+        parsed_time = datetime.fromisoformat(f"{decision_time[:-1]}+00:00")
+    except ValueError as error:
+        raise RightsError(
+            "rights record decision_time must be an ISO-8601 UTC timestamp"
+        ) from error
+    if parsed_time.date().isoformat() != RIGHTS_AUTHORIZATION_DATE:
+        raise RightsError("rights record must use the dated 2026-09-01 owner authorization")
+    if parsed_time > datetime.now(UTC):
+        raise RightsError("rights record decision_time cannot be in the future")
     if str(record["responsible_reviewer"]).casefold() == str(record["rights_authority"]).casefold():
         raise RightsError("rights record requires distinct responsible reviewer and authority")
     if record["permitted_asset_use"] != RIGHTS_PERMITTED_ASSET_USE:
         raise RightsError("rights record permitted_asset_use is not the reviewed value")
     if record["attribution"] != RIGHTS_ATTRIBUTION:
         raise RightsError("rights record attribution is not the reviewed value")
+    if record["terms_version"] != RIGHTS_TERMS_VERSION:
+        raise RightsError("rights record terms version is not the exact reviewed snapshot")
     for name in ("source_sha256", "artifact_sha256", "terms_sha256", "evidence_sha256"):
         if not SHA256_RE.fullmatch(str(record[name])):
             raise RightsError(f"rights record {name} must be a lowercase SHA-256")
@@ -188,6 +205,8 @@ def verify_rights_record(
         "responsible_reviewer",
         "authorization_uri",
         "decision_time",
+        "terms_version",
+        "terms_sha256",
         "terms_source_uri",
         "permitted_asset_use",
         "attribution",
@@ -202,17 +221,6 @@ def verify_rights_record(
         evidence[name] != record[name] for name in evidence_fields - {"format"}
     ):
         raise RightsError("rights evidence does not match the owner determination")
-    decision_time = str(record["decision_time"])
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z", decision_time):
-        raise RightsError("rights record decision_time must be dated UTC")
-    try:
-        parsed_time = datetime.fromisoformat(f"{decision_time[:-1]}+00:00")
-    except ValueError as error:
-        raise RightsError(
-            "rights record decision_time must be an ISO-8601 UTC timestamp"
-        ) from error
-    if parsed_time > datetime.now(UTC):
-        raise RightsError("rights record decision_time cannot be in the future")
     unsigned = {key: value for key, value in record.items() if key != "rights_record_sha256"}
     if hashlib.sha256(_canonical(unsigned)).hexdigest() != record["rights_record_sha256"]:
         raise RightsError("rights record canonical digest mismatch")

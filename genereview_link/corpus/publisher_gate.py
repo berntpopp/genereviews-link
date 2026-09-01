@@ -2,10 +2,38 @@
 
 from __future__ import annotations
 
-import json
+import hashlib
+import os
 from pathlib import Path
 
-from genereview_link.corpus.handoff import HandoffError, SealedHandoff, verify_handoff
+from genereview_link.corpus.handoff import (
+    MAX_METADATA_BYTES,
+    HandoffError,
+    SealedHandoff,
+    _open_directory,
+    _read_capped,
+    verify_handoff,
+)
+from genereview_link.strict_json import StrictJsonError, load_strict_json
+
+
+def _read_bound_seal(sealed: SealedHandoff) -> dict[str, object]:
+    if sealed.manifest.parent != sealed.path or sealed.manifest.name != "seal-manifest.json":
+        raise HandoffError("sealed manifest is outside the admitted handoff")
+    parent_fd = _open_directory(sealed.path)
+    try:
+        raw = _read_capped(sealed.manifest, limit=MAX_METADATA_BYTES, parent_fd=parent_fd)
+    finally:
+        os.close(parent_fd)
+    if hashlib.sha256(raw).hexdigest() != sealed.object_id:
+        raise HandoffError("sealed manifest identity changed")
+    try:
+        value = load_strict_json(raw, max_bytes=MAX_METADATA_BYTES)
+    except StrictJsonError as error:
+        raise HandoffError("sealed manifest is not strict bounded JSON") from error
+    if not isinstance(value, dict):
+        raise HandoffError("sealed manifest must be a JSON object")
+    return value
 
 
 def verify_rights_record(
@@ -16,12 +44,7 @@ def verify_rights_record(
 
     sealed_values: dict[str, str] | None = None
     if sealed is not None:
-        try:
-            seal = json.loads(sealed.manifest.read_bytes())
-        except (OSError, json.JSONDecodeError) as error:
-            raise HandoffError("sealed manifest is not valid JSON") from error
-        if not isinstance(seal, dict):
-            raise HandoffError("sealed manifest must be a JSON object")
+        seal = _read_bound_seal(sealed)
         sealed_values = {}
         for name in ("source_sha256", "artifact_sha256", "corpus_release_id"):
             value = seal.get(name)

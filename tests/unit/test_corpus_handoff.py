@@ -81,6 +81,8 @@ def _write_rights(path: Path, record: dict[str, object], tmp_path: Path) -> None
         "responsible_reviewer",
         "authorization_uri",
         "decision_time",
+        "terms_version",
+        "terms_sha256",
         "terms_source_uri",
         "permitted_asset_use",
         "attribution",
@@ -521,8 +523,8 @@ def test_rights_record_binds_affirmative_decision_to_exact_object(tmp_path: Path
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
         "rights_authority": RIGHTS_AUTHORITY,
-        "decision_time": "2026-08-30T12:00:00Z",
-        "terms_version": "2026-08",
+        "decision_time": "2026-09-01T00:00:00Z",
+        "terms_version": "2026-09-01",
         "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "https://example.org/rights-record",
@@ -696,8 +698,8 @@ def test_rights_record_must_bind_source_and_artifact_identity(tmp_path: Path) ->
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
         "rights_authority": RIGHTS_AUTHORITY,
-        "decision_time": "2026-08-30T12:00:00Z",
-        "terms_version": "2026-08",
+        "decision_time": "2026-09-01T00:00:00Z",
+        "terms_version": "2026-09-01",
         "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "https://example.org/rights-record",
@@ -718,8 +720,8 @@ def test_publisher_rejects_a_rights_record_for_a_different_source(tmp_path: Path
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
         "rights_authority": RIGHTS_AUTHORITY,
-        "decision_time": "2026-08-30T12:00:00Z",
-        "terms_version": "2026-08",
+        "decision_time": "2026-09-01T00:00:00Z",
+        "terms_version": "2026-09-01",
         "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "https://example.org/rights-record",
@@ -851,8 +853,8 @@ def test_rights_record_requires_durable_evidence_and_distinct_reviewers(tmp_path
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
         "rights_authority": RIGHTS_AUTHORITY,
-        "decision_time": "2026-08-30T12:00:00Z",
-        "terms_version": "2026-08",
+        "decision_time": "2026-09-01T00:00:00Z",
+        "terms_version": "2026-09-01",
         "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "/var/lib/genereviews/rights-record.json",
@@ -867,7 +869,7 @@ def test_rights_record_requires_durable_evidence_and_distinct_reviewers(tmp_path
     assert verify_rights_record(rights, sealed.object_id)["decision"] == "affirmative"
 
 
-def test_rights_record_rejects_future_decision_and_relative_evidence(tmp_path: Path) -> None:
+def test_rights_record_rejects_relative_evidence(tmp_path: Path) -> None:
     sealed = seal_handoff(
         _source(tmp_path), tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path)
     )
@@ -876,8 +878,8 @@ def test_rights_record_rejects_future_decision_and_relative_evidence(tmp_path: P
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
         "rights_authority": RIGHTS_AUTHORITY,
-        "decision_time": "2999-08-30T12:00:00Z",
-        "terms_version": "2026-08",
+        "decision_time": "2026-09-01T00:00:00Z",
+        "terms_version": "2026-09-01",
         "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "evidence_uri": "rights-record.json",
@@ -910,8 +912,8 @@ def test_rights_record_rejects_changed_terms_snapshot(tmp_path: Path) -> None:
         "decision": "affirmative",
         "responsible_reviewer": "reviewer@example.org",
         "rights_authority": RIGHTS_AUTHORITY,
-        "decision_time": "2026-08-30T12:00:00Z",
-        "terms_version": "2026-08",
+        "decision_time": "2026-09-01T00:00:00Z",
+        "terms_version": "2026-09-01",
         "permitted_asset_use": RIGHTS_USE,
         "attribution": RIGHTS_ATTRIBUTION,
         "source_sha256": "a" * 64,

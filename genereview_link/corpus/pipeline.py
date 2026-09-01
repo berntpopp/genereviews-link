@@ -23,6 +23,7 @@ from genereview_link.corpus.records import ChapterRecord, PassageRecord
 from genereview_link.corpus.sidedata import load_sidedata
 from genereview_link.corpus.source_capture import load_offline_capture
 from genereview_link.corpus.source_identity import SIDEDATA_FILES, validate_source_identity
+from genereview_link.corpus.source_snapshot import admit_offline_source
 from genereview_link.db.identifiers import quote_pg_identifier
 from genereview_link.db.locks import CORPUS_INGEST_LOCK_KEY, CORPUS_WRITE_LOCK_KEY
 from genereview_link.db.migrate import apply_data_migrations
@@ -309,36 +310,37 @@ async def _run_full_ingest_locked(
             and prior_manifest is not None
             and prior_seal_manifest is not None
         )
-        capture = load_offline_capture(
-            source_metadata,
-            archive=archive,
-            side_data_dir=side_data_dir,
-            prior_manifest=prior_manifest,
-            prior_seal_manifest=prior_seal_manifest,
-        )
-        listing_data = capture["listing"]
-        archive_data = capture["archive"]
-        side_data_identity = capture["side_data"]
-        assert isinstance(listing_data, Mapping)
-        assert isinstance(archive_data, Mapping)
-        assert isinstance(side_data_identity, Mapping)
-        listing = ArchiveListing(
-            relpath=str(listing_data["relpath"]),
-            title="GeneReviews",
-            publisher="NCBI",
-            initial_year="1993",
-            nbk_id="NBK1116",
-            last_updated=str(listing_data["last_updated"]),
-        )
-        return await _ingest_files(
-            pool,
-            listing=listing,
-            tarball=archive,
-            sidedata_dir=side_data_dir,
-            tarball_sha256=str(archive_data["sha256"]),
-            side_data_identity=side_data_identity,
-            source_capture=capture,
-        )
+        with admit_offline_source(archive, side_data_dir) as admitted:
+            capture = load_offline_capture(
+                source_metadata,
+                archive=admitted.archive,
+                side_data_dir=admitted.side_data_dir,
+                prior_manifest=prior_manifest,
+                prior_seal_manifest=prior_seal_manifest,
+            )
+            listing_data = capture["listing"]
+            archive_data = capture["archive"]
+            side_data_identity = capture["side_data"]
+            assert isinstance(listing_data, Mapping)
+            assert isinstance(archive_data, Mapping)
+            assert isinstance(side_data_identity, Mapping)
+            listing = ArchiveListing(
+                relpath=str(listing_data["relpath"]),
+                title="GeneReviews",
+                publisher="NCBI",
+                initial_year="1993",
+                nbk_id="NBK1116",
+                last_updated=str(listing_data["last_updated"]),
+            )
+            return await _ingest_files(
+                pool,
+                listing=listing,
+                tarball=admitted.archive,
+                sidedata_dir=admitted.side_data_dir,
+                tarball_sha256=str(archive_data["sha256"]),
+                side_data_identity=side_data_identity,
+                source_capture=capture,
+            )
     raise ValueError("mutating ingest requires the complete retained offline source set")
 
 
