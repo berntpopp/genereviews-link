@@ -29,10 +29,21 @@ class DirectSeed:
     dump_sha256: str
 
 
+#: Placeholder digests, mirrored from `genereview_link.db.restore`. They are duplicated
+#: rather than imported because restore.py imports THIS module; a shared constant would
+#: make the cycle. `tests/unit/test_corpus_digest_placeholders.py` pins the two in sync.
+_PLACEHOLDER_DIGESTS = frozenset({"0" * 64, "f" * 64, hashlib.sha256(b"").hexdigest()})
+
+
 def _digest_hex(value: str, *, label: str) -> str:
-    normalized = value.removeprefix("sha256:").lower()
+    normalized = value.strip().removeprefix("sha256:").lower()
     if not re.fullmatch(r"[0-9a-f]{64}", normalized):
         raise DirectSeedError(f"{label} must be an exact SHA-256")
+    if normalized in _PLACEHOLDER_DIGESTS:
+        # A placeholder anchor would make every downstream comparison in this module
+        # compare against a value no real asset has: the seed would be refused, but only
+        # after presenting itself as pinned. Refuse the configuration itself instead.
+        raise DirectSeedError(f"{label} is a placeholder, not a reviewed release identity")
     return normalized
 
 

@@ -90,7 +90,13 @@ services:
       # Reviewed migrations run as the owner; the untrusted archive never does.
       RESTORE_DATABASE_URL: postgresql://genereview_restore:${POSTGRES_PASSWORD:-genereview}@postgres:5432/genereview
       CORPUS_SEED_PATH: "${CORPUS_SEED_PATH:-/seed/corpus-bundle.tar.gz}"
-      CORPUS_BUNDLE_SHA256: "${CORPUS_BUNDLE_SHA256:-0000000000000000000000000000000000000000000000000000000000000000}"
+      # NO DEFAULT, deliberately. This used to fall back to 64 zeroes so that
+      # `docker compose config` would render without an env file. That placeholder is a
+      # syntactically valid SHA-256, so the restore's identity gate accepted it and the
+      # stack reported a pinned corpus while pinning nothing. An empty value is refused
+      # by `seed_identity_mode`, which is the honest outcome: compose still renders, and
+      # the application -- not the compose file -- decides what a valid identity is.
+      CORPUS_BUNDLE_SHA256: "${CORPUS_BUNDLE_SHA256:-}"
       CORPUS_DUMP_SHA256: "${CORPUS_DUMP_SHA256:-}"
       CORPUS_MANIFEST_SHA256: "${CORPUS_MANIFEST_SHA256:-}"
       CORPUS_CHECKSUMS_SHA256: "${CORPUS_CHECKSUMS_SHA256:-}"
