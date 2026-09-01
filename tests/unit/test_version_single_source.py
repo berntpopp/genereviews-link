@@ -9,9 +9,12 @@ version sources to a single value so that drift fails loudly.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from importlib.metadata import version
 from pathlib import Path
+
+import yaml
 
 from genereview_link import __version__
 from genereview_link.config import ServerConfig
@@ -38,3 +41,17 @@ async def test_mcp_server_info_version_matches_package() -> None:
     app = mgr.create_fastapi_app(ServerConfig())
     mcp = await mgr.create_mcp_server(app, ServerConfig())
     assert mcp.version == __version__
+
+
+def test_citation_matches_current_changelog_release() -> None:
+    root = Path(__file__).resolve().parents[2]
+    current = _pyproject_version()
+    citation = yaml.safe_load((root / "CITATION.cff").read_text(encoding="utf-8"))
+    release = re.search(
+        rf"^## \[{re.escape(current)}\] - (\d{{4}}-\d{{2}}-\d{{2}})$",
+        (root / "CHANGELOG.md").read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert release is not None
+    assert citation["version"] == current
+    assert citation["date-released"] == release.group(1)
