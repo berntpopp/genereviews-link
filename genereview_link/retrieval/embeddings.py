@@ -127,6 +127,18 @@ class SentenceTransformerEmbeddingProvider:
         self._model: Any | None = None
         self._np: Any | None = None
 
+    def ensure_ready(self) -> None:
+        """Load the model now, so an image that cannot run it fails at startup.
+
+        Blocking and synchronous by design -- callers in an event loop should run it on a
+        worker thread. Without this, a missing embedding runtime only surfaces on the
+        first search, long after the deployment reported itself healthy.
+
+        Raises:
+            EmbeddingProviderUnavailableError: the embedding runtime is not installed.
+        """
+        self._ensure_model()
+
     async def embed_query(self, text: str) -> list[float]:
         vectors = await self._encode([bge_query_text(text)])
         return vectors[0]

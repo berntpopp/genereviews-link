@@ -26,11 +26,18 @@ def add_log_level(logger: Any, method_name: str, event_dict: EventDict) -> Event
 
 
 def add_service_context(logger: Any, method_name: str, event_dict: EventDict) -> EventDict:
-    """Add service context information."""
+    """Add service context information.
+
+    The version comes from the installed package metadata. It was hardcoded to "3.0.0",
+    so every production log line -- and every operator reading one -- reported a release
+    that has not existed since v4.
+    """
+    from genereview_link import __version__
+
     event_dict.update(
         {
             "service": "genereview-link",
-            "version": "3.0.0",
+            "version": __version__,
             "environment": getattr(settings, "ENVIRONMENT", "development"),
         }
     )

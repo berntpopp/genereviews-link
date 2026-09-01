@@ -78,10 +78,21 @@ class Settings(BaseSettings):
     INGEST_EMBED_WRITERS: int = 2
     INGEST_EMBED_DEVICE: str = "auto"
 
-    # Retrieval / RAG feature flags
-    # Set to True to load the BGE-small model at boot (adds ~130MB RAM).
-    # When False (default), FakeEmbeddingProvider is used so the server starts
-    # quickly in environments without Postgres/GPU resources.
+    # --- Dense embedding provider ---
+    # Which model answers query embeddings. "bge" is the pinned reference model the
+    # corpus was embedded with; "fake" is a deterministic stub whose vectors are NOT
+    # comparable with the stored corpus vectors, so it disables dense ranking.
+    # Empty means: production resolves to "bge" (the safe path is the default where
+    # being wrong is expensive), everything else falls back to GENEREVIEW_EAGER_LOAD_BGE.
+    # See genereview_link/retrieval/provider_policy.py.
+    GENEREVIEW_EMBEDDING_PROVIDER: str = ""
+    # Knowingly serve production with the stub provider (lexical-only search). Without
+    # this, a stub in production is a startup error rather than a silent ranking
+    # regression that still advertises the reference model.
+    GENEREVIEW_ALLOW_FAKE_EMBEDDINGS: bool = False
+    # LEGACY. Named as a loading strategy but actually selects real-vs-stub embeddings,
+    # which is how a production deployment ran on stub vectors unnoticed. Retained for
+    # compatibility outside production; GENEREVIEW_EMBEDDING_PROVIDER wins when set.
     GENEREVIEW_EAGER_LOAD_BGE: bool = False
 
     # Set to True to enable the /debug/ranking diagnostic endpoint.

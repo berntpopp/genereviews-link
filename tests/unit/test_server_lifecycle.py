@@ -30,8 +30,14 @@ async def test_initialize_state_with_empty_database_url(monkeypatch: pytest.Monk
     assert app.state.gene_index is None
     assert isinstance(app.state.embedder, FakeEmbeddingProvider)
     assert getattr(app.state, "scheduler", None) is None
-    assert app.state.dense_model_id == BGE_MODEL_NAME
+    # The stub provider must not be reported as the reference model. This assertion used
+    # to require the opposite, which is exactly the misreporting bug it now guards.
+    assert app.state.dense_model_id != BGE_MODEL_NAME
+    assert app.state.dense_model_id == app.state.embedder.model_name
     assert app.state.embedding_dim == BGE_DIM
+    assert app.state.embedding_provider_kind == "fake"
+    assert app.state.embedding_provider_real is False
+    assert app.state.dense_ranking_enabled is False
 
     await _teardown_state(app)
 
