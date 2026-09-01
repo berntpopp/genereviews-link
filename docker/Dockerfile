@@ -106,6 +106,7 @@ COPY --chown=app:app ./genereview_link ./genereview_link
 COPY --chown=app:app ./server.py ./mcp_server.py ./pyproject.toml ./README.md ./
 COPY --chown=app:app ./docker/gunicorn_conf.py ./
 COPY ./docker/runtime-corpus-files.txt /tmp/runtime-corpus-files.txt
+COPY ./docker/runtime-prune-paths.txt /tmp/runtime-prune-paths.txt
 
 # Pin the base image's system pip (/usr/local) to an exact patched release so it
 # is not flagged by image scanners (CVE-2025-8869, CVE-2026-1703/3219/6357) and
@@ -170,6 +171,16 @@ RUN rm -rf /opt/venv/lib/python3.12/site-packages/nvidia \
            /root/.cache/pip \
     && find /opt/venv/lib/python3.12/site-packages/numpy -type d -name tests -prune -exec rm -rf '{}' + \
     && rm -rf /home/app/web/genereview_link \
+    && package_root="/opt/venv/lib/python3.12/site-packages/genereview_link" \
+    && LC_ALL=C sort /tmp/runtime-prune-paths.txt > /tmp/runtime-prune-paths.sorted \
+    && cmp -s /tmp/runtime-prune-paths.txt /tmp/runtime-prune-paths.sorted \
+    && while IFS= read -r relative; do \
+         test -n "$relative" || exit 1; \
+         test -e "$package_root/$relative" || exit 1; \
+         rm -rf -- "$package_root/$relative"; \
+       done < /tmp/runtime-prune-paths.txt \
+    && while IFS= read -r relative; do test ! -e "$package_root/$relative"; done \
+         < /tmp/runtime-prune-paths.txt \
     && corpus_root="/opt/venv/lib/python3.12/site-packages/genereview_link/corpus" \
     && LC_ALL=C sort /tmp/runtime-corpus-files.txt > /tmp/runtime-corpus-files.sorted \
     && cmp -s /tmp/runtime-corpus-files.txt /tmp/runtime-corpus-files.sorted \
@@ -185,6 +196,7 @@ RUN rm -rf /opt/venv/lib/python3.12/site-packages/nvidia \
     && cmp -s /tmp/runtime-corpus-files.txt /tmp/admitted-corpus-files.txt \
     && rm -f /tmp/runtime-corpus-files.txt /tmp/runtime-corpus-files.sorted \
          /tmp/all-corpus-files.txt /tmp/admitted-corpus-files.txt \
+         /tmp/runtime-prune-paths.txt /tmp/runtime-prune-paths.sorted \
     && find /usr/local/lib/python3.12 /opt/venv /home/app/web -type d -name __pycache__ -prune -exec rm -rf '{}' +
 
 RUN find / -xdev -perm /6000 -exec chmod a-s '{}' + \

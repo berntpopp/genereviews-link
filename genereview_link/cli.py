@@ -426,6 +426,7 @@ def corpus_restore() -> None:
         require_release_readiness,
         write_release_readiness,
     )
+    from genereview_link.db.indexes import build_hnsw_index
     from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
     from genereview_link.db.pool import create_pool
     from genereview_link.db.restore import (
@@ -437,7 +438,6 @@ def corpus_restore() -> None:
         restore_data_only,
         seed_identity_mode,
     )
-    from genereview_link.ingest.orchestrator import build_hnsw_index
 
     async def run() -> None:
         pool = await create_pool()

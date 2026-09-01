@@ -20,10 +20,21 @@ RUNTIME_CORPUS_FILES = (
     "semantic_identity.py",
 )
 INSTALLED_CORPUS_PREFIX = "opt/venv/lib/python3.12/site-packages/genereview_link/corpus/"
+PROHIBITED_RUNTIME_PATHS = (
+    "download_admission.py",
+    "download_guard.py",
+    "ingest",
+    "publisher_verifier",
+)
 
 
 def _runtime_manifest() -> tuple[str, ...]:
     manifest = ROOT / "docker/runtime-corpus-files.txt"
+    return tuple(manifest.read_text(encoding="utf-8").splitlines())
+
+
+def _runtime_prune_paths() -> tuple[str, ...]:
+    manifest = ROOT / "docker/runtime-prune-paths.txt"
     return tuple(manifest.read_text(encoding="utf-8").splitlines())
 
 
@@ -49,6 +60,23 @@ def test_dockerfile_prunes_source_duplicate_and_offline_corpus_modules() -> None
     assert "rm -rf /home/app/web/genereview_link" in dockerfile
 
 
+def test_dockerfile_prunes_the_exact_offline_package_paths() -> None:
+    assert _runtime_prune_paths() == PROHIBITED_RUNTIME_PATHS
+    dockerfile = (ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+
+    assert "COPY ./docker/runtime-prune-paths.txt /tmp/runtime-prune-paths.txt" in dockerfile
+    assert 'rm -rf -- "$package_root/$relative"' in dockerfile
+    assert 'test ! -e "$package_root/$relative"' in dockerfile
+
+
+def test_direct_restore_uses_the_retained_runtime_index_module() -> None:
+    cli = (ROOT / "genereview_link/cli.py").read_text(encoding="utf-8")
+    restore = cli.split('@corpus_app.command("restore")', maxsplit=1)[1]
+
+    assert "from genereview_link.db.indexes import build_hnsw_index" in restore
+    assert "from genereview_link.ingest.orchestrator import build_hnsw_index" not in restore
+
+
 def test_pruned_runtime_package_imports_cli_and_direct_restore_readiness(tmp_path: Path) -> None:
     """Exercise the imports used by the image CMD and no-egress restore sidecar."""
     package = tmp_path / "genereview_link"
@@ -65,6 +93,13 @@ def test_pruned_runtime_package_imports_cli_and_direct_restore_readiness(tmp_pat
     for candidate in sorted(corpus.rglob("*"), reverse=True):
         if candidate.is_dir() and not any(candidate.iterdir()):
             candidate.rmdir()
+    for relative in _runtime_prune_paths():
+        candidate = package / relative
+        if candidate.is_dir():
+            shutil.rmtree(candidate)
+        else:
+            candidate.unlink()
+    assert all(not (package / relative).exists() for relative in PROHIBITED_RUNTIME_PATHS)
 
     result = subprocess.run(
         [
@@ -74,8 +109,10 @@ def test_pruned_runtime_package_imports_cli_and_direct_restore_readiness(tmp_pat
                 "from pathlib import Path; "
                 "import genereview_link.cli as cli; "
                 "import genereview_link.corpus.readiness as readiness; "
+                "import genereview_link.db.indexes as indexes; "
                 "assert Path(cli.__file__).is_relative_to(Path.cwd()); "
-                "assert readiness.READINESS_KEYS"
+                "assert readiness.READINESS_KEYS; "
+                "assert indexes.build_hnsw_index"
             ),
         ],
         cwd=tmp_path,
