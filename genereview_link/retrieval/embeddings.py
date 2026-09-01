@@ -25,6 +25,7 @@ class EmbeddingProviderUnavailableError(RuntimeError):
 
 class EmbeddingProvider(Protocol):
     model_name: str
+    model_revision: str
     dim: int
 
     async def embed_query(self, text: str) -> list[float]: ...
@@ -88,6 +89,7 @@ class FakeEmbeddingProvider:
 
     def __init__(self, *, dim: int, model_name: str = "fake-embedding") -> None:
         self.model_name = model_name
+        self.model_revision = "fake-deterministic-v1"
         self.dim = dim
 
     async def embed_query(self, text: str) -> list[float]:

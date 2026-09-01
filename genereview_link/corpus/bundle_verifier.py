@@ -16,6 +16,21 @@ from genereview_link.corpus.handoff import (
 )
 
 
+def _computation_run_id(
+    *, phase: str, corpus_version: str, expected_row_count: int, provenance: dict[str, object]
+) -> str:
+    return hashlib.sha256(
+        _canonical_json(
+            {
+                "phase": phase,
+                "corpus_version": corpus_version,
+                "expected_row_count": expected_row_count,
+                "provenance": provenance,
+            }
+        )
+    ).hexdigest()
+
+
 def verify_data_only_bundle_impl(
     bundle: Path, *, allow_extra: bool = False, directory_fd: int | None = None
 ) -> dict[str, object]:
@@ -168,9 +183,19 @@ def verify_data_only_bundle_impl(
         or not evaluation["export_snapshot"]
         or not re.fullmatch(r"[0-9a-f]{64}", str(evaluation["dump_sha256"]))
         or not isinstance(evaluation["results"], dict)
-        or set(evaluation["results"]) != {"mrr_at_10", "section_precision_at_5", "queries_run"}
+        or set(evaluation["results"])
+        != {
+            "mrr_at_10",
+            "section_precision_at_5",
+            "queries_run",
+            "covered_queries",
+            "per_query",
+        }
         or type(evaluation["results"]["queries_run"]) is not int
-        or evaluation["results"]["queries_run"] <= 0
+        or evaluation["results"]["queries_run"] != 5
+        or evaluation["results"]["covered_queries"] != 5
+        or not isinstance(evaluation["results"]["per_query"], list)
+        or len(evaluation["results"]["per_query"]) != 5
         or any(
             type(evaluation["results"][name]) not in {int, float}
             or not math.isfinite(evaluation["results"][name])
@@ -179,17 +204,66 @@ def verify_data_only_bundle_impl(
         )
     ):
         raise HandoffError("manifest.json evaluation evidence is invalid")
+    from genereview_link.corpus.evaluation_contract import (
+        EVALUATION_SUITE_SHA256,
+        EVALUATION_TOLERANCE,
+        MIN_MRR_AT_10,
+        MIN_SECTION_PRECISION_AT_5,
+    )
+
+    results = evaluation["results"]
+    assert isinstance(results, dict)
+    per_query = results["per_query"]
+    assert isinstance(per_query, list)
+    if (
+        evaluation["suite_sha256"] != EVALUATION_SUITE_SHA256
+        or float(results["mrr_at_10"]) + EVALUATION_TOLERANCE < MIN_MRR_AT_10
+        or float(results["section_precision_at_5"]) + EVALUATION_TOLERANCE
+        < MIN_SECTION_PRECISION_AT_5
+        or any(
+            not isinstance(query, dict)
+            or set(query)
+            != {
+                "query_sha256",
+                "expected_chapter",
+                "expected_section",
+                "expected_rank",
+                "section_hit_at_5",
+                "results_returned",
+            }
+            or not re.fullmatch(r"[0-9a-f]{64}", str(query.get("query_sha256", "")))
+            or not isinstance(query.get("expected_chapter"), str)
+            or not isinstance(query.get("expected_section"), str)
+            or (
+                query.get("expected_rank") is not None
+                and (
+                    type(query.get("expected_rank")) is not int
+                    or not 1 <= int(query["expected_rank"]) <= 10
+                )
+            )
+            or type(query.get("section_hit_at_5")) is not bool
+            or type(query.get("results_returned")) is not int
+            or not 1 <= int(query["results_returned"]) <= 10
+            for query in per_query
+        )
+    ):
+        raise HandoffError("manifest.json evaluation did not meet the reviewed suite contract")
     if (
         hashlib.sha256(_canonical_json(evaluation["results"])).hexdigest()
         != evaluation["result_sha256"]
     ):
         raise HandoffError("manifest.json evaluation result digest mismatch")
+    computation_identity = metadata.get("computation")
     expected_corpus_identity = {
         "corpus_version": metadata["corpus_version"],
         "source": metadata["source"],
         "chapter_count": metadata["chapter_count"],
         "passage_count": metadata["passage_count"],
         "embedding_count": embedding["count"],
+        "embedding_run_id": computation_identity.get("run_id")
+        if isinstance(computation_identity, dict)
+        else None,
+        "content_identity": metadata["content_identity"],
     }
     if evaluation["corpus_identity"] != expected_corpus_identity:
         raise HandoffError("manifest.json evaluation is not bound to the bundled corpus identity")
@@ -198,30 +272,45 @@ def verify_data_only_bundle_impl(
         raise HandoffError("manifest.json evaluation is not bound to corpus.dump")
     computation = metadata.get("computation")
     from genereview_link.retrieval.model_identity import (
-        BGE_MODEL_FILE,
-        BGE_MODEL_FILE_SHA256,
+        BGE_MODEL_FILES,
         BGE_MODEL_NAME,
         BGE_MODEL_REVISION,
     )
 
     if not isinstance(computation, dict) or set(computation) != {
-        "uv_lock_sha256",
-        "model",
-        "runtime",
-        "determinism",
-        "builder",
-        "embedding",
+        "run_id",
+        "app_git_sha",
+        "expected_row_count",
+        "provenance",
+        "ingest_run",
     }:
         raise HandoffError("manifest.json computation provenance is incomplete")
+    provenance = computation.get("provenance")
     if (
-        not re.fullmatch(r"[0-9a-f]{64}", str(computation["uv_lock_sha256"]))
-        or computation["model"]
+        not re.fullmatch(r"[0-9a-f]{64}", str(computation["run_id"]))
+        or computation["app_git_sha"] != app_git_sha
+        or computation["expected_row_count"] != metadata["passage_count"]
+        or not isinstance(provenance, dict)
+        or set(provenance)
+        != {
+            "schema",
+            "source",
+            "uv_lock_sha256",
+            "environment",
+            "database",
+            "model",
+            "determinism",
+            "embedding",
+        }
+        or provenance["schema"] != "genereviews-computation-v2"
+        or not re.fullmatch(r"[0-9a-f]{64}", str(provenance["uv_lock_sha256"]))
+        or provenance["model"]
         != {
             "name": BGE_MODEL_NAME,
             "revision": BGE_MODEL_REVISION,
-            "files": {BGE_MODEL_FILE: BGE_MODEL_FILE_SHA256},
+            "files": BGE_MODEL_FILES,
         }
-        or computation["embedding"]
+        or provenance["embedding"]
         != {
             "model_name": BGE_MODEL_NAME,
             "model_revision": BGE_MODEL_REVISION,
@@ -229,14 +318,105 @@ def verify_data_only_bundle_impl(
         }
     ):
         raise HandoffError("manifest.json model computation identity is invalid")
-    runtime = computation["runtime"]
-    determinism = computation["determinism"]
-    builder = computation["builder"]
+    ingest_run = computation["ingest_run"]
     if (
-        not isinstance(runtime, dict)
-        or set(runtime) != {"python", "torch", "sentence_transformers", "transformers", "device"}
-        or not all(isinstance(value, str) and value for value in runtime.values())
-        or runtime["device"] not in {"cpu", "cuda"}
+        not isinstance(ingest_run, dict)
+        or set(ingest_run) != {"run_id", "app_git_sha", "expected_row_count", "provenance"}
+        or not re.fullmatch(r"[0-9a-f]{64}", str(ingest_run["run_id"]))
+        or not re.fullmatch(r"[0-9a-f]{40}", str(ingest_run["app_git_sha"]))
+        or ingest_run["expected_row_count"] != metadata["chapter_count"]
+        or not isinstance(ingest_run["provenance"], dict)
+        or set(ingest_run["provenance"])
+        != {
+            "schema",
+            "source",
+            "source_capture",
+            "uv_lock_sha256",
+            "environment",
+            "database",
+            "model",
+            "determinism",
+            "embedding",
+        }
+        or ingest_run["provenance"].get("schema") != "genereviews-computation-v2"
+        or ingest_run["provenance"].get("source_capture") != metadata["source_capture"]
+        or not isinstance(ingest_run["provenance"].get("source"), dict)
+        or ingest_run["provenance"].get("source", {}).get("app_git_sha")
+        != ingest_run["app_git_sha"]
+    ):
+        raise HandoffError("manifest.json ingest computation identity is invalid")
+    ingest_provenance = ingest_run["provenance"]
+    assert isinstance(ingest_provenance, dict)
+    if computation["run_id"] != _computation_run_id(
+        phase="embedding",
+        corpus_version=str(metadata["corpus_version"]),
+        expected_row_count=int(computation["expected_row_count"]),
+        provenance=provenance,
+    ) or ingest_run["run_id"] != _computation_run_id(
+        phase="ingest",
+        corpus_version=str(metadata["corpus_version"]),
+        expected_row_count=int(ingest_run["expected_row_count"]),
+        provenance=ingest_provenance,
+    ):
+        raise HandoffError("manifest.json computation run ID is not content-addressed")
+    source_provenance = provenance["source"]
+    environment = provenance["environment"]
+    database = provenance["database"]
+    determinism = provenance["determinism"]
+    if (
+        not isinstance(source_provenance, dict)
+        or set(source_provenance) != {"app_git_sha", "builder_identity"}
+        or source_provenance["app_git_sha"] != app_git_sha
+        or not isinstance(source_provenance["builder_identity"], str)
+        or not source_provenance["builder_identity"]
+        or not isinstance(environment, dict)
+        or set(environment)
+        != {
+            "installed_distributions",
+            "installed_distributions_sha256",
+            "uv_version",
+            "python",
+            "os",
+            "kernel",
+            "libc",
+            "cpu",
+            "blas",
+            "device",
+            "gpu",
+            "cuda",
+            "cudnn",
+            "torch",
+            "sentence_transformers",
+            "transformers",
+            "build_backend",
+        }
+        or not isinstance(environment["installed_distributions"], list)
+        or environment["installed_distributions"] != sorted(environment["installed_distributions"])
+        or not all(
+            isinstance(value, str) and "==" in value
+            for value in environment["installed_distributions"]
+        )
+        or hashlib.sha256(_canonical_json(environment["installed_distributions"])).hexdigest()
+        != environment["installed_distributions_sha256"]
+        or any(
+            not isinstance(environment[name], str) or not environment[name]
+            for name in set(environment) - {"installed_distributions"}
+        )
+        or environment["device"] not in {"cpu", "cuda"}
+        or not isinstance(database, dict)
+        or set(database)
+        != {
+            "client_image",
+            "client_major",
+            "server_version_num",
+            "server_major",
+            "pgvector",
+        }
+        or database["client_major"] != "18"
+        or database["server_major"] != "18"
+        or database["pgvector"] != "0.8.2"
+        or not str(database["client_image"]).startswith("pgvector/pgvector:0.8.2-pg18@sha256:")
+        or not isinstance(determinism, dict)
         or determinism
         != {
             "normalize_embeddings": True,
@@ -245,16 +425,28 @@ def verify_data_only_bundle_impl(
             "torch_seed": 0,
             "batch_size": determinism.get("batch_size") if isinstance(determinism, dict) else None,
         }
-        or not isinstance(determinism, dict)
         or type(determinism.get("batch_size")) is not int
         or determinism["batch_size"] <= 0
-        or not isinstance(builder, dict)
-        or set(builder) != {"source_sha", "identity"}
-        or builder["source_sha"] != app_git_sha
-        or not isinstance(builder["identity"], str)
-        or not builder["identity"]
     ):
         raise HandoffError("manifest.json runtime computation provenance is invalid")
+    source_capture = metadata.get("source_capture")
+    content_identity = metadata.get("content_identity")
+    if (
+        not isinstance(source_capture, dict)
+        or source_capture.get("format") != "genereviews-offline-source-v1"
+        or not isinstance(content_identity, dict)
+        or content_identity.get("chapter_ids") != source_capture.get("chapter_ids")
+        or content_identity.get("source_archive")
+        != {
+            "members_sha256": source_capture.get("archive", {}).get("members_sha256")
+            if isinstance(source_capture.get("archive"), dict)
+            else None,
+            "expanded_sha256": source_capture.get("archive", {}).get("expanded_sha256")
+            if isinstance(source_capture.get("archive"), dict)
+            else None,
+        }
+    ):
+        raise HandoffError("manifest.json retained source/content identity is incomplete")
     from genereview_link.corpus.source_identity import validate_release_id
 
     try:

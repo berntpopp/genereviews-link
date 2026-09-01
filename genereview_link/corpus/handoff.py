@@ -6,8 +6,8 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
-import tempfile
 from ctypes import CDLL, get_errno
 from dataclasses import dataclass
 from errno import EEXIST, ENOSYS
@@ -291,14 +291,16 @@ def _assert_local_archive(dump: Path, *, parent_fd: int) -> None:
         os.close(archive_fd)
 
 
-def _rename_noreplace(source: Path, target: Path) -> None:
+def _rename_noreplace(source: Path, target: Path, *, parent_fd: int | None = None) -> None:
     """Atomically publish a directory without ever replacing an existing target."""
     libc = CDLL(None, use_errno=True)
     renameat2 = getattr(libc, "renameat2", None)
     if renameat2 is None:
         raise HandoffError("atomic no-replace rename is unavailable on this platform")
-    source_parent = _open_directory(source.parent)
-    target_parent = _open_directory(target.parent)
+    owns_parents = parent_fd is None
+    source_parent = _open_directory(source.parent) if owns_parents else parent_fd
+    target_parent = _open_directory(target.parent) if owns_parents else parent_fd
+    assert source_parent is not None and target_parent is not None
     try:
         result = renameat2(
             source_parent,
@@ -308,8 +310,9 @@ def _rename_noreplace(source: Path, target: Path) -> None:
             1,  # RENAME_NOREPLACE
         )
     finally:
-        os.close(source_parent)
-        os.close(target_parent)
+        if owns_parents:
+            os.close(source_parent)
+            os.close(target_parent)
     if result == 0:
         return
     error = get_errno()
@@ -349,11 +352,27 @@ def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> S
     object_id = hashlib.sha256(seal_bytes).hexdigest()
     handoff_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     _assert_handoff_root(handoff_root)
+    root_fd = _open_directory(handoff_root)
+    root_guard = _FDGuard(root_fd)
+    root_info = os.fstat(root_fd)
     target = handoff_root / object_id
-    if target.exists() or target.is_symlink():
+    try:
+        existing_fd = os.open(
+            object_id, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd
+        )
+    except FileNotFoundError:
+        existing_fd = None
+    except OSError as error:
+        raise HandoffError("handoff object target is unsafe") from error
+    if existing_fd is not None:
+        os.close(existing_fd)
         raise HandoffError(f"handoff object already exists: {object_id}")
 
-    staging = Path(tempfile.mkdtemp(prefix=".seal-", dir=handoff_root))
+    staging_name = f".seal-{secrets.token_hex(16)}"
+    os.mkdir(staging_name, mode=0o700, dir_fd=root_fd)
+    staging = handoff_root / staging_name
+    staging_fd = os.open(staging_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
+    published = False
     try:
         expected_source = {
             entry["name"]: entry for entry in files if entry["name"] in _SOURCE_FILES
@@ -363,53 +382,63 @@ def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> S
                 source / name,
                 staging / name,
                 source_parent_fd=source_directory_fd,
+                target_parent_fd=staging_fd,
             )
-            copied_digest, copied_size, _ = _sha256_facts(staging / name)
+            copied_digest, copied_size, _ = _sha256_facts(staging / name, parent_fd=staging_fd)
             if (
                 copied_digest != expected_source[name]["sha256"]
                 or copied_size != expected_source[name]["size"]
             ):
                 raise HandoffError(f"source {name} changed while sealing")
-        if _load_json(staging / "manifest.json") != source_manifest:
+        if _load_json(staging / "manifest.json", parent_fd=staging_fd) != source_manifest:
             raise HandoffError("source manifest changed while sealing")
-        _copy_regular(wheel, staging / wheel.name)
-        copied_digest, copied_size, _ = _sha256_facts(staging / wheel.name)
+        _copy_regular(wheel, staging / wheel.name, target_parent_fd=staging_fd)
+        copied_digest, copied_size, _ = _sha256_facts(staging / wheel.name, parent_fd=staging_fd)
         if (copied_digest, copied_size) != (wheel_digest, wheel_size):
             raise HandoffError("publisher wheel changed while sealing")
         manifest = staging / "seal-manifest.json"
-        manifest.write_bytes(seal_bytes)
-        with manifest.open("rb") as file:
-            os.fsync(file.fileno())
-        for path in staging.iterdir():
-            path.chmod(0o400)
-            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        manifest_fd = os.open(
+            manifest.name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o400,
+            dir_fd=staging_fd,
+        )
+        try:
+            view = memoryview(seal_bytes)
+            while view:
+                view = view[os.write(manifest_fd, view) :]
+            os.fsync(manifest_fd)
+        finally:
+            os.close(manifest_fd)
+        for name in os.listdir(staging_fd):
+            os.chmod(name, 0o400, dir_fd=staging_fd, follow_symlinks=False)
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=staging_fd)
             try:
                 os.fsync(fd)
             finally:
                 os.close(fd)
-        staging.chmod(0o500)
-        staging_fd = os.open(staging, os.O_RDONLY)
+        os.fchmod(staging_fd, 0o500)
+        os.fsync(staging_fd)
         try:
-            os.fsync(staging_fd)
-        finally:
-            os.close(staging_fd)
-        try:
-            _rename_noreplace(staging, target)
+            _rename_noreplace(staging, target, parent_fd=root_fd)
         except FileExistsError as error:
             raise HandoffError(f"handoff object already exists: {object_id}") from error
-        root_fd = os.open(handoff_root, os.O_RDONLY)
-        try:
-            os.fsync(root_fd)
-        finally:
-            os.close(root_fd)
+        published = True
+        os.fsync(root_fd)
+        current_root = handoff_root.stat(follow_symlinks=False)
+        if (current_root.st_dev, current_root.st_ino) != (root_info.st_dev, root_info.st_ino):
+            raise HandoffError("handoff root was substituted during sealing")
     except BaseException:
-        if staging.exists():
-            staging.chmod(0o700)
-            for path in staging.iterdir():
-                path.chmod(0o600)
-                path.unlink()
-            staging.rmdir()
+        if not published:
+            os.fchmod(staging_fd, 0o700)
+            for name in os.listdir(staging_fd):
+                os.chmod(name, 0o600, dir_fd=staging_fd, follow_symlinks=False)
+                os.unlink(name, dir_fd=staging_fd)
+            os.rmdir(staging_name, dir_fd=root_fd)
         raise
+    finally:
+        os.close(staging_fd)
+        root_guard.close()
     source_descriptors.close()
     return SealedHandoff(object_id=object_id, path=target, manifest=target / "seal-manifest.json")
 

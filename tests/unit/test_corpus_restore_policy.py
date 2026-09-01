@@ -91,8 +91,15 @@ async def test_restore_role_is_reduced_to_insert_only_table_rights() -> None:
         async def fetchval(self, query: str, *args: object) -> object:
             if query.startswith("select 1 from pg_roles"):
                 return 1
+            if query.startswith("select rolsuper"):
+                return False
+            if query.startswith("select count(*) from pg_auth_members"):
+                return 0
             formatted.append(query)
             return f"statement-{len(formatted)}"
+
+        async def fetch(self, query: str, *args: object) -> list[object]:
+            return []
 
         async def execute(self, statement: str) -> None:
             assert statement.startswith("statement-")
@@ -112,14 +119,16 @@ async def test_restore_role_is_reduced_to_insert_only_table_rights() -> None:
         Pool(),
         "genereview_restore",
         "postgresql://genereview_restore:secret@postgres/genereview",
+        owner_url="postgresql://owner:secret@postgres/genereview",
     )
 
     scripts = "\n".join(formatted)
     assert (
-        "alter role %I login nosuperuser nocreatedb nocreaterole noreplication nobypassrls"
+        "alter role %I login nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit"
         in scripts
     )
     assert "revoke all on %I.%I from %I" in scripts
+    assert "revoke all on schema %I from %I" in scripts
     assert "grant insert on %I.%I to %I" in scripts
     assert "grant select, insert, update, delete" not in scripts
 

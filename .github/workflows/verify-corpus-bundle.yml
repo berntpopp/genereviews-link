@@ -25,9 +25,24 @@ on:
         description: Unique binding for the publisher waiting on this exact run
         required: true
         type: string
+      verification_phase:
+        description: prepublication draft or immutable postpublication verification
+        required: true
+        type: choice
+        options: [prepublication, postpublication]
+      release_etag:
+        description: Exact ETag of the release representation dispatched for verification
+        required: true
+        type: string
+      dispatch_time:
+        description: Exact UTC time captured immediately before dispatch
+        required: true
+        type: string
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
 
 concurrency:
   group: verify-corpus-bundle
@@ -57,32 +72,86 @@ jobs:
       EXPECTED_RELEASE_TAG: ${{ inputs.release_tag }}
       EXPECTED_TARGET_COMMIT: ${{ inputs.target_commit }}
       EXPECTED_ASSETS_SHA256: ${{ inputs.assets_sha256 }}
+      EXPECTED_NONCE: ${{ inputs.publication_nonce }}
+      EXPECTED_PHASE: ${{ inputs.verification_phase }}
+      EXPECTED_RELEASE_ETAG: ${{ inputs.release_etag }}
+      EXPECTED_DISPATCH_TIME: ${{ inputs.dispatch_time }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Require exact target checkout and PG18 client tools
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$EXPECTED_TARGET_COMMIT"
+          grep -Eq '^[0-9a-f]{64}$' <<<"$EXPECTED_NONCE"
+          grep -Eq '^20[0-9]{2}-[0-9]{2}-[0-9]{2}T' <<<"$EXPECTED_DISPATCH_TIME"
+          test "$EXPECTED_PHASE" = prepublication || test "$EXPECTED_PHASE" = postpublication
+          printf 'VERIFIER_STARTED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          client_bin="$RUNNER_TEMP/pg18-bin"
+          mkdir -m 0700 -- "$client_bin"
+          for tool in pg_dump pg_restore psql; do
+            ln -s "$GITHUB_WORKSPACE/scripts/pg18-client" "$client_bin/$tool"
+          done
+          printf 'PG18_MOUNT_ROOT=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf '%s\n' "$client_bin" >> "$GITHUB_PATH"
+          PG18_MOUNT_ROOT="$RUNNER_TEMP" "$client_bin/pg_restore" --version | grep -Eq 'PostgreSQL\) 18\.'
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: false
-      - run: uv sync --group dev --frozen
+      - run: uv sync --group dev --extra cpu --frozen
+      - name: Fetch and freeze the exact reviewed embedding model snapshot
+        run: |
+          set -euo pipefail
+          timeout 10m uv run python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          import sentence_transformers, torch, transformers
+          from huggingface_hub import snapshot_download
+          from genereview_link.retrieval.model_identity import BGE_MODEL_FILES, BGE_MODEL_NAME, BGE_MODEL_REVISION
+          snapshot = Path(snapshot_download(BGE_MODEL_NAME, revision=BGE_MODEL_REVISION))
+          actual = {
+              path.relative_to(snapshot).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in snapshot.rglob("*") if path.is_file()
+          }
+          if actual != BGE_MODEL_FILES:
+              raise SystemExit("reviewed model/tokenizer/config snapshot identity mismatch")
+          print(BGE_MODEL_REVISION, torch.__version__, sentence_transformers.__version__, transformers.__version__)
+          PY
+          printf 'HF_HUB_OFFLINE=1\nTRANSFORMERS_OFFLINE=1\n' >> "$GITHUB_ENV"
       - name: Bounded fresh-directory download_guard, archive-policy, and attestation verification
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
+          GENEREVIEWS_SOURCE_LOCATOR: ${{ secrets.GENEREVIEWS_SOURCE_LOCATOR }}
+          GENEREVIEWS_SOURCE_REPOSITORIES: ${{ vars.GENEREVIEWS_SOURCE_REPOSITORIES }}
         run: |
           set -euo pipefail
           umask 077
           verify_dir="$(mktemp -d "$RUNNER_TEMP/verify.XXXXXX")"
+          precondition="$RUNNER_TEMP/dispatched-release.status"
+          timeout 60s curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' \
+            --proto '=https' --header "Authorization: Bearer $GH_TOKEN" \
+            --header "If-None-Match: $EXPECTED_RELEASE_ETAG" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$EXPECTED_RELEASE_ID" \
+            >"$precondition"
+          test "$(cat "$precondition")" = 304
           release_identity="$RUNNER_TEMP/release-identity.json"
+          draft_flag=()
+          if test "$EXPECTED_PHASE" = prepublication; then draft_flag=(--allow-draft); fi
           uv run python -m genereview_link.corpus.release_assets \
             --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" --dest "$verify_dir" \
+            --release-id "$EXPECTED_RELEASE_ID" "${draft_flag[@]}" \
             --identity-out "$release_identity"
           uv run python - "$verify_dir/corpus.dump" <<'PY'
           from pathlib import Path
           from genereview_link.db.restore import assert_data_only_archive, read_archive_entries
           assert_data_only_archive(read_archive_entries(Path(__import__('sys').argv[1])))
           PY
-          uv run python - "$verify_dir" <<'PY'
+          bundle_dir="$RUNNER_TEMP/data-only-bundle"
+          mkdir -- "$bundle_dir"
+          for name in corpus.dump manifest.json SHA256SUMS; do ln "$verify_dir/$name" "$bundle_dir/$name"; done
+          uv run python - "$bundle_dir" <<'PY'
           from pathlib import Path
           from genereview_link.corpus.handoff import verify_data_only_bundle
           verify_data_only_bundle(Path(__import__('sys').argv[1]))
@@ -93,9 +162,53 @@ jobs:
           test "$(jq -er .target_commit "$release_identity")" = "$source_revision"
           assets_sha256="$(jq -c '[.assets[] | {id:.asset_id,name,size,digest}] | sort_by(.name)' "$release_identity" | sha256sum | cut -d' ' -f1)"
           test "$assets_sha256" = "$EXPECTED_ASSETS_SHA256"
-          gh attestation verify "$verify_dir/corpus.dump" --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/corpus-data-release.yml" \
-            --source-ref refs/heads/main --source-digest "$source_revision"
+          test "$(sha256sum "$verify_dir/publisher-tool.whl" | cut -d' ' -f1)" = \
+            "$(jq -er '.publisher_tool.sha256 | select(test("^[0-9a-f]{64}$"))' "$verify_dir/seal-manifest.json")"
+          uv run python - "$verify_dir" <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          from genereview_link.corpus.handoff import verify_rights_record
+          root = Path(sys.argv[1])
+          object_id = hashlib.sha256(root.joinpath("seal-manifest.json").read_bytes()).hexdigest()
+          verify_rights_record(root / "rights-record.json", object_id)
+          record = json.loads(root.joinpath("rights-record.json").read_bytes())
+          for name, field in (
+              ("rights-evidence.json", "evidence_sha256"),
+              ("terms-snapshot.html", "terms_sha256"),
+          ):
+              if hashlib.sha256(root.joinpath(name).read_bytes()).hexdigest() != record[field]:
+                  raise SystemExit(f"public {name} does not match the affirmative rights record")
+          PY
+          test -n "$GENEREVIEWS_SOURCE_LOCATOR"
+          test "$(printf %s "$GENEREVIEWS_SOURCE_LOCATOR" | wc -c)" -le 49152
+          retained_source="$RUNNER_TEMP/retained-source"
+          mkdir -m 0700 -- "$retained_source"
+          RETAINED_SOURCE="$retained_source" VERIFY_DIR="$verify_dir" uv run python - <<'PY'
+          import asyncio, json, os
+          from pathlib import Path
+          from genereview_link.corpus.source_capture import load_offline_capture
+          from genereview_link.corpus.source_locator import fetch_source_assets
+          destination = Path(os.environ["RETAINED_SOURCE"])
+          asyncio.run(fetch_source_assets(
+              os.environ["GENEREVIEWS_SOURCE_LOCATOR"].encode(),
+              allowed_repositories={value for value in os.environ["GENEREVIEWS_SOURCE_REPOSITORIES"].split(",") if value},
+              destination=destination,
+              token=os.environ["GH_TOKEN"],
+          ))
+          capture = load_offline_capture(
+              destination / "source-capture.json",
+              archive=destination / "gene_NBK1116.tar.gz",
+              side_data_dir=destination,
+          )
+          manifest = json.loads((Path(os.environ["VERIFY_DIR"]) / "manifest.json").read_bytes())
+          if capture != manifest["source_capture"]:
+              raise SystemExit("retained source bytes do not match the released capture")
+          PY
+          for subject in "$verify_dir/corpus.dump" "$verify_dir/seal-manifest.json" "$verify_dir/publisher-tool.whl"; do
+            gh attestation verify "$subject" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/corpus-data-release.yml" \
+              --source-ref refs/heads/main --source-digest "$source_revision"
+          done
           printf 'VERIFY_DIR=%s\n' "$verify_dir" >> "$GITHUB_ENV"
           printf 'RELEASE_IDENTITY=%s\n' "$release_identity" >> "$GITHUB_ENV"
       - name: Apply reviewed migrations before restoring data
@@ -111,7 +224,10 @@ jobs:
           async def main() -> None:
               pool = await create_pool()
               try:
-                  await ensure_restore_role(pool, settings.RESTORE_ROLE, settings.RESTORE_DATABASE_URL)
+                  await ensure_restore_role(
+                      pool, settings.RESTORE_ROLE, settings.RESTORE_DATABASE_URL,
+                      owner_url=settings.DATABASE_URL,
+                  )
               finally:
                   await pool.close()
           asyncio.run(main())
@@ -120,11 +236,12 @@ jobs:
         run: |
           set -euo pipefail
           pg_restore --data-only --no-owner --no-privileges --single-transaction --exit-on-error -d "$RESTORE_DATABASE_URL" "$VERIFY_DIR/corpus.dump"
-          for table in genereview.genereview_chapters genereview.genereview_passages genereview.genereview_embeddings_bge384 public.genereview_corpus_version; do
+          for table in genereview.genereview_chapters genereview.genereview_passages genereview.genereview_embeddings_bge384 public.genereview_corpus_version public.genereview_computation_runs; do
             test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select has_table_privilege('genereview_restore', '$table', 'INSERT')")" = t
             test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select has_table_privilege('genereview_restore', '$table', 'UPDATE,DELETE,TRUNCATE,TRIGGER')")" = f
           done
-          test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select rolsuper or rolcreatedb or rolcreaterole or rolreplication or rolbypassrls from pg_roles where rolname='genereview_restore'")" = f
+          test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select rolsuper or rolcreatedb or rolcreaterole or rolreplication or rolbypassrls or rolinherit from pg_roles where rolname='genereview_restore'")" = f
+          test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select count(*) from pg_auth_members m join pg_roles r on r.oid=m.member where r.rolname='genereview_restore'")" = 0
       - name: Rebuild HNSW from reviewed code after data-only restore
         run: genereview-link embed --index-only
       - name: Verify exact manifest counts, HNSW, and representative search fixtures
@@ -219,17 +336,60 @@ jobs:
             > "$RUNNER_TEMP/active_source_identity.json"
           jq -e --argjson expected "$(jq -c .source "$VERIFY_DIR/manifest.json")" '. == $expected' \
             "$RUNNER_TEMP/active_source_identity.json" >/dev/null
-          model_revision="$(jq -er '.computation.model.revision' "$VERIFY_DIR/manifest.json")"
+          model_revision="$(jq -er '.computation.provenance.model.revision' "$VERIFY_DIR/manifest.json")"
           test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select count(distinct model_revision)=1 and min(model_revision)='$model_revision' from genereview.genereview_embeddings_bge384")" = t
-          test "$(sha256sum uv.lock | cut -d' ' -f1)" = "$(jq -er '.computation.uv_lock_sha256' "$VERIFY_DIR/manifest.json")"
-          DATABASE_URL="$DATABASE_URL" uv run python tests/eval/run_eval.py --output "$RUNNER_TEMP/restored-evaluation.json"
+          test "$(sha256sum uv.lock | cut -d' ' -f1)" = "$(jq -er '.computation.provenance.uv_lock_sha256' "$VERIFY_DIR/manifest.json")"
+          DATABASE_URL="$DATABASE_URL" uv run python - "$VERIFY_DIR/manifest.json" <<'PY'
+          import asyncio, json, sys
+          from genereview_link.db.pool import create_pool
+          from genereview_link.corpus.computation_runs import load_active_computation
+          from genereview_link.corpus.semantic_identity import collect_content_identity
+          async def main():
+              pool = await create_pool()
+              try:
+                  async with pool.acquire() as connection:
+                      actual = await collect_content_identity(connection)
+                      actual_computation = await load_active_computation(connection)
+              finally:
+                  await pool.close()
+              manifest = json.load(open(sys.argv[1]))
+              expected = manifest["content_identity"]
+              if actual != expected:
+                  raise SystemExit("restored logical content identity mismatch")
+              if actual_computation != manifest["computation"]:
+                  raise SystemExit("restored ingest/embedding computation chain mismatch")
+          asyncio.run(main())
+          PY
+          DATABASE_URL="$DATABASE_URL" uv run python - "$RUNNER_TEMP/restored-evaluation.json" <<'PY'
+          import asyncio, json, sys
+          from pathlib import Path
+          from genereview_link.corpus.evaluation import canonical_json, evaluate_connection
+          from genereview_link.db.pool import create_pool
+          async def main():
+              pool = await create_pool()
+              try:
+                  async with pool.acquire() as connection:
+                      results = await evaluate_connection(connection)
+              finally:
+                  await pool.close()
+              Path(sys.argv[1]).write_bytes(canonical_json({"results": results}))
+          asyncio.run(main())
+          PY
           jq -e --argjson expected "$(jq -c '.evaluation.results' "$VERIFY_DIR/manifest.json")" \
             '.results == $expected' "$RUNNER_TEMP/restored-evaluation.json" >/dev/null
-          printf '{"release_id":%s,"tag":%s,"target_commit":%s,"assets_sha256":%s,"status":"passed"}\n' \
+          printf '{"release_id":%s,"tag":%s,"target_commit":%s,"assets_sha256":%s,"nonce":%s,"dispatch_time":%s,"run_id":%s,"run_started_at":%s,"head_sha":%s,"source_ref":%s,"phase":%s,"release_etag":%s,"status":"passed"}\n' \
             "$EXPECTED_RELEASE_ID" \
             "$(jq -Rn --arg value "$EXPECTED_RELEASE_TAG" '$value')" \
             "$(jq -Rn --arg value "$EXPECTED_TARGET_COMMIT" '$value')" \
             "$(jq -Rn --arg value "$EXPECTED_ASSETS_SHA256" '$value')" \
+            "$(jq -Rn --arg value "$EXPECTED_NONCE" '$value')" \
+            "$(jq -Rn --arg value "$EXPECTED_DISPATCH_TIME" '$value')" \
+            "$GITHUB_RUN_ID" \
+            "$(jq -Rn --arg value "$VERIFIER_STARTED_AT" '$value')" \
+            "$(jq -Rn --arg value "$GITHUB_SHA" '$value')" \
+            "$(jq -Rn --arg value "$GITHUB_REF" '$value')" \
+            "$(jq -Rn --arg value "$EXPECTED_PHASE" '$value')" \
+            "$(jq -Rn --arg value "$EXPECTED_RELEASE_ETAG" '$value')" \
             > "$RUNNER_TEMP/publication-verification.json"
       - name: Upload exact post-publication acceptance evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -237,3 +397,7 @@ jobs:
           name: corpus-publication-verification-${{ inputs.release_id }}
           path: ${{ runner.temp }}/publication-verification.json
           if-no-files-found: error
+      - name: Attest durable publication acceptance receipt
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/publication-verification.json

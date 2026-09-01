@@ -17,8 +17,14 @@ async def test_release_controlled_asset_host_cannot_expand_allowlist(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def fake_release_assets(
-        repo: str, tag: str, token: str
+        repo: str,
+        tag: str,
+        token: str,
+        *,
+        release_id: int | None = None,
+        allow_draft: bool = False,
     ) -> release_assets.ReleaseIdentity:
+        del repo, token, release_id, allow_draft
         return release_assets.ReleaseIdentity(
             release_id=7,
             tag=tag,
@@ -31,7 +37,7 @@ async def test_release_controlled_asset_host_cannot_expand_allowlist(
                     digest="sha256:" + "b" * 64,
                     url="https://evil.example/" + name,
                 )
-                for index, name in enumerate(release_assets.ASSET_NAMES, start=1)
+                for index, name in enumerate(release_assets.PUBLICATION_ASSET_NAMES, start=1)
             ),
         )
 
@@ -59,6 +65,10 @@ async def test_downloader_returns_release_and_downloaded_byte_identity(tmp_path:
         "SHA256SUMS": b"x\n",
         "corpus.dump": b"PGDMP-data",
         "rights-record.json": b'{"decision":"affirmative"}\n',
+        "rights-evidence.json": b'{"reviewed":true}\n',
+        "terms-snapshot.html": b"<html>terms</html>\n",
+        "seal-manifest.json": b'{"format":"genereviews-local-handoff-v1"}\n',
+        "publisher-tool.whl": b"PK\x03\x04sealed publisher wheel",
     }
     assets = []
     for index, (name, body) in enumerate(bodies.items(), start=1):
@@ -101,4 +111,4 @@ async def test_downloader_returns_release_and_downloaded_byte_identity(tmp_path:
     assert {asset.name: asset.downloaded_sha256 for asset in identity.assets} == {
         name: release_assets.hashlib.sha256(body).hexdigest() for name, body in bodies.items()
     }
-    assert not (destination / "rights-record.json").exists()
+    assert (destination / "rights-record.json").is_file()

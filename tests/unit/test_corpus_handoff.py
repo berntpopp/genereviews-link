@@ -9,7 +9,13 @@ from pathlib import Path
 import pytest
 
 import genereview_link.corpus.handoff as handoff
-from genereview_link.corpus.bundle import BundleManifest, write_data_only_bundle
+from genereview_link.corpus.bundle import (
+    BundleManifest,
+    _reviewed_migration_digests,
+    write_data_only_bundle,
+)
+from genereview_link.corpus.computation_runs import computation_run_id
+from genereview_link.corpus.evaluation_contract import EVALUATION_SUITE_SHA256
 from genereview_link.corpus.handoff import (
     HandoffError,
     prepare_publish_handoff,
@@ -18,6 +24,7 @@ from genereview_link.corpus.handoff import (
     verify_handoff,
     verify_rights_record,
 )
+from genereview_link.retrieval.model_identity import BGE_MODEL_FILES
 
 
 @pytest.fixture(autouse=True)
@@ -61,11 +68,154 @@ def _rewrite_rights_digest(record: dict[str, object]) -> None:
 
 
 def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
+    per_query = [
+        {
+            "query_sha256": hashlib.sha256(f"query-{index}".encode()).hexdigest(),
+            "expected_chapter": f"NBK{index}",
+            "expected_section": "Diagnosis",
+            "expected_rank": 1,
+            "section_hit_at_5": index < 2,
+            "results_returned": 10,
+        }
+        for index in range(5)
+    ]
     evaluation_results = {
-        "mrr_at_10": 0.2,
+        "mrr_at_10": 0.2619,
         "section_precision_at_5": 0.4,
         "queries_run": 5,
+        "covered_queries": 5,
+        "per_query": per_query,
     }
+    source_capture = {
+        "format": "genereviews-offline-source-v1",
+        "listing": {
+            "url": "https://ftp.ncbi.nlm.nih.gov/pub/litarch/file_list.csv",
+            "raw_sha256": "1" * 64,
+            "raw_size_bytes": 4096,
+            "captured_at": "2026-08-30T03:00:00Z",
+            "integrity_class": "https-captured-untrusted",
+            "relpath": "ca/84/gene_NBK1116.tar.gz",
+            "last_updated": "2026-08-30 02:41:04",
+        },
+        "archive": {
+            "url": "https://ftp.ncbi.nlm.nih.gov/pub/litarch/ca/84/gene_NBK1116.tar.gz",
+            "sha256": "a" * 64,
+            "size_bytes": 123,
+            "members_sha256": "2" * 64,
+            "expanded_sha256": "3" * 64,
+        },
+        "side_data": {
+            "GRtitle_shortname_NBKid.txt": {
+                "url": "https://ftp.ncbi.nlm.nih.gov/pub/GeneReviews/GRtitle_shortname_NBKid.txt",
+                "sha256": "b" * 64,
+                "size_bytes": 10,
+            },
+            "NBKid_shortname_genesymbol.txt": {
+                "url": "https://ftp.ncbi.nlm.nih.gov/pub/GeneReviews/NBKid_shortname_genesymbol.txt",
+                "sha256": "c" * 64,
+                "size_bytes": 11,
+            },
+            "NBKid_shortname_OMIM.txt": {
+                "url": "https://ftp.ncbi.nlm.nih.gov/pub/GeneReviews/NBKid_shortname_OMIM.txt",
+                "sha256": "d" * 64,
+                "size_bytes": 12,
+            },
+        },
+        "chapter_ids": [],
+        "prior_artifact": {
+            "object_id": "4" * 64,
+            "chapter_ids": [],
+            "chapter_count": 0,
+            "chapter_digests": {},
+            "chapters_sha256": "5" * 64,
+            "passages_sha256": "6" * 64,
+        },
+    }
+    content_identity = {
+        "chapter_ids": [],
+        "chapter_ids_sha256": "7" * 64,
+        "side_mapping_ids_sha256": "7" * 64,
+        "chapters_sha256": "8" * 64,
+        "passages_sha256": "9" * 64,
+        "chapter_digests": {},
+        "source_archive": {
+            "members_sha256": "2" * 64,
+            "expanded_sha256": "3" * 64,
+        },
+        "delta_from_prior": {
+            "object_id": "4" * 64,
+            "prior_chapter_count": 0,
+            "added": [],
+            "removed": [],
+            "changed": [],
+            "chapters_sha256": {"prior": "5" * 64, "current": "8" * 64},
+            "passages_sha256": {"prior": "6" * 64, "current": "9" * 64},
+        },
+    }
+    installed = ["asyncpg==0.31.0", "genereview-link==5.1.5"]
+    provenance = {
+        "schema": "genereviews-computation-v2",
+        "source": {"app_git_sha": "b" * 40, "builder_identity": "local:test"},
+        "uv_lock_sha256": "f" * 64,
+        "environment": {
+            "installed_distributions": installed,
+            "installed_distributions_sha256": hashlib.sha256(
+                (json.dumps(installed, sort_keys=True, separators=(",", ":")) + "\n").encode()
+            ).hexdigest(),
+            "uv_version": "uv 0.8.11",
+            "python": "3.12.9",
+            "os": "Linux-test",
+            "kernel": "6.8.0",
+            "libc": "glibc 2.39",
+            "cpu": "test cpu",
+            "blas": "OpenBLAS",
+            "device": "cpu",
+            "gpu": "none",
+            "cuda": "none",
+            "cudnn": "none",
+            "torch": "2.8.0+cpu",
+            "sentence_transformers": "5.1.0",
+            "transformers": "4.55.2",
+            "build_backend": "hatchling==1.27.0",
+        },
+        "database": {
+            "client_image": "pgvector/pgvector:0.8.2-pg18@sha256:" + "a" * 64,
+            "client_major": "18",
+            "server_version_num": "180004",
+            "server_major": "18",
+            "pgvector": "0.8.2",
+        },
+        "model": {
+            "name": "BAAI/bge-small-en-v1.5",
+            "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+            "files": dict(BGE_MODEL_FILES),
+        },
+        "determinism": {
+            "normalize_embeddings": True,
+            "python_seed": 0,
+            "numpy_seed": 0,
+            "torch_seed": 0,
+            "batch_size": 64,
+        },
+        "embedding": {
+            "model_name": "BAAI/bge-small-en-v1.5",
+            "model_revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+            "table": "genereview_embeddings_bge384",
+        },
+    }
+    ingest_provenance = {**provenance, "source_capture": source_capture}
+    embedding_run_id = computation_run_id(
+        phase="embedding",
+        corpus_version="2026-08-30-r3",
+        expected_row_count=0,
+        provenance=provenance,
+    )
+    ingest_run_id = computation_run_id(
+        phase="ingest",
+        corpus_version="2026-08-30-r3",
+        expected_row_count=890,
+        provenance=ingest_provenance,
+    )
     manifest = BundleManifest(
         corpus_release_id=release_id,
         corpus_version="2026-08-30-r3",
@@ -83,21 +233,7 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
         },
         postgres={"major_version": "18", "pgvector_version": "0.8.2"},
         schema_migrations={
-            "control": [
-                "0001_base",
-                "0002_corpus_version",
-                "0003_refresh_log",
-                "0004_active_embedding",
-                "0005_corpus_source_identity",
-            ],
-            "data": [
-                "genereview:0001_chapters",
-                "genereview:0002_passages",
-                "genereview:0003_embeddings_bge384",
-                "genereview:0004_passage_type_and_tables",
-                "genereview:0005_passage_role",
-                "genereview:0006_primary_gene_symbols",
-            ],
+            key: list(value) for key, value in _reviewed_migration_digests().items()
         },
         app_git_sha="b" * 40,
         app_version="5.1.5",
@@ -116,11 +252,13 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
                 "NBKid_shortname_OMIM.txt": {"sha256": "d" * 64, "size_bytes": 12},
             },
         },
+        source_capture=source_capture,
+        content_identity=content_identity,
         validation={"status": "passed", "smoke_queries": []},
         evaluation={
             "status": "passed",
             "suite": "tests/eval/genereviews_queries.jsonl",
-            "suite_sha256": "e" * 64,
+            "suite_sha256": EVALUATION_SUITE_SHA256,
             "model_name": "BAAI/bge-small-en-v1.5",
             "corpus_identity": {
                 "corpus_version": "2026-08-30-r3",
@@ -146,6 +284,8 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
                 "chapter_count": 890,
                 "passage_count": 0,
                 "embedding_count": 0,
+                "embedding_run_id": embedding_run_id,
+                "content_identity": content_identity,
             },
             "export_snapshot": "00000003-0000001B-1",
             "dump_sha256": hashlib.sha256(b"PGDMP-data").hexdigest(),
@@ -157,33 +297,15 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
             ).hexdigest(),
         },
         computation={
-            "uv_lock_sha256": "f" * 64,
-            "model": {
-                "name": "BAAI/bge-small-en-v1.5",
-                "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
-                "files": {
-                    "model.safetensors": "3c9f31665447c8911517620762200d2245a2518d6e7208acc78cd9db317e21ad"
-                },
-            },
-            "runtime": {
-                "python": "3.12.9",
-                "torch": "2.13.0+cpu",
-                "sentence_transformers": "5.1.2",
-                "transformers": "5.8.0",
-                "device": "cpu",
-            },
-            "determinism": {
-                "normalize_embeddings": True,
-                "python_seed": 0,
-                "numpy_seed": 0,
-                "torch_seed": 0,
-                "batch_size": 64,
-            },
-            "builder": {"source_sha": "b" * 40, "identity": "local:test"},
-            "embedding": {
-                "model_name": "BAAI/bge-small-en-v1.5",
-                "model_revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
-                "table": "genereview_embeddings_bge384",
+            "run_id": embedding_run_id,
+            "app_git_sha": "b" * 40,
+            "expected_row_count": 0,
+            "provenance": provenance,
+            "ingest_run": {
+                "run_id": ingest_run_id,
+                "app_git_sha": "b" * 40,
+                "expected_row_count": 890,
+                "provenance": ingest_provenance,
             },
         },
     )
@@ -195,6 +317,27 @@ def _publisher_tool(tmp_path: Path) -> Path:
     tool.mkdir(exist_ok=True)
     (tool / "genereviews_link-5.1.4-py3-none-any.whl").write_bytes(b"sealed wheel")
     return tool
+
+
+def test_bundle_rejects_computation_run_id_not_derived_from_immutable_record(
+    tmp_path: Path,
+) -> None:
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "corpus.dump").write_bytes(b"PGDMP-data")
+    manifest = _verified_manifest()
+    manifest.computation["run_id"] = "e" * 64
+    corpus_identity = manifest.evaluation["corpus_identity"]
+    assert isinstance(corpus_identity, dict)
+    corpus_identity["embedding_run_id"] = "e" * 64
+    source = write_data_only_bundle(
+        work_dir=work,
+        output=tmp_path / "source",
+        manifest=manifest,
+    )
+
+    with pytest.raises(HandoffError, match="computation run ID"):
+        verify_data_only_bundle(source)
 
 
 def test_seal_is_content_addressed_read_only_and_reverifiable(tmp_path: Path) -> None:
@@ -237,12 +380,18 @@ def test_seal_rejects_a_source_file_changed_during_copy(
         destination: Path,
         *,
         source_parent_fd: int | None = None,
+        target_parent_fd: int | None = None,
     ) -> None:
         nonlocal changed
         if source_path == source / "corpus.dump" and not changed:
             changed = True
             source_path.write_bytes(b"PGDMP-attacker")
-        original_copy(source_path, destination, source_parent_fd=source_parent_fd)
+        original_copy(
+            source_path,
+            destination,
+            source_parent_fd=source_parent_fd,
+            target_parent_fd=target_parent_fd,
+        )
 
     monkeypatch.setattr(handoff, "_copy_regular", change_then_copy)
 
@@ -733,7 +882,8 @@ def test_seal_never_overwrites_target_created_at_final_rename(
 ) -> None:
     root = tmp_path / "handoffs"
 
-    def racing_rename(source: Path, target: Path) -> None:
+    def racing_rename(source: Path, target: Path, *, parent_fd: int | None = None) -> None:
+        del parent_fd
         target.mkdir()
         raise FileExistsError(target)
 
@@ -743,6 +893,43 @@ def test_seal_never_overwrites_target_created_at_final_rename(
         seal_handoff(_source(tmp_path), root, publisher_tool=_publisher_tool(tmp_path))
     target = next(path for path in root.iterdir() if not path.name.startswith(".seal-"))
     assert target.is_dir()
+
+
+def test_seal_anchors_original_root_and_rejects_parent_substitution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "handoffs"
+    original_copy = handoff._copy_regular
+    swapped = False
+
+    def swap_root_after_open(
+        source: Path,
+        destination: Path,
+        *,
+        source_parent_fd: int | None = None,
+        target_parent_fd: int | None = None,
+    ) -> None:
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            root.rename(tmp_path / "anchored-root")
+            (tmp_path / "attacker-root").mkdir()
+            root.symlink_to(tmp_path / "attacker-root", target_is_directory=True)
+        original_copy(
+            source,
+            destination,
+            source_parent_fd=source_parent_fd,
+            target_parent_fd=target_parent_fd,
+        )
+
+    monkeypatch.setattr(handoff, "_copy_regular", swap_root_after_open)
+
+    with pytest.raises(HandoffError, match="substituted"):
+        seal_handoff(_source(tmp_path), root, publisher_tool=_publisher_tool(tmp_path))
+
+    assert not any((tmp_path / "attacker-root").iterdir())
+    anchored = tmp_path / "anchored-root"
+    assert len(list(anchored.iterdir())) == 1
 
 
 def test_privileged_verifier_path_has_no_asyncpg_transitive_import(

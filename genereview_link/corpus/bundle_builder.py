@@ -32,7 +32,6 @@ def build_bundle(
         resolve_app_git_sha,
     )
     from genereview_link.corpus.bundle_validation import validate_database_ready_from_connection
-    from genereview_link.corpus.computation_provenance import collect_computation_provenance
     from genereview_link.corpus.evaluation import (
         build_evaluation_evidence,
         evaluate_connection,
@@ -61,8 +60,6 @@ def build_bundle(
             from genereview_link import __version__
 
             app_git_sha = resolve_app_git_sha()
-            computation = collect_computation_provenance(app_git_sha=app_git_sha)
-
             with tempfile.TemporaryDirectory() as td:
                 td_path = Path(td)
                 async with pool.acquire() as connection:  # noqa: SIM117 - export must stay in transaction
@@ -74,6 +71,10 @@ def build_bundle(
                         if facts is None:
                             typer.echo("no active corpus version; aborting")
                             raise typer.Exit(1)
+                        if facts.app_git_sha != app_git_sha:
+                            raise ValueError(
+                                "current checkout cannot relabel an older embedding computation run"
+                            )
                         validation_manifest: dict[str, Any] = {
                             "status": "not_run",
                             "smoke_queries": [],
@@ -103,6 +104,8 @@ def build_bundle(
                                 "chapter_count": facts.chapter_count,
                                 "passage_count": facts.passage_count,
                                 "embedding_count": facts.embedding_count,
+                                "embedding_run_id": facts.computation["run_id"],
+                                "content_identity": facts.content_identity,
                             },
                             export_snapshot=snapshot_id,
                             dump_sha256=sha256_file(td_path / "corpus.dump"),
@@ -161,10 +164,12 @@ def build_bundle(
                         "exists": facts.hnsw_exists,
                     },
                     source=facts.source,
+                    source_capture=facts.source_capture,
+                    content_identity=facts.content_identity,
                     created_by="ci" if os.getenv("GITHUB_ACTIONS") == "true" else "cli",
                     validation=validation_manifest,
                     evaluation=evaluation,
-                    computation=computation,
+                    computation=facts.computation,
                 )
                 write_data_only_bundle(work_dir=td_path, output=output, manifest=m)
                 return output

@@ -15,7 +15,16 @@ from genereview_link.corpus.release_promotion import (
 
 
 def _release(*, draft: bool = True) -> dict[str, object]:
-    names = ["corpus.dump", "manifest.json", "SHA256SUMS", "rights-record.json"]
+    names = [
+        "corpus.dump",
+        "manifest.json",
+        "SHA256SUMS",
+        "rights-record.json",
+        "rights-evidence.json",
+        "terms-snapshot.html",
+        "seal-manifest.json",
+        "publisher-tool.whl",
+    ]
     return {
         "id": 17,
         "tag_name": "corpus-data-2026-08-30-r1",
@@ -38,19 +47,17 @@ def _frozen() -> dict[str, object]:
     )
 
 
-@pytest.mark.parametrize("mutation", ["etag", "tag", "tag_target"])
+@pytest.mark.parametrize("mutation", ["etag", "tag_appeared"])
 def test_prepatch_rejects_mutation_after_semantic_verification(mutation: str) -> None:
     status = 304
-    tag_ref = {"object": {"type": "commit", "sha": "a" * 40}}
+    tag_status = 404
     if mutation == "etag":
         status = 200
-    elif mutation == "tag":
-        tag_ref["object"]["type"] = "tag"  # type: ignore[index]
     else:
-        tag_ref["object"]["sha"] = "b" * 40  # type: ignore[index]
+        tag_status = 200
 
     with pytest.raises(PromotionStateError):
-        assert_prepatch(_frozen(), conditional_status=status, tag_ref=tag_ref)
+        assert_prepatch(_frozen(), conditional_status=status, tag_status=tag_status)
 
 
 @pytest.mark.parametrize("mutation", ["asset_id", "asset_digest", "target", "release_id"])

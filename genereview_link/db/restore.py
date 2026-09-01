@@ -32,7 +32,7 @@ import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 __all__ = [
     "ALLOWED_ENTRY_TYPES",
@@ -59,6 +59,7 @@ CORPUS_TABLES = frozenset(
         "genereview.genereview_passages",
         "genereview.genereview_embeddings_bge384",
         "public.genereview_corpus_version",
+        "public.genereview_computation_runs",
     }
 )
 
@@ -84,6 +85,34 @@ def _pg_restore() -> str:
 
 class ArchivePolicyError(RuntimeError):
     """The artifact is not an immutable, data-only corpus archive."""
+
+
+def validate_restore_endpoint(owner_url: str, restore_url: str, *, role: str) -> None:
+    """Require the restricted URL to address the owner's exact database endpoint."""
+    owner = urlsplit(owner_url)
+    restore = urlsplit(restore_url)
+    try:
+        for parsed in (owner, restore):
+            _ = parsed.port  # validate a possibly explicit port before endpoint comparison
+        plain_urls = all(
+            parsed.scheme in {"postgres", "postgresql"}
+            and parsed.hostname is not None
+            and parsed.path.startswith("/")
+            and "/" not in unquote(parsed.path)[1:]
+            and parsed.query == ""
+            and parsed.fragment == ""
+            for parsed in (owner, restore)
+        )
+    except ValueError as error:
+        raise ArchivePolicyError("restore endpoints must be plain PostgreSQL URLs") from error
+    if not plain_urls:
+        raise ArchivePolicyError("restore endpoints must be plain PostgreSQL URLs")
+    if restore.username != role:
+        raise ArchivePolicyError("restore URL username must equal the configured restore role")
+    owner_endpoint = (owner.hostname, owner.port or 5432, unquote(owner.path))
+    restore_endpoint = (restore.hostname, restore.port or 5432, unquote(restore.path))
+    if owner_endpoint != restore_endpoint:
+        raise ArchivePolicyError("restore URL must use the same database endpoint as the owner URL")
 
 
 @dataclass(frozen=True)
@@ -283,7 +312,7 @@ def restore_data_only(dump: Path, *, database_url: str) -> None:
         raise ArchivePolicyError("corpus restore failed and was rolled back in full")
 
 
-async def ensure_restore_role(pool: Any, role: str, restore_url: str) -> None:
+async def ensure_restore_role(pool: Any, role: str, restore_url: str, *, owner_url: str) -> None:
     """Create the least-privileged role that may load the artifact, and nothing else.
 
     Reviewed migrations run as the database owner. The untrusted artifact is loaded by a
@@ -297,6 +326,7 @@ async def ensure_restore_role(pool: Any, role: str, restore_url: str) -> None:
     """
     if not _SAFE_ROLE.fullmatch(role):
         raise ArchivePolicyError("the configured restore role name is not a plain identifier")
+    validate_restore_endpoint(owner_url, restore_url, role=role)
     password = _password_of(restore_url)
     async with pool.acquire() as connection:
         exists = await connection.fetchval("select 1 from pg_roles where rolname = $1", role)
@@ -308,10 +338,24 @@ async def ensure_restore_role(pool: Any, role: str, restore_url: str) -> None:
             await connection.execute(statement)
         statement = await connection.fetchval(
             "select format('alter role %I login nosuperuser nocreatedb nocreaterole "
-            "noreplication nobypassrls', $1::text)",
+            "noreplication nobypassrls noinherit', $1::text)",
             role,
         )
         await connection.execute(statement)
+        memberships = await connection.fetch(
+            "select parent.rolname from pg_auth_members membership "
+            "join pg_roles member on member.oid = membership.member "
+            "join pg_roles parent on parent.oid = membership.roleid "
+            "where member.rolname = $1 order by parent.rolname",
+            role,
+        )
+        for membership in memberships:
+            statement = await connection.fetchval(
+                "select format('revoke %I from %I', $1::text, $2::text)",
+                membership["rolname"],
+                role,
+            )
+            await connection.execute(statement)
         if password:
             statement = await connection.fetchval(
                 "select format('alter role %I with password %L', $1::text, $2::text)",
@@ -319,7 +363,25 @@ async def ensure_restore_role(pool: Any, role: str, restore_url: str) -> None:
                 password,
             )
             await connection.execute(statement)
+        unsafe_role = await connection.fetchval(
+            "select rolsuper or rolcreatedb or rolcreaterole or rolreplication "
+            "or rolbypassrls or rolinherit from pg_roles where rolname = $1",
+            role,
+        )
+        remaining_memberships = await connection.fetchval(
+            "select count(*) from pg_auth_members membership "
+            "join pg_roles member on member.oid = membership.member where member.rolname = $1",
+            role,
+        )
+        if unsafe_role or int(remaining_memberships or 0) != 0:
+            raise ArchivePolicyError("restore role retains escalation attributes or memberships")
         for schema in sorted({table.split(".", 1)[0] for table in CORPUS_TABLES}):
+            statement = await connection.fetchval(
+                "select format('revoke all on schema %I from %I', $1::text, $2::text)",
+                schema,
+                role,
+            )
+            await connection.execute(statement)
             statement = await connection.fetchval(
                 "select format('grant usage on schema %I to %I', $1::text, $2::text)", schema, role
             )

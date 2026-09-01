@@ -1,4 +1,4 @@
-"""Bounded retrieval of the three exact data-only GitHub Release assets."""
+"""Bounded retrieval of the exact public corpus reconstruction assets."""
 
 from __future__ import annotations
 
@@ -24,7 +24,14 @@ from genereview_link.download_guard import (
 
 GITHUB_API = "https://api.github.com"
 ASSET_NAMES = ("corpus.dump", "manifest.json", "SHA256SUMS")
-PUBLICATION_ASSET_NAMES = (*ASSET_NAMES, "rights-record.json")
+PUBLICATION_ASSET_NAMES = (
+    *ASSET_NAMES,
+    "rights-record.json",
+    "rights-evidence.json",
+    "terms-snapshot.html",
+    "seal-manifest.json",
+    "publisher-tool.whl",
+)
 MAX_METADATA_BYTES = 1 << 20
 MAX_DUMP_BYTES = 2 * 1024**3
 METADATA_DEADLINE_SECONDS = 2 * 60.0
@@ -87,13 +94,24 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-async def _release_assets(repo: str, tag: str, token: str) -> ReleaseIdentity:
-    if not _REPO.fullmatch(repo) or not tag:
+async def _release_assets(
+    repo: str,
+    tag: str,
+    token: str,
+    *,
+    release_id: int | None = None,
+    allow_draft: bool = False,
+) -> ReleaseIdentity:
+    if not _REPO.fullmatch(repo) or not tag or (release_id is not None and release_id <= 0):
         raise ReleaseAssetError("repository or release tag is invalid")
     headers = {"Accept": "application/vnd.github+json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    url = f"{GITHUB_API}/repos/{repo}/releases/tags/{quote(tag, safe='')}"
+    url = (
+        f"{GITHUB_API}/repos/{repo}/releases/{release_id}"
+        if release_id is not None
+        else f"{GITHUB_API}/repos/{repo}/releases/tags/{quote(tag, safe='')}"
+    )
     async with httpx.AsyncClient(
         headers=headers,
         timeout=STREAM_TIMEOUT,
@@ -124,9 +142,16 @@ async def _release_assets(repo: str, tag: str, token: str) -> ReleaseIdentity:
         type(release_id) is not int
         or release_id <= 0
         or release.get("tag_name") != tag
-        or release.get("draft") is not False
         or release.get("prerelease") is not False
-        or release.get("immutable") is not True
+        or (
+            (release.get("draft") is not False or release.get("immutable") is not True)
+            and not (
+                allow_draft
+                and release.get("draft") is True
+                and release.get("immutable") is False
+                and release.get("published_at") is None
+            )
+        )
         or not isinstance(target, str)
         or not _REVISION_RE.fullmatch(target)
     ):
@@ -176,11 +201,19 @@ async def _release_assets(repo: str, tag: str, token: str) -> ReleaseIdentity:
 
 
 async def download_release_assets(
-    repo: str, tag: str, destination: Path, *, token: str = ""
+    repo: str,
+    tag: str,
+    destination: Path,
+    *,
+    token: str = "",
+    release_id: int | None = None,
+    allow_draft: bool = False,
 ) -> ReleaseIdentity:
     """Download exact assets through allowlisted, byte- and deadline-bounded streams."""
     _assert_fresh_directory(destination)
-    identity = await _release_assets(repo, tag, token)
+    identity = await _release_assets(
+        repo, tag, token, release_id=release_id, allow_draft=allow_draft
+    )
     assets = {asset.name: asset for asset in identity.assets}
     headers = {"Accept": "application/octet-stream"}
     if token:
@@ -220,9 +253,6 @@ async def download_release_assets(
             replace(asset, downloaded_sha256=downloaded[asset.name]) for asset in identity.assets
         ),
     )
-    # The public rights record is identity evidence, not part of the PostgreSQL
-    # data-only restore bundle. Its verified digest remains in ``result``.
-    (destination / "rights-record.json").unlink()
     return result
 
 
@@ -230,11 +260,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True)
     parser.add_argument("--tag", required=True)
+    parser.add_argument("--release-id", type=int)
+    parser.add_argument("--allow-draft", action="store_true")
     parser.add_argument("--dest", required=True, type=Path)
     parser.add_argument("--identity-out", type=Path)
     args = parser.parse_args()
     identity = asyncio.run(
-        download_release_assets(args.repo, args.tag, args.dest, token=os.getenv("GH_TOKEN", ""))
+        download_release_assets(
+            args.repo,
+            args.tag,
+            args.dest,
+            token=os.getenv("GH_TOKEN", ""),
+            release_id=args.release_id,
+            allow_draft=args.allow_draft,
+        )
     )
     if args.identity_out is not None:
         args.identity_out.write_text(

@@ -7,6 +7,7 @@ Stage 7 (embeddings) is in retrieval/embeddings.py + ingest/orchestrator.py.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from genereview_link.corpus.nxml import extract_primary_gene_symbols
 from genereview_link.corpus.parallel import copy_chapters, copy_passages, parse_pipeline
 from genereview_link.corpus.records import ChapterRecord, PassageRecord
 from genereview_link.corpus.sidedata import load_sidedata
+from genereview_link.corpus.source_capture import load_offline_capture
 from genereview_link.corpus.source_identity import SIDEDATA_FILES, validate_source_identity
 from genereview_link.db.identifiers import quote_pg_identifier
 from genereview_link.db.locks import CORPUS_WRITE_LOCK_KEY
@@ -67,6 +69,7 @@ async def record_corpus_version_start(
     tarball_sha256: str,
     size: int,
     side_data: Mapping[str, Mapping[str, str | int]],
+    source_capture: dict[str, object] | None = None,
 ) -> str:
     """Insert a new corpus_version row; return the chosen version string."""
     source = validate_source_identity(
@@ -85,7 +88,11 @@ async def record_corpus_version_start(
         await conn.execute("select pg_advisory_lock($1)", CORPUS_WRITE_LOCK_KEY)
         try:
             return await _record_corpus_version_start_locked(
-                conn, listing=listing, source=source, exact_side_data=exact_side_data
+                conn,
+                listing=listing,
+                source=source,
+                exact_side_data=exact_side_data,
+                source_capture=source_capture,
             )
         finally:
             await conn.execute("select pg_advisory_unlock($1)", CORPUS_WRITE_LOCK_KEY)
@@ -97,6 +104,7 @@ async def _record_corpus_version_start_locked(
     listing: ArchiveListing,
     source: Mapping[str, object],
     exact_side_data: Mapping[str, Mapping[str, str | int]],
+    source_capture: dict[str, object] | None = None,
 ) -> str:
     """Choose and insert a version while the database-wide writer lock is held."""
     base = str(source["last_updated"]).split(" ")[0]
@@ -123,8 +131,8 @@ async def _record_corpus_version_start_locked(
                  sidedata_title_sha256, sidedata_title_size_bytes,
                  sidedata_genes_sha256, sidedata_genes_size_bytes,
                  sidedata_omim_sha256, sidedata_omim_size_bytes,
-                 ingest_started_at, ingest_status, is_active)
-            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                 source_capture, ingest_started_at, ingest_status, is_active)
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13,
                     'in_progress', false)
         """,
         version,
@@ -138,8 +146,23 @@ async def _record_corpus_version_start_locked(
         exact_side_data[SIDEDATA_FILES[1]]["size_bytes"],
         exact_side_data[SIDEDATA_FILES[2]]["sha256"],
         exact_side_data[SIDEDATA_FILES[2]]["size_bytes"],
+        json.dumps(source_capture, sort_keys=True, separators=(",", ":"))
+        if source_capture is not None
+        else None,
         datetime.now(UTC),
     )
+    if source_capture is not None:
+        from genereview_link.corpus.computation_runs import record_ingest_run
+
+        chapter_ids = source_capture.get("chapter_ids")
+        if not isinstance(chapter_ids, list):
+            raise ValueError("source capture chapter IDs are missing")
+        await record_ingest_run(
+            conn,
+            corpus_version=version,
+            source_capture=source_capture,
+            expected_row_count=len(chapter_ids),
+        )
     return version
 
 
@@ -233,8 +256,42 @@ async def run_full_ingest(
     pool: asyncpg.Pool,
     *,
     work_dir: Path | None = None,
+    archive: Path | None = None,
+    side_data_dir: Path | None = None,
+    source_metadata: Path | None = None,
 ) -> IngestResult:
     """End-to-end stages 0-9 (excluding embeddings, which run separately)."""
+    offline = (archive, side_data_dir, source_metadata)
+    if any(value is not None for value in offline):
+        if not all(value is not None for value in offline):
+            raise ValueError("offline ingest requires archive, side-data directory, and metadata")
+        assert archive is not None and side_data_dir is not None and source_metadata is not None
+        capture = load_offline_capture(
+            source_metadata, archive=archive, side_data_dir=side_data_dir
+        )
+        listing_data = capture["listing"]
+        archive_data = capture["archive"]
+        side_data_identity = capture["side_data"]
+        assert isinstance(listing_data, Mapping)
+        assert isinstance(archive_data, Mapping)
+        assert isinstance(side_data_identity, Mapping)
+        listing = ArchiveListing(
+            relpath=str(listing_data["relpath"]),
+            title="GeneReviews",
+            publisher="NCBI",
+            initial_year="1993",
+            nbk_id="NBK1116",
+            last_updated=str(listing_data["last_updated"]),
+        )
+        return await _ingest_files(
+            pool,
+            listing=listing,
+            tarball=archive,
+            sidedata_dir=side_data_dir,
+            tarball_sha256=str(archive_data["sha256"]),
+            side_data_identity=side_data_identity,
+            source_capture=capture,
+        )
     listing = await fetch_listing()
     with TemporaryDirectory(dir=work_dir) as td:
         td_path = Path(td)
@@ -245,53 +302,82 @@ async def run_full_ingest(
         sidedata_dir = td_path / "sidedata"
         sidedata_dir.mkdir()
         side_data_identity = await _download_sidedata(sidedata_dir)
-        sidedata = load_sidedata(sidedata_dir)
-
-        await prepare_staging(pool)
-        version = await record_corpus_version_start(
+        return await _ingest_files(
             pool,
             listing=listing,
+            tarball=tarball,
+            sidedata_dir=sidedata_dir,
             tarball_sha256=sha,
-            size=tarball.stat().st_size,
-            side_data=side_data_identity,
+            side_data_identity=side_data_identity,
+            source_capture=None,
         )
 
-        chapter_count = 0
-        passage_count = 0
-        chapter_buf: list[ChapterRecord] = []
-        passage_buf: list[PassageRecord] = []
-        batch_size = 50
 
-        async for chapter, passages in parse_pipeline(tarball, sidedata):
-            # apply sidedata joins
-            sidedata_gs = sidedata.gene_symbols.get(chapter.nbk_id, ())
-            chapter = ChapterRecord(
-                nbk_id=chapter.nbk_id,
-                short_name=chapter.short_name,
-                title=chapter.title,
-                pubmed_id=chapter.pubmed_id,
-                gene_symbols=sidedata_gs,
-                omim_ids=sidedata.omim_ids.get(chapter.nbk_id, ()),
-                authors=chapter.authors,
-                initial_pub_date=chapter.initial_pub_date,
-                last_updated_date=chapter.last_updated_date,
-                nxml_relpath=chapter.nxml_relpath,
-                raw_metadata={},
-                primary_gene_symbols=extract_primary_gene_symbols(chapter.title, sidedata_gs),
-            )
-            chapter_buf.append(chapter)
-            passage_buf.extend(passages)
-            chapter_count += 1
-            passage_count += len(passages)
-            if len(chapter_buf) >= batch_size:
-                await _flush(pool, chapter_buf, passage_buf, version)
-                chapter_buf.clear()
-                passage_buf.clear()
-        if chapter_buf:
+async def _ingest_files(
+    pool: asyncpg.Pool,
+    *,
+    listing: ArchiveListing,
+    tarball: Path,
+    sidedata_dir: Path,
+    tarball_sha256: str,
+    side_data_identity: Mapping[str, Mapping[str, str | int]],
+    source_capture: dict[str, object] | None,
+) -> IngestResult:
+    sidedata = load_sidedata(sidedata_dir)
+    if source_capture is not None:
+        expected_ids = source_capture.get("chapter_ids")
+        if expected_ids != sorted(sidedata.short_name_by_nbk):
+            raise ValueError("retained title mapping does not match captured chapter IDs")
+    await prepare_staging(pool)
+    version = await record_corpus_version_start(
+        pool,
+        listing=listing,
+        tarball_sha256=tarball_sha256,
+        size=tarball.stat().st_size,
+        side_data=side_data_identity,
+        source_capture=source_capture,
+    )
+
+    chapter_count = 0
+    passage_count = 0
+    chapter_ids: list[str] = []
+    chapter_buf: list[ChapterRecord] = []
+    passage_buf: list[PassageRecord] = []
+    batch_size = 50
+
+    async for chapter, passages in parse_pipeline(tarball, sidedata):
+        # apply sidedata joins
+        sidedata_gs = sidedata.gene_symbols.get(chapter.nbk_id, ())
+        chapter = ChapterRecord(
+            nbk_id=chapter.nbk_id,
+            short_name=chapter.short_name,
+            title=chapter.title,
+            pubmed_id=chapter.pubmed_id,
+            gene_symbols=sidedata_gs,
+            omim_ids=sidedata.omim_ids.get(chapter.nbk_id, ()),
+            authors=chapter.authors,
+            initial_pub_date=chapter.initial_pub_date,
+            last_updated_date=chapter.last_updated_date,
+            nxml_relpath=chapter.nxml_relpath,
+            raw_metadata={},
+            primary_gene_symbols=extract_primary_gene_symbols(chapter.title, sidedata_gs),
+        )
+        chapter_buf.append(chapter)
+        chapter_ids.append(chapter.nbk_id)
+        passage_buf.extend(passages)
+        chapter_count += 1
+        passage_count += len(passages)
+        if len(chapter_buf) >= batch_size:
             await _flush(pool, chapter_buf, passage_buf, version)
+            chapter_buf.clear()
+            passage_buf.clear()
+    if chapter_buf:
+        await _flush(pool, chapter_buf, passage_buf, version)
 
-        await atomic_swap(pool, new_version=version, chapter_count=chapter_count)
-        await cleanup_old(pool)
+    if source_capture is not None and sorted(chapter_ids) != source_capture.get("chapter_ids"):
+        raise ValueError("parsed archive chapter IDs do not match retained capture")
+    await atomic_swap(pool, new_version=version, chapter_count=chapter_count)
+    await cleanup_old(pool)
 
     return IngestResult(
         corpus_version=version,

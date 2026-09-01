@@ -72,6 +72,8 @@ class BundleManifest:
         }
     )
     source: dict[str, object] = field(default_factory=dict)
+    source_capture: dict[str, object] = field(default_factory=dict)
+    content_identity: dict[str, object] = field(default_factory=dict)
     validation: dict[str, object] = field(
         default_factory=lambda: {"status": "not_run", "smoke_queries": []}
     )
@@ -107,10 +109,10 @@ def pg_dump_to(
         "genereview.genereview_embeddings_bge384",
         "genereview.genereview_passages",
         "public.genereview_corpus_version",
+        "public.genereview_computation_runs",
     ),
 ) -> None:
-    cmd = [
-        "pg_dump",
+    arguments = [
         "-Fc",
         "--data-only",
         "--no-owner",
@@ -119,12 +121,32 @@ def pg_dump_to(
         str(dump_path),
     ]
     for table in tables:
-        cmd.extend(["--table", table])
+        arguments.extend(["--table", table])
     if snapshot is not None:
-        cmd.extend(["--snapshot", snapshot])
-    cmd.append(database_url)
+        arguments.extend(["--snapshot", snapshot])
+    arguments.append(database_url)
+    from genereview_link.corpus.pg_client import (
+        assert_client_server_match,
+        build_pg_client_command,
+    )
+
+    client = subprocess.run(  # noqa: S603
+        build_pg_client_command("pg_dump", ["--version"]),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    server = subprocess.run(  # noqa: S603
+        build_pg_client_command(
+            "psql", [database_url, "-At", "-v", "ON_ERROR_STOP=1", "-c", "show server_version_num"]
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert_client_server_match(client, server)
     subprocess.run(  # noqa: S603
-        cmd,
+        build_pg_client_command("pg_dump", arguments, mounts=(dump_path.parent,)),
         check=True,
     )
 

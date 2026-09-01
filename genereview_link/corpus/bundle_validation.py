@@ -100,11 +100,18 @@ async def validate_database_ready(
             errors.append(f"PostgreSQL major {actual_pg_major} is not the reviewed major 18")
         if actual_pgvector != "0.8.2":
             errors.append(f"pgvector {actual_pgvector!r} is not the reviewed version 0.8.2")
-        active_version = await conn.fetchval(
-            "select version from public.genereview_corpus_version where is_active"
+        active_corpus = await conn.fetchrow(
+            "select version, source_capture, ingest_run_id, embedding_run_id "
+            "from public.genereview_corpus_version where is_active"
         )
-        if not active_version:
+        if not active_corpus:
             errors.append("no active corpus version")
+        elif (
+            not isinstance(active_corpus["source_capture"], dict)
+            or not active_corpus["ingest_run_id"]
+            or not active_corpus["embedding_run_id"]
+        ):
+            errors.append("active corpus lacks retained source and computation-run identity")
 
         chapter_count = int(
             await conn.fetchval(
@@ -156,6 +163,14 @@ async def validate_database_ready(
              where id = 1
             """
         )
+        run_mismatch_count = int(
+            await conn.fetchval(
+                f"select count(*) from {quoted_schema}.{quoted_embedding_table} "  # noqa: S608
+                "where embedding_run_id is distinct from $1",
+                active_corpus["embedding_run_id"] if active_corpus else None,
+            )
+            or 0
+        )
 
     if chapter_count < min_chapters:
         errors.append(f"chapter count {chapter_count} is below minimum {min_chapters}")
@@ -167,6 +182,8 @@ async def validate_database_ready(
         )
     if not model_revision_matches:
         errors.append("embeddings do not use the exact reviewed model revision")
+    if run_mismatch_count:
+        errors.append("embeddings are not tied to the active immutable computation run")
     if not hnsw_exists:
         errors.append("HNSW index genereview_embeddings_bge384_hnsw_cosine is missing")
     if active_embedding is None:

@@ -25,6 +25,8 @@ async def iter_passages_missing_embedding(
     pool: asyncpg.Pool,
     *,
     model_name: str,
+    model_revision: str,
+    embedding_run_id: str | None = None,
     schema: str,
     batch_size: int,
 ) -> AsyncIterator[list[tuple[str, str, str, str]]]:
@@ -48,12 +50,16 @@ async def iter_passages_missing_embedding(
                     on e.nbk_id = p.nbk_id
                    and e.passage_id = p.passage_id
                    and e.model_name = $1
-                 where e.passage_id is null
-                   and (p.nbk_id, p.passage_id) > ($2, $3)
+                 where (e.passage_id is null
+                        or e.model_revision is distinct from $2
+                        or ($3::text is not null and e.embedding_run_id is distinct from $3))
+                   and (p.nbk_id, p.passage_id) > ($4, $5)
                  order by p.nbk_id, p.passage_id
-                 limit $4
+                 limit $6
                 """,
                 model_name,
+                model_revision,
+                embedding_run_id,
                 last_nbk,
                 last_pid,
                 batch_size,
@@ -78,12 +84,29 @@ async def backfill_embeddings(
     db_writers = db_writers or settings.INGEST_EMBED_WRITERS
 
     quoted_schema = quote_pg_identifier(schema)
+    run_id: str | None = None
+    if schema == "genereview":
+        from genereview_link.corpus.computation_runs import begin_embedding_run
+
+        async with pool.acquire() as connection:
+            expected_count = int(
+                await connection.fetchval("select count(*) from genereview.genereview_passages")
+                or 0
+            )
+        run = await begin_embedding_run(pool, expected_row_count=expected_count)
+        if run is not None:
+            run_id = run[0]
     encoded_q: asyncio.Queue[list[Any] | None] = asyncio.Queue(maxsize=2)
     total = 0
 
     async def encoder() -> None:
         async for batch in iter_passages_missing_embedding(
-            pool, model_name=provider.model_name, schema=schema, batch_size=batch_size
+            pool,
+            model_name=provider.model_name,
+            model_revision=provider.model_revision,
+            embedding_run_id=run_id,
+            schema=schema,
+            batch_size=batch_size,
         ):
             texts = [
                 bge_passage_text(text, passage_type=ptype) for _nbk, _pid, text, ptype in batch
@@ -94,9 +117,10 @@ async def backfill_embeddings(
                     nbk,
                     pid,
                     provider.model_name,
-                    getattr(provider, "model_revision", None),
+                    provider.model_revision,
                     text_hash(text),
                     vec,
+                    run_id,
                 )
                 for (nbk, pid, text, _ptype), vec in zip(batch, vectors, strict=True)
             ]
@@ -113,21 +137,37 @@ async def backfill_embeddings(
             async with pool.acquire() as conn, conn.transaction():
                 await conn.execute("select pg_advisory_xact_lock($1)", CORPUS_WRITE_LOCK_KEY)
                 await conn.execute(f"set search_path to {quoted_schema}, public")
-                await conn.copy_records_to_table(
-                    "genereview_embeddings_bge384",
-                    records=records,
-                    columns=(
-                        "nbk_id",
-                        "passage_id",
-                        "model_name",
-                        "model_revision",
-                        "text_hash",
-                        "embedding",
-                    ),
+                await conn.executemany(
+                    """
+                    insert into genereview_embeddings_bge384
+                        (nbk_id, passage_id, model_name, model_revision, text_hash,
+                         embedding, embedding_run_id)
+                    values ($1, $2, $3, $4, $5, $6, $7)
+                    on conflict (nbk_id, passage_id) do update
+                       set model_name = excluded.model_name,
+                           model_revision = excluded.model_revision,
+                           text_hash = excluded.text_hash,
+                           embedding = excluded.embedding,
+                           embedding_run_id = excluded.embedding_run_id,
+                           created_at = now()
+                     where genereview_embeddings_bge384.model_revision is distinct from
+                           excluded.model_revision
+                        or genereview_embeddings_bge384.model_name is distinct from
+                           excluded.model_name
+                        or genereview_embeddings_bge384.text_hash is distinct from
+                           excluded.text_hash
+                        or genereview_embeddings_bge384.embedding_run_id is distinct from
+                           excluded.embedding_run_id
+                    """,
+                    records,
                 )
             total += len(records)
 
     await asyncio.gather(encoder(), *(writer() for _ in range(db_writers)))
+    if run_id is not None:
+        from genereview_link.corpus.computation_runs import complete_embedding_run
+
+        await complete_embedding_run(pool, run_id=run_id)
     return total
 
 

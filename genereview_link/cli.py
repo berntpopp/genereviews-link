@@ -207,6 +207,9 @@ def ingest_cmd(
         bool,
         typer.Option("--dry-run", help="Download + parse only; do not write to DB."),
     ] = False,
+    archive: Annotated[Path | None, typer.Option("--archive")] = None,
+    side_data_dir: Annotated[Path | None, typer.Option("--side-data-dir")] = None,
+    source_metadata: Annotated[Path | None, typer.Option("--source-metadata")] = None,
 ) -> None:
     """Run the full ingest pipeline against DATABASE_URL."""
     import asyncio
@@ -220,7 +223,12 @@ def ingest_cmd(
             if dry_run:
                 typer.echo("dry-run not yet implemented; aborting")
                 raise typer.Exit(2)
-            result = await run_full_ingest(pool)
+            result = await run_full_ingest(
+                pool,
+                archive=archive,
+                side_data_dir=side_data_dir,
+                source_metadata=source_metadata,
+            )
             typer.echo(
                 f"ingested {result.chapter_count} chapters / "
                 f"{result.passage_count} passages "
@@ -428,7 +436,12 @@ def corpus_restore() -> None:
             assert_data_only_archive(read_archive_entries(bundle.dump))
             logger.info("corpus archive verified data-only", version=bundle.corpus_version)
 
-            await ensure_restore_role(pool, settings.RESTORE_ROLE, settings.RESTORE_DATABASE_URL)
+            await ensure_restore_role(
+                pool,
+                settings.RESTORE_ROLE,
+                settings.RESTORE_DATABASE_URL,
+                owner_url=settings.DATABASE_URL,
+            )
             restore_url = settings.RESTORE_DATABASE_URL
             if not restore_url:
                 raise ArchivePolicyError(

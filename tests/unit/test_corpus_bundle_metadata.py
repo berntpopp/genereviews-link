@@ -44,7 +44,10 @@ def test_asset_name_for_release_includes_model_and_database_versions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_collect_database_facts_binds_complete_release_provenance() -> None:
+async def test_collect_database_facts_binds_complete_release_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_capture = {"format": "genereviews-offline-source-v1", "chapter_ids": []}
     pool = MagicMock()
     pool.fetchrow = AsyncMock(
         return_value={
@@ -60,6 +63,9 @@ async def test_collect_database_facts_binds_complete_release_provenance() -> Non
             "sidedata_omim_sha256": "d" * 64,
             "sidedata_omim_size_bytes": 96_486,
             "chapter_count": 891,
+            "source_capture": source_capture,
+            "ingest_run_id": "i" * 64,
+            "embedding_run_id": "e" * 64,
         }
     )
     pool.fetch = AsyncMock(
@@ -69,6 +75,20 @@ async def test_collect_database_facts_binds_complete_release_provenance() -> Non
         ]
     )
     pool.fetchval = AsyncMock(side_effect=[891, 41_414, 41_414, True, True, "180004", "0.8.2"])
+    computation = {
+        "run_id": "e" * 64,
+        "app_git_sha": "a" * 40,
+        "expected_row_count": 41_414,
+        "provenance": {},
+    }
+    monkeypatch.setattr(
+        "genereview_link.corpus.computation_runs.load_active_computation",
+        AsyncMock(return_value=computation),
+    )
+    monkeypatch.setattr(
+        "genereview_link.corpus.semantic_identity.collect_content_identity",
+        AsyncMock(return_value={"chapter_ids": []}),
+    )
 
     facts = await collect_database_facts(pool)
 
@@ -96,10 +116,14 @@ async def test_collect_database_facts_binds_complete_release_provenance() -> Non
     }
     assert facts.hnsw_exists is True
     assert facts.postgres == {"major_version": "18", "pgvector_version": "0.8.2"}
+    assert facts.computation == computation
+    assert facts.source_capture == source_capture
 
 
 @pytest.mark.asyncio
-async def test_collect_database_facts_rejects_unknown_migration_namespace() -> None:
+async def test_collect_database_facts_rejects_unknown_migration_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pool = MagicMock()
     pool.fetchrow = AsyncMock(
         return_value={
@@ -115,10 +139,21 @@ async def test_collect_database_facts_rejects_unknown_migration_namespace() -> N
             "sidedata_omim_sha256": "d" * 64,
             "sidedata_omim_size_bytes": 1,
             "chapter_count": 890,
+            "source_capture": {"format": "genereviews-offline-source-v1"},
+            "ingest_run_id": "i" * 64,
+            "embedding_run_id": "e" * 64,
         }
     )
     pool.fetch = AsyncMock(return_value=[{"namespace": "attacker", "version": "x"}])
     pool.fetchval = AsyncMock(side_effect=[891, 41_414, 41_414, True, True, "180004", "0.8.2"])
+    monkeypatch.setattr(
+        "genereview_link.corpus.computation_runs.load_active_computation",
+        AsyncMock(return_value={"run_id": "e" * 64, "app_git_sha": "a" * 40}),
+    )
+    monkeypatch.setattr(
+        "genereview_link.corpus.semantic_identity.collect_content_identity",
+        AsyncMock(return_value={}),
+    )
 
     with pytest.raises(ValueError, match="migration namespace"):
         await collect_database_facts(pool)

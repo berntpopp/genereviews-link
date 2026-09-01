@@ -32,6 +32,13 @@ class BundleDatabaseFacts:
     schema_migrations: dict[str, list[str]]
     postgres_major: str
     pgvector_version: str
+    computation: dict[str, object]
+    content_identity: dict[str, object]
+    source_capture: dict[str, object]
+
+    @property
+    def app_git_sha(self) -> str:
+        return str(self.computation["app_git_sha"])
 
     @property
     def source(self) -> dict[str, object]:
@@ -116,13 +123,22 @@ async def collect_database_facts_from_connection(
                sidedata_title_sha256, sidedata_title_size_bytes,
                sidedata_genes_sha256, sidedata_genes_size_bytes,
                sidedata_omim_sha256, sidedata_omim_size_bytes,
-               chapter_count
+               chapter_count, source_capture, ingest_run_id, embedding_run_id
           from public.genereview_corpus_version
          where is_active and ingest_status = 'completed'
         """
     )
     if row is None:
         return None
+
+    from genereview_link.corpus.computation_runs import load_active_computation
+    from genereview_link.corpus.semantic_identity import collect_content_identity
+
+    computation = await load_active_computation(connection)
+    content_identity = await collect_content_identity(connection)
+    source_capture = row["source_capture"]
+    if not isinstance(source_capture, dict):
+        raise ValueError("active corpus lacks retained source capture identity")
 
     migration_rows = await connection.fetch(
         """
@@ -228,6 +244,9 @@ async def collect_database_facts_from_connection(
         schema_migrations=migrations,
         postgres_major=str(int(server_version) // 10_000),
         pgvector_version=pgvector_version,
+        computation=computation,
+        content_identity=content_identity,
+        source_capture=source_capture,
     )
 
 

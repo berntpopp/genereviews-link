@@ -34,7 +34,16 @@ def _assets(release: dict[str, Any]) -> list[dict[str, object]]:
             raise PromotionStateError("release asset identity is incomplete")
         projected.append(entry)
     names = [str(entry["name"]) for entry in projected]
-    if sorted(names) != ["SHA256SUMS", "corpus.dump", "manifest.json", "rights-record.json"]:
+    if sorted(names) != [
+        "SHA256SUMS",
+        "corpus.dump",
+        "manifest.json",
+        "publisher-tool.whl",
+        "rights-evidence.json",
+        "rights-record.json",
+        "seal-manifest.json",
+        "terms-snapshot.html",
+    ]:
         raise PromotionStateError("release asset set is not exact")
     return sorted(projected, key=lambda entry: str(entry["name"]))
 
@@ -61,18 +70,11 @@ def freeze_release(
     }
 
 
-def assert_prepatch(
-    frozen: dict[str, Any], *, conditional_status: int, tag_ref: dict[str, Any]
-) -> None:
+def assert_prepatch(frozen: dict[str, Any], *, conditional_status: int, tag_status: int) -> None:
     if conditional_status != 304:
         raise PromotionStateError("release ETag precondition changed after semantic verification")
-    obj = tag_ref.get("object")
-    if (
-        not isinstance(obj, dict)
-        or obj.get("type") != "commit"
-        or obj.get("sha") != frozen.get("target_commit")
-    ):
-        raise PromotionStateError("tag changed after semantic verification")
+    if tag_status != 404:
+        raise PromotionStateError("tag existed before the final release promotion point")
 
 
 def assert_postpublication(
@@ -87,7 +89,13 @@ def assert_postpublication(
         or _assets(published) != frozen.get("assets")
     ):
         raise PromotionStateError("published release differs from the verified representation")
-    assert_prepatch(frozen, conditional_status=304, tag_ref=tag_ref)
+    obj = tag_ref.get("object")
+    if (
+        not isinstance(obj, dict)
+        or obj.get("type") != "commit"
+        or obj.get("sha") != frozen.get("target_commit")
+    ):
+        raise PromotionStateError("published tag does not bind the verified target")
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -109,7 +117,7 @@ def main() -> None:
     prepatch = subparsers.add_parser("prepatch")
     prepatch.add_argument("--frozen", required=True, type=Path)
     prepatch.add_argument("--status", required=True, type=int)
-    prepatch.add_argument("--tag-ref", required=True, type=Path)
+    prepatch.add_argument("--tag-status", required=True, type=int)
     post = subparsers.add_parser("post")
     post.add_argument("--frozen", required=True, type=Path)
     post.add_argument("--published", required=True, type=Path)
@@ -122,7 +130,7 @@ def main() -> None:
         args.out.write_text(json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n")
     elif args.command == "prepatch":
         assert_prepatch(
-            _read(args.frozen), conditional_status=args.status, tag_ref=_read(args.tag_ref)
+            _read(args.frozen), conditional_status=args.status, tag_status=args.tag_status
         )
     else:
         assert_postpublication(

@@ -1,0 +1,5 @@
+{"query": "BRCA1 tumor suppressor function", "expected_chapter": "NBK1247", "expected_section": "summary"}
+{"query": "BRCA1 risk-reducing surgery", "expected_chapter": "NBK1247", "expected_section": "management"}
+{"query": "Huntington trinucleotide repeat", "expected_chapter": "NBK1305", "expected_section": "molecular_genetics"}
+{"query": "Huntington genetic counseling", "expected_chapter": "NBK1305", "expected_section": "genetic_counseling"}
+{"query": "cystic fibrosis CFTR mutations", "expected_chapter": "NBK1250", "expected_section": "molecular_genetics"}

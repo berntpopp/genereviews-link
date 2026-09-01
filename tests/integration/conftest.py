@@ -68,6 +68,7 @@ async def _wipe(pool: asyncpg.Pool) -> None:
             await conn.execute(f"drop schema if exists {row['schema_name']} cascade")
         await conn.execute("drop table if exists public.schema_migrations cascade")
         await conn.execute("drop table if exists public.genereview_corpus_version cascade")
+        await conn.execute("drop table if exists public.genereview_computation_runs cascade")
         await conn.execute("drop table if exists public.genereview_refresh_log cascade")
         await conn.execute("drop table if exists public.genereview_active_embedding cascade")
 

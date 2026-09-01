@@ -149,34 +149,42 @@ record bound to that object, its source SHA-256, corpus-dump SHA-256, and releas
 has no release-service client. The handoff root is owner-only (`0700`), and sealed objects/files are
 checked with no-follow file descriptors, exact digest/size/mode manifests, and immutable object IDs.
 The sealed publisher wheel name and digest are part of that object identity; the privileged workflow
-installs only that wheel with no index and no dependency resolution. Its handoff verifier uses only
+extracts only that bounded wheel without an index or dependency resolution. Its handoff verifier uses only
 the Python standard library. It is launched from a neutral directory under `python -I`, inserts only
 the sealed installation target, and proves the verifier module's `__file__` is below that target, so
 the source checkout and ambient site packages cannot shadow it in the credentialed job.
 A separately privileged automation may act only on that sealed handoff after the rights record exists.
 
-The protected publisher consumes one bounded ZIP evidence bundle containing exactly `rights.json`,
-`rights-evidence.json`, and `terms-snapshot.html`. The canonical rights record uses `bundle:` member
-URIs and binds both snapshots by SHA-256. The public release retains the safe canonical rights record
-and the rights/terms/evidence digests; private keys, tokens, and unrelated reviewer material are never
-release assets. A missing, non-affirmative, malformed, or mismatched record fails before any release
-or tag mutation.
+The protected publisher consumes a sub-48-KiB locator for exactly three immutable, numeric GitHub
+release assets: `rights-record.json`, `rights-evidence.json`, and `terms-snapshot.html`. Repository,
+host, byte-size, and SHA-256 allowlists are enforced before those durable bytes are accepted. The
+canonical rights record uses `bundle:` member URIs and binds both snapshots by SHA-256. The public
+release retains all three safe records, `seal-manifest.json`, and the sealed publisher wheel as
+`publisher-tool.whl`, in addition to the three data-only bundle files. This makes the public decision
+and publisher object reconstructable without publishing private keys, tokens, or unrelated reviewer
+material. A missing, non-affirmative, malformed, or mismatched record fails before any release or tag
+mutation.
 
 Local handoff roots are durable owner-only storage outside both the repository and serving volumes.
 They are retained through program closure; a workflow artifact retention deadline is not evidence
 that a local handoff object still exists. Record only an object ID together with its exact durable
 absolute path after verifying that path—do not infer or claim an object from an earlier log line.
 
-The corpus manifest binds the exact upstream listing path and `last_updated` value, archive digest
-and byte size, and digest/size identity for each of the three side-data files. These fields are
-captured during ingest and stored with the active corpus row; packaging refuses older database rows
-that lack the complete identity.
+The no-input builder uses a separate sub-48-KiB protected locator to download the exact retained
+archive, source-capture metadata, and three side-data files from immutable numeric release assets.
+Ingest never substitutes a live fetch for this publication path. The corpus manifest binds the
+canonical upstream URLs, exact raw listing response digest/size/capture time, archive digest/size and
+sorted member/expanded-content identities, exact sorted chapter IDs, and digest/size identity for
+each side-data file. These fields and compute-time runtime/model provenance are stored immutably with
+the active corpus rows; packaging refuses older database rows that lack the complete identity.
 
-The privileged workflow downloads only the three named assets through byte- and deadline-bounded
-allowlisted streams, verifies the source/release attestation, reads the PostgreSQL archive TOC before
-restore, and accepts only data rows for reviewed tables. It applies reviewed migrations first, restores
-as a non-owner without privileges in one transaction, and compares the restored chapter, passage, and
-embedding counts exactly with the sealed manifest before representative GeneReviews search fixtures run.
+The privileged workflow downloads only the exact eight public reconstruction assets through byte-
+and deadline-bounded allowlisted streams, verifies their API asset IDs/sizes/digests and attestation,
+and reads the PostgreSQL archive TOC before restore. Every `pg_dump`, `pg_restore`, and `psql` command
+runs from the digest-pinned PostgreSQL 18/pgvector image, matching the server major. Reviewed migrations
+run as the owner; archive data restores through the exact restricted `NOINHERIT` role in one transaction.
+The verifier recomputes source/content/provenance identities, exact migration file digests, counts,
+HNSW presence, representative queries, and the reviewed nonzero evaluation suite from the restored DB.
 Release publication inventories drafts as well as published releases and mutates only the exact numeric
 release ID after verifying its tag, source revision, asset IDs, sizes, digests, and closed lifecycle state.
 Promotion freezes the exact draft representation and ETag before semantic restore, conditionally
