@@ -7,7 +7,6 @@ import asyncio
 import json
 import os
 import re
-import stat
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from urllib.parse import quote
@@ -16,6 +15,7 @@ import httpx
 
 from genereview_link.download_guard import (
     STREAM_TIMEOUT,
+    DownloadOwnership,
     build_host_allowlist,
     make_url_guard,
     read_capped,
@@ -214,7 +214,7 @@ async def download_release_assets(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     downloaded: dict[str, str] = {}
-    created: dict[str, tuple[int, int]] = {}
+    created: dict[str, DownloadOwnership] = {}
     try:
         for name in PUBLICATION_ASSET_NAMES:
             asset = assets[name]
@@ -231,7 +231,7 @@ async def download_release_assets(
                 # also guards every redirect before any request can leave the process.
                 event_hooks={"request": [make_url_guard(_DOWNLOAD_HOSTS)]},
             ) as client:
-                output_identity: list[tuple[int, int]] = []
+                ownership_output: list[DownloadOwnership] = []
                 try:
                     digest = await stream_to_file(
                         client,
@@ -239,41 +239,33 @@ async def download_release_assets(
                         target,
                         max_bytes=limit,
                         deadline_seconds=deadline,
-                        created_identity=output_identity,
+                        created_ownership=ownership_output,
                     )
                 finally:
-                    if output_identity:
-                        created[name] = output_identity[0]
-            if not output_identity:
+                    if ownership_output:
+                        created[name] = ownership_output[0]
+            if len(ownership_output) != 1 or ownership_output[0].closed:
                 raise ReleaseAssetError(f"download did not report created identity: {name}")
-            descriptor = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
-            try:
-                info = os.fstat(descriptor)
-                if not stat.S_ISREG(info.st_mode) or (info.st_dev, info.st_ino) != created[name]:
-                    raise ReleaseAssetError(f"downloaded identity changed before admission: {name}")
-                if info.st_size != asset.size:
-                    raise ReleaseAssetError(f"downloaded size does not match API identity: {name}")
-            finally:
-                os.close(descriptor)
+            ownership = created[name]
+            info = ownership.stat()
+            if not ownership.matches_path():
+                raise ReleaseAssetError(f"downloaded identity changed before admission: {name}")
+            if info.st_size != asset.size:
+                raise ReleaseAssetError(f"downloaded size does not match API identity: {name}")
             downloaded[name] = digest
             if f"sha256:{downloaded[name]}" != asset.digest:
                 raise ReleaseAssetError(f"downloaded digest does not match API identity: {name}")
+        if len(created) != len(PUBLICATION_ASSET_NAMES) or any(
+            not ownership.matches_path() for ownership in created.values()
+        ):
+            raise ReleaseAssetError("release asset path changed before complete admission")
     except BaseException:
-        for name, created_identity in created.items():
-            try:
-                current = (destination / name).stat(follow_symlinks=False)
-            except FileNotFoundError:
-                continue
-            if (
-                stat.S_ISREG(current.st_mode)
-                and (
-                    current.st_dev,
-                    current.st_ino,
-                )
-                == created_identity
-            ):
-                (destination / name).unlink()
+        for ownership in created.values():
+            ownership.unlink_if_owned()
         raise
+    finally:
+        for ownership in created.values():
+            ownership.close()
     result = replace(
         identity,
         assets=tuple(

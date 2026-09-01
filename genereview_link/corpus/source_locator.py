@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-import os
 import re
-import stat
 from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import httpx
 
-from genereview_link.download_guard import STREAM_TIMEOUT, make_url_guard, stream_to_file
+from genereview_link.download_guard import (
+    STREAM_TIMEOUT,
+    DownloadOwnership,
+    make_url_guard,
+    stream_to_file,
+)
 from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 SOURCE_ASSETS = frozenset(
@@ -112,7 +115,7 @@ async def fetch_source_assets(
     headers = {"Accept": "application/octet-stream", "Authorization": f"Bearer {token}"}
     assets = locator["assets"]
     assert isinstance(assets, list)
-    created: dict[str, tuple[int, int]] = {}
+    created: dict[str, DownloadOwnership] = {}
     try:
         for asset in assets:
             assert isinstance(asset, dict)
@@ -125,7 +128,7 @@ async def fetch_source_assets(
                 max_redirects=5,
                 event_hooks={"request": [make_url_guard(_REDIRECT_HOSTS)]},
             ) as client:
-                identity_output: list[tuple[int, int]] = []
+                ownership_output: list[DownloadOwnership] = []
                 try:
                     digest = await stream_to_file(
                         client,
@@ -133,44 +136,33 @@ async def fetch_source_assets(
                         destination / name,
                         max_bytes=int(asset["size_bytes"]),
                         deadline_seconds=deadline,
-                        created_identity=identity_output,
+                        created_ownership=ownership_output,
                     )
                 finally:
-                    if identity_output:
-                        created[name] = identity_output[0]
-                if not identity_output:
+                    if ownership_output:
+                        created[name] = ownership_output[0]
+                if len(ownership_output) != 1 or ownership_output[0].closed:
                     raise SourceLocatorError("source download did not report file ownership")
-            target = destination / name
-            descriptor = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
-            try:
-                info = os.fstat(descriptor)
-                if (
-                    not stat.S_ISREG(info.st_mode)
-                    or (info.st_dev, info.st_ino) != created[name]
-                    or info.st_size != asset["size_bytes"]
-                    or digest != asset["sha256"]
-                ):
-                    raise SourceLocatorError("downloaded source bytes do not match locator")
-                os.fchmod(descriptor, 0o400)
-            finally:
-                os.close(descriptor)
-    except BaseException:
-        for name, created_identity in created.items():
-            target = destination / name
-            try:
-                current = target.stat(follow_symlinks=False)
-            except FileNotFoundError:
-                continue
+            ownership = created[name]
+            info = ownership.stat()
             if (
-                stat.S_ISREG(current.st_mode)
-                and (
-                    current.st_dev,
-                    current.st_ino,
-                )
-                == created_identity
+                not ownership.matches_path()
+                or info.st_size != asset["size_bytes"]
+                or digest != asset["sha256"]
             ):
-                target.unlink()
+                raise SourceLocatorError("downloaded source bytes do not match locator")
+            ownership.chmod(0o400)
+        if len(created) != len(SOURCE_ASSETS) or any(
+            not ownership.matches_path() for ownership in created.values()
+        ):
+            raise SourceLocatorError("source asset path changed before complete admission")
+    except BaseException:
+        for ownership in created.values():
+            ownership.unlink_if_owned()
         raise
+    finally:
+        for ownership in created.values():
+            ownership.close()
     return locator
 
 

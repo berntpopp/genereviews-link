@@ -45,6 +45,64 @@ class DownloadDeadlineError(Exception):
     """A download exceeded its monotonic end-to-end deadline. NON-RETRYABLE."""
 
 
+class DownloadOwnership:
+    """Keep the created inode and its parent directory pinned until admission."""
+
+    __slots__ = ("_file_fd", "_parent_fd", "name")
+
+    def __init__(self, *, parent_fd: int, file_fd: int, name: str) -> None:
+        if not name or Path(name).name != name:
+            raise ValueError("download ownership name must be one path component")
+        self._parent_fd: int | None = parent_fd
+        self._file_fd: int | None = file_fd
+        self.name = name
+
+    @property
+    def closed(self) -> bool:
+        return self._file_fd is None
+
+    def stat(self) -> os.stat_result:
+        if self._file_fd is None:
+            raise ValueError("download ownership is closed")
+        return os.fstat(self._file_fd)
+
+    def matches_path(self) -> bool:
+        if self._parent_fd is None:
+            return False
+        owned = self.stat()
+        try:
+            current = os.stat(self.name, dir_fd=self._parent_fd, follow_symlinks=False)
+        except OSError:
+            return False
+        return (
+            stat.S_ISREG(owned.st_mode)
+            and stat.S_ISREG(current.st_mode)
+            and (current.st_dev, current.st_ino) == (owned.st_dev, owned.st_ino)
+        )
+
+    def chmod(self, mode: int) -> None:
+        if self._file_fd is None:
+            raise ValueError("download ownership is closed")
+        os.fchmod(self._file_fd, mode)
+
+    def unlink_if_owned(self) -> bool:
+        if self._parent_fd is None or not self.matches_path():
+            return False
+        os.unlink(self.name, dir_fd=self._parent_fd)
+        return True
+
+    def close(self) -> None:
+        file_fd, parent_fd = self._file_fd, self._parent_fd
+        self._file_fd = None
+        self._parent_fd = None
+        try:
+            if file_fd is not None:
+                os.close(file_fd)
+        finally:
+            if parent_fd is not None:
+                os.close(parent_fd)
+
+
 def build_host_allowlist(*urls: str) -> frozenset[str]:
     """Collect the lowercased hostnames of *urls* into an exact allowlist."""
     hosts: set[str] = set()
@@ -106,16 +164,17 @@ async def stream_to_file(
     max_bytes: int,
     chunk_size: int = 1 << 20,
     deadline_seconds: float = MAX_DOWNLOAD_SECONDS,
-    created_identity: list[tuple[int, int]] | None = None,
+    created_ownership: list[DownloadOwnership] | None = None,
 ) -> str:
     """Stream *url* to *dest* under byte and monotonic time caps; return SHA-256.
 
     On cap overflow the partial file is removed and ``ResponseTooLargeError`` is
     raised.  A separate end-to-end deadline applies even when every individual
-    read completes before ``STREAM_TIMEOUT.read``.
+    read completes before ``STREAM_TIMEOUT.read``. When ``created_ownership`` is
+    supplied, its caller owns the returned open handle and must close it.
     """
-    if created_identity is not None and created_identity:
-        raise ValueError("created_identity output must be empty")
+    if created_ownership is not None and created_ownership:
+        raise ValueError("created_ownership output must be empty")
     try:
         parent_fd = os.open(dest.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         output_fd = os.open(
@@ -128,9 +187,9 @@ async def stream_to_file(
         if "parent_fd" in locals():
             os.close(parent_fd)
         raise
-    created = os.fstat(output_fd)
-    if created_identity is not None:
-        created_identity.append((created.st_dev, created.st_ino))
+    ownership = DownloadOwnership(parent_fd=parent_fd, file_fd=output_fd, name=dest.name)
+    if created_ownership is not None:
+        created_ownership.append(ownership)
     sha = hashlib.sha256()
     total = 0
     deadline_at = monotonic() + deadline_seconds
@@ -157,19 +216,12 @@ async def stream_to_file(
     except TimeoutError as exc:
         raise DownloadDeadlineError("download exceeded end-to-end deadline") from exc
     finally:
-        os.close(output_fd)
-        if not completed:
-            try:
-                current = os.stat(dest.name, dir_fd=parent_fd, follow_symlinks=False)
-            except FileNotFoundError:
-                pass
-            else:
-                if stat.S_ISREG(current.st_mode) and (current.st_dev, current.st_ino) == (
-                    created.st_dev,
-                    created.st_ino,
-                ):
-                    os.unlink(dest.name, dir_fd=parent_fd)
-        os.close(parent_fd)
+        try:
+            if not completed:
+                ownership.unlink_if_owned()
+        finally:
+            if not completed or created_ownership is None:
+                ownership.close()
 
 
 def write_exclusive_bytes(destination: Path, content: bytes) -> None:

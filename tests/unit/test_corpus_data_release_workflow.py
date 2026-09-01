@@ -2,13 +2,29 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
+import textwrap
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _literal_string_sets(source: str) -> set[frozenset[str]]:
+    body = textwrap.dedent(source.split("<<'PY'\n", 1)[1])
+    python = body.rsplit("\nPY", 1)[0]
+    return {
+        frozenset(element.value for element in node.elts)
+        for node in ast.walk(ast.parse(python))
+        if isinstance(node, ast.Set)
+        and all(
+            isinstance(element, ast.Constant) and isinstance(element.value, str)
+            for element in node.elts
+        )
+    }
 
 
 def _workflow() -> dict[str, object]:
@@ -71,6 +87,11 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     steps = publish["steps"]
     assert not any(str(step.get("uses", "")).startswith("actions/checkout@") for step in steps)
     scripts = "\n".join(str(step.get("run", "")) for step in steps)
+    fetch = next(
+        str(step["run"])
+        for step in steps
+        if step.get("name") == "Fetch durable digest-addressed sealed handoff"
+    )
     assert "GENEREVIEWS_RIGHTS_LOCATOR" in scripts
     assert "rights-evidence" in scripts
     assert "terms-snapshot" in scripts
@@ -79,7 +100,14 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     assert "verify_handoff" in scripts
     assert "gh attestation verify" in scripts
     assert "GENEREVIEWS_HANDOFF_LOCATOR" in scripts
-    assert "release-assets.githubusercontent.com" in scripts
+    assert frozenset(
+        {
+            "github.com",
+            "release-assets.githubusercontent.com",
+            "objects.githubusercontent.com",
+            "github-releases.githubusercontent.com",
+        }
+    ) in _literal_string_sets(fetch)
     assert "actions/download-artifact" not in str(steps)
     assert '.sha256 | select(test("^[0-9a-f]{64}$"))' in scripts
     assert "remaining != 0 or actual.hexdigest() != digest" in scripts

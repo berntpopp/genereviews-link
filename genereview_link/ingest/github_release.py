@@ -12,6 +12,7 @@ import httpx
 from genereview_link.config import settings
 from genereview_link.download_guard import (
     STREAM_TIMEOUT,
+    DownloadOwnership,
     build_host_allowlist,
     make_url_guard,
     read_capped,
@@ -124,48 +125,60 @@ async def download_with_integrity(url: str, dest: Path, *, expected_sha256: str)
     anchor and the transport-level sibling sha256. Writes atomically."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.parent / (dest.name + ".part")
-    async with _download_client(url) as c:
-        digest = await stream_to_file(
-            c,
-            url,
-            part,
-            max_bytes=MAX_BUNDLE_BYTES,
-            deadline_seconds=BUNDLE_DOWNLOAD_DEADLINE_SECONDS,
-        )
-
-    # Authenticity (independent of the possibly-redirected host): the committed
-    # anchor is the authority. A same-host .sha256 alone is NOT authenticity --
-    # a host that can serve a tampered bundle can serve a matching sibling too.
-    anchor = committed_bundle_digest(url)
-    if anchor is None:
-        # Fail CLOSED: refuse to promote a bundle whose authenticity rests only
-        # on the same-host sibling .sha256. Operators must anchor authenticity
-        # (EXPECTED_BUNDLE_SHA256 / BUNDLE_DIGEST_ANCHORS) or knowingly opt in to
-        # transport-integrity-only bootstrap via ALLOW_UNANCHORED_BUNDLE.
-        if not settings.ALLOW_UNANCHORED_BUNDLE:
-            part.unlink(missing_ok=True)
-            raise RuntimeError(
-                "refusing to promote unanchored corpus bundle: no independent "
-                "authenticity anchor is configured (set EXPECTED_BUNDLE_SHA256 or add a "
-                "BUNDLE_DIGEST_ANCHORS entry, or set ALLOW_UNANCHORED_BUNDLE=true to accept "
-                "same-host transport integrity only)"
+    ownership_output: list[DownloadOwnership] = []
+    ownership: DownloadOwnership | None = None
+    try:
+        async with _download_client(url) as c:
+            digest = await stream_to_file(
+                c,
+                url,
+                part,
+                max_bytes=MAX_BUNDLE_BYTES,
+                deadline_seconds=BUNDLE_DOWNLOAD_DEADLINE_SECONDS,
+                created_ownership=ownership_output,
             )
-        logger.warning(
-            "promoting UNANCHORED corpus bundle for %s (ALLOW_UNANCHORED_BUNDLE=true); "
-            "authenticity rests on same-host transport integrity only -- set "
-            "EXPECTED_BUNDLE_SHA256 to anchor authenticity",
-            dest.name,
-        )
-    elif digest != anchor:
-        part.unlink(missing_ok=True)
-        raise RuntimeError("bundle authenticity check failed: committed digest mismatch")
+        if len(ownership_output) != 1 or ownership_output[0].closed:
+            raise RuntimeError("bundle download did not retain file ownership")
+        ownership = ownership_output[0]
 
-    # Integrity (transport check against the sibling .sha256).
-    if digest != expected_sha256:
-        part.unlink(missing_ok=True)
-        raise RuntimeError(f"bundle sha256 mismatch: expected {expected_sha256}, got {digest}")
+        # Authenticity (independent of the possibly-redirected host): the committed
+        # anchor is the authority. A same-host .sha256 alone is NOT authenticity --
+        # a host that can serve a tampered bundle can serve a matching sibling too.
+        anchor = committed_bundle_digest(url)
+        if anchor is None:
+            # Fail CLOSED: refuse to promote a bundle whose authenticity rests only
+            # on the same-host sibling .sha256. Operators must anchor authenticity
+            # (EXPECTED_BUNDLE_SHA256 / BUNDLE_DIGEST_ANCHORS) or knowingly opt in to
+            # transport-integrity-only bootstrap via ALLOW_UNANCHORED_BUNDLE.
+            if not settings.ALLOW_UNANCHORED_BUNDLE:
+                raise RuntimeError(
+                    "refusing to promote unanchored corpus bundle: no independent "
+                    "authenticity anchor is configured (set EXPECTED_BUNDLE_SHA256 or add a "
+                    "BUNDLE_DIGEST_ANCHORS entry, or set ALLOW_UNANCHORED_BUNDLE=true to accept "
+                    "same-host transport integrity only)"
+                )
+            logger.warning(
+                "promoting UNANCHORED corpus bundle for %s (ALLOW_UNANCHORED_BUNDLE=true); "
+                "authenticity rests on same-host transport integrity only -- set "
+                "EXPECTED_BUNDLE_SHA256 to anchor authenticity",
+                dest.name,
+            )
+        elif digest != anchor:
+            raise RuntimeError("bundle authenticity check failed: committed digest mismatch")
 
-    os.replace(part, dest)
+        # Integrity (transport check against the sibling .sha256).
+        if digest != expected_sha256:
+            raise RuntimeError(f"bundle sha256 mismatch: expected {expected_sha256}, got {digest}")
+        if not ownership.matches_path():
+            raise RuntimeError("bundle path changed before verified promotion")
+        os.replace(part, dest)
+    except BaseException:
+        if ownership is not None:
+            ownership.unlink_if_owned()
+        raise
+    finally:
+        for retained in ownership_output:
+            retained.close()
 
 
 async def pg_restore(dump_path: Path, *, database_url: str, jobs: int | None = None) -> None:

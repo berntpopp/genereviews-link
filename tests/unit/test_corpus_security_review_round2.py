@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import tarfile
+import types
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from genereview_link.corpus import evaluation
-from genereview_link.corpus.computation_provenance import collect_computation_provenance
+from genereview_link.corpus import computation_provenance, evaluation
 from genereview_link.corpus.dispatch_identity import DispatchIdentityError, verify_acceptance
 from genereview_link.corpus.evaluation import (
     EVALUATION_SUITE,
@@ -35,8 +37,77 @@ from genereview_link.db.restore import ArchivePolicyError, validate_restore_endp
 from genereview_link.retrieval.model_identity import BGE_MODEL_FILES
 
 
-def test_computation_provenance_captures_full_runtime_at_compute_time() -> None:
-    provenance = collect_computation_provenance(app_git_sha="a" * 40)
+def test_computation_provenance_captures_full_runtime_at_compute_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = tmp_path / "model"
+    (model / "nested").mkdir(parents=True)
+    (model / "config.json").write_bytes(b"reviewed config")
+    (model / "nested" / "weights.bin").write_bytes(b"reviewed weights")
+    model_files = {
+        path.relative_to(model).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in model.rglob("*")
+        if path.is_file()
+    }
+
+    def show_config() -> None:
+        print("fixture-blas=single-threaded")
+
+    class FakeNumpy(types.ModuleType):
+        show_config: Callable[[], None]
+
+    numpy = FakeNumpy("numpy")
+    numpy.show_config = show_config
+
+    class FakeTorch(types.ModuleType):
+        __version__: str
+        version: object
+        backends: object
+        cuda: object
+
+    torch = FakeTorch("torch")
+    torch.__version__ = "2.13.0+cpu"
+    torch.version = types.SimpleNamespace(cuda=None)
+    torch.backends = types.SimpleNamespace(cudnn=types.SimpleNamespace(version=lambda: None))
+    torch.cuda = types.SimpleNamespace(
+        is_available=lambda: False, get_device_name=lambda _index: "none"
+    )
+
+    def snapshot_download(*_args: object, **_kwargs: object) -> str:
+        return str(model)
+
+    class FakeHub(types.ModuleType):
+        snapshot_download: Callable[..., str]
+
+    hub = FakeHub("huggingface_hub")
+    hub.snapshot_download = snapshot_download
+    monkeypatch.setitem(sys.modules, "numpy", numpy)
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setattr(computation_provenance, "BGE_MODEL_FILES", model_files)
+
+    class Distribution:
+        def __init__(self) -> None:
+            self.metadata = {"Name": "fixture-runtime"}
+            self.version = "1.0"
+
+    versions = {
+        "sentence-transformers": "5.1.0",
+        "transformers": "4.55.2",
+        "hatchling": "1.27.0",
+    }
+    monkeypatch.setattr(
+        computation_provenance.importlib.metadata,
+        "distributions",
+        lambda: [Distribution()],
+    )
+    monkeypatch.setattr(
+        computation_provenance.importlib.metadata,
+        "version",
+        lambda name: versions[name],
+    )
+
+    provenance = computation_provenance.collect_computation_provenance(app_git_sha="a" * 40)
 
     assert provenance["schema"] == "genereviews-computation-v2"
     assert provenance["source"]["app_git_sha"] == "a" * 40
@@ -48,8 +119,10 @@ def test_computation_provenance_captures_full_runtime_at_compute_time() -> None:
     assert provenance["environment"]["cpu"]
     assert provenance["environment"]["blas"]
     assert provenance["environment"]["build_backend"]
+    assert provenance["environment"]["torch"] == "2.13.0+cpu"
+    assert provenance["environment"]["installed_distributions"] == ["fixture-runtime==1.0"]
     assert provenance["database"]["client_major"] == "18"
-    assert provenance["model"]["files"] == BGE_MODEL_FILES
+    assert provenance["model"]["files"] == model_files
 
 
 def test_pg18_client_is_digest_pinned_and_rejects_host_major_mismatch(tmp_path: Path) -> None:

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import io
 import json
 import tarfile
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -16,11 +18,31 @@ import genereview_link.corpus.pipeline as corpus_pipeline
 import genereview_link.corpus.rights_locator as rights_locator
 from genereview_link import download_guard
 from genereview_link.corpus.readiness import ReadinessError, build_readiness_payload
-from genereview_link.corpus.rights import RIGHTS_FIELDS
+from genereview_link.corpus.rights import (
+    RIGHTS_APPROVAL_KIND,
+    RIGHTS_AUTHORITY,
+    RIGHTS_FIELDS,
+    RIGHTS_PERMITTED_ASSET_USE,
+    RIGHTS_TERMS_SOURCE_URI,
+)
 from genereview_link.corpus.source_locator import SOURCE_ASSETS
 from genereview_link.db.restore import ArchivePolicyError, extract_bundle, seed_identity_mode
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _literal_string_sets(source: str) -> set[frozenset[str]]:
+    body = textwrap.dedent(source.split("<<'PY'\n", 1)[1])
+    python = body.rsplit("\nPY", 1)[0]
+    return {
+        frozenset(element.value for element in node.elts)
+        for node in ast.walk(ast.parse(python))
+        if isinstance(node, ast.Set)
+        and all(
+            isinstance(element, ast.Constant) and isinstance(element.value, str)
+            for element in node.elts
+        )
+    }
 
 
 def _readiness_manifest() -> dict[str, object]:
@@ -80,7 +102,14 @@ def test_workflows_bind_rights_to_seal_and_never_follow_unchecked_handoff_redire
     )[0]
 
     assert "curl" not in fetch or "--location" not in fetch
-    assert "release-assets.githubusercontent.com" in fetch
+    assert frozenset(
+        {
+            "github.com",
+            "release-assets.githubusercontent.com",
+            "objects.githubusercontent.com",
+            "github-releases.githubusercontent.com",
+        }
+    ) in _literal_string_sets(fetch)
     assert "sealed_values" in verifier
     assert "artifact_sha256" in verifier and "source_sha256" in verifier
 
@@ -94,12 +123,14 @@ def test_rights_contract_is_explicit_owner_determination_not_upstream_approval()
     rights = (ROOT / "genereview_link/corpus/rights.py").read_text()
 
     assert {"approval_kind", "upstream_approval", "terms_source_uri"} <= RIGHTS_FIELDS
-    assert "Bernt Popp / repository owner" in rights
-    assert "repository-owner redistribution determination" in rights
+    assert RIGHTS_AUTHORITY == "Bernt Popp / repository owner"
+    assert RIGHTS_APPROVAL_KIND == "repository-owner redistribution determination"
     assert "upstream_approval" in rights and " is not False" in rights
-    assert "noncommercial research purposes only" in rights
-    assert "no further modifications" in rights
-    assert "https://www.genereviews.org" in rights
+    assert RIGHTS_PERMITTED_ASSET_USE == (
+        "immutable GeneReviews research corpus artifact for noncommercial research purposes "
+        "only; no further modifications"
+    )
+    assert RIGHTS_TERMS_SOURCE_URI == "https://www.genereviews.org/"
 
 
 def test_existing_draft_tag_state_is_checked_before_missing_asset_upload() -> None:
