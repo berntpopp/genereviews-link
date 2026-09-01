@@ -101,8 +101,9 @@ RUN apt-get update \
 RUN groupadd --gid 999 app && \
     useradd --uid 999 --gid 999 --home /home/app --create-home app && \
     mkdir -p /tmp/genereview-link /var/cache/genereview-link /var/lib/genereview/restore \
-             /var/lib/genereview/models /seed && \
-    chown -R app:app /tmp/genereview-link /var/cache/genereview-link /var/lib/genereview /home/app
+             /data /seed && \
+    chown -R app:app /tmp/genereview-link /var/cache/genereview-link /var/lib/genereview \
+                     /data /home/app
 
 COPY --from=builder /opt/venv /opt/venv
 

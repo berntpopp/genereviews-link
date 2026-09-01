@@ -91,7 +91,7 @@ MCP_ALLOWED_ORIGINS='["https://genereviews-link.genefoundry.org"]'
 |---|---|---|
 | `GENEREVIEW_EMBEDDING_PROVIDER` | *(auto)* | `onnx` (pinned BGE weights via ONNX Runtime — what the serving image runs), `torch` (same weights via sentence-transformers; offline ingest only), or `fake` (a deterministic stub). Auto ⇒ `onnx` in production, otherwise `GENEREVIEW_EAGER_LOAD_BGE`. `bge` is accepted as the pre-ONNX spelling of `onnx`. |
 | `MODEL_SEED_PATH` | `/seed/model` | Staged model members inside the read-only seed bind. |
-| `MODEL_DIR` | `/var/lib/genereview/models` | Volume the sidecar materialises the model into; mounted read-only by the server. |
+| `MODEL_DIR` | `/data` | Volume the sidecar materialises the model into; mounted read-only by the server at the fleet's canonical reference-data path. |
 | `GENEREVIEW_ALLOW_FAKE_EMBEDDINGS` | `false` | **Fail-closed guard.** Production refuses to start on the stub without this. |
 | `GENEREVIEW_EAGER_LOAD_BGE` | `false` | **Legacy.** Named as a loading strategy but selects real-vs-stub embeddings — which is how production ran on stub vectors unnoticed. Honoured outside production; `GENEREVIEW_EMBEDDING_PROVIDER` wins. |
 | `DEBUG_RANKING_ENABLED` | `false` | Expose the `/debug/ranking` diagnostic endpoint. |

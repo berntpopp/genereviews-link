@@ -16,11 +16,24 @@ services:
   #
   # The NPM topology therefore pins the names it is wired to. (The run-once
   # `genereview-corpus-restore` sidecar is deliberately left unnamed: nothing routes to it.)
+  # The deployment controller's preflight (`_APP_REQUIRED` in the fleet control repo's
+  # scripts/utils/deployment_preflight.py) requires an explicit numeric `user:` on EVERY
+  # deployed service. The container-release standard that gates CI forbids a user override
+  # on the application service (release/compose.py: "user override must be absent"), and
+  # allows one on an auxiliary service only when container-release.json declares it.
+  #
+  # The two contracts are reconciled here rather than fought: CI validates
+  # docker-compose.yml + docker-compose.prod.yml (container-release.json
+  # `service.compose_files`), while the server also renders THIS overlay, so the app's
+  # numeric user exists exactly where it is required and nowhere it is forbidden. 999:999
+  # is the uid/gid baked into the image, verified against the published digest.
   postgres:
     container_name: genereview_link_postgres
+    user: "999:999"
 
   genereview-link:
     container_name: genereview_link_server
+    user: "999:999"
 
     environment:
       MCP_ALLOWED_HOSTS: '["localhost","127.0.0.1","::1","genereviews-link.genefoundry.org"]'

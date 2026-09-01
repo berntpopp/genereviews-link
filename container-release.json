@@ -41,8 +41,8 @@
         "role": "init",
         "egress": "internal",
         "writable_targets": [
+          "/data",
           "/tmp",
-          "/var/lib/genereview/models",
           "/var/lib/genereview/restore"
         ],
         "read_only_targets": [

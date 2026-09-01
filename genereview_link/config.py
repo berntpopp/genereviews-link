@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     # a digest-pinned release asset, staged read-only on the host, materialised once into
     # a named volume by the no-egress init sidecar, and mounted read-only by the server.
     MODEL_SEED_PATH: str = "/seed/model"
-    MODEL_DIR: str = "/var/lib/genereview/models"
+    MODEL_DIR: str = "/data"
 
     # --- Dense embedding provider ---
     # Which model answers query embeddings. "bge" is the pinned reference model the

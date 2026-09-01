@@ -142,10 +142,10 @@ materialised once into a named volume by the no-egress init sidecar:
   genereview-link model stage ──▶ /srv/genefoundry/           ┌ genereview-corpus-restore
     (verifies every byte against    genereviews-seed/model/   │   /seed        (bind, ro)
      the digests pinned in            model.onnx              │   → verifies, copies
-     model_identity.py)               tokenizer.json          │   /var/lib/genereview/models
+     model_identity.py)               tokenizer.json          │   /data
                                                               └   (volume, rw)
                                                               ┌ genereview-link
-                                                              │   /var/lib/genereview/models
+                                                              │   /data
                                                               └   (volume, **ro**) → verifies again
 ```
 
