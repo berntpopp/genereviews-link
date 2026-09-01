@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any, cast
 
@@ -34,6 +35,8 @@ def assert_evaluation_accepted(
         or covered_queries != expected_queries
         or type(mrr) not in {int, float}
         or type(precision) not in {int, float}
+        or not math.isfinite(cast(float, mrr))
+        or not math.isfinite(cast(float, precision))
         or cast(float, mrr) + EVALUATION_TOLERANCE < MIN_MRR_AT_10
         or cast(float, precision) + EVALUATION_TOLERANCE < MIN_SECTION_PRECISION_AT_5
     ):

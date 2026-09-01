@@ -17,6 +17,10 @@ class _DuplicateKeyError(ValueError):
     pass
 
 
+class _NonFiniteConstantError(ValueError):
+    pass
+
+
 def _reject_deep_structure(text: str, *, max_depth: int) -> None:
     depth = 0
     in_string = False
@@ -51,6 +55,10 @@ def _object_without_duplicates(pairs: Iterable[tuple[str, Any]]) -> dict[str, An
     return value
 
 
+def _reject_nonfinite_constant(value: str) -> None:
+    raise _NonFiniteConstantError(f"non-standard JSON constant: {value}")
+
+
 def load_strict_json(
     raw: bytes,
     *,
@@ -65,8 +73,18 @@ def load_strict_json(
     try:
         text = raw.decode("utf-8")
         _reject_deep_structure(text, max_depth=max_depth)
-        return json.loads(text, object_pairs_hook=_object_without_duplicates)
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, _DuplicateKeyError) as error:
+        return json.loads(
+            text,
+            object_pairs_hook=_object_without_duplicates,
+            parse_constant=_reject_nonfinite_constant,
+        )
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        _DuplicateKeyError,
+        _NonFiniteConstantError,
+    ) as error:
         raise StrictJsonError("JSON input is not strict bounded JSON") from error
 
 

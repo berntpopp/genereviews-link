@@ -106,6 +106,7 @@ async def stream_to_file(
     max_bytes: int,
     chunk_size: int = 1 << 20,
     deadline_seconds: float = MAX_DOWNLOAD_SECONDS,
+    created_identity: list[tuple[int, int]] | None = None,
 ) -> str:
     """Stream *url* to *dest* under byte and monotonic time caps; return SHA-256.
 
@@ -113,6 +114,8 @@ async def stream_to_file(
     raised.  A separate end-to-end deadline applies even when every individual
     read completes before ``STREAM_TIMEOUT.read``.
     """
+    if created_identity is not None and created_identity:
+        raise ValueError("created_identity output must be empty")
     try:
         parent_fd = os.open(dest.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         output_fd = os.open(
@@ -126,6 +129,8 @@ async def stream_to_file(
             os.close(parent_fd)
         raise
     created = os.fstat(output_fd)
+    if created_identity is not None:
+        created_identity.append((created.st_dev, created.st_ino))
     sha = hashlib.sha256()
     total = 0
     deadline_at = monotonic() + deadline_seconds

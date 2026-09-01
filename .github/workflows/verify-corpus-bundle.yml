@@ -390,16 +390,27 @@ jobs:
           jq -e --argjson expected "$(jq -c '.evaluation.results' "$VERIFY_DIR/manifest.json")" \
             '.results == $expected' "$RUNNER_TEMP/restored-evaluation.json" >/dev/null
           DATABASE_URL="$DATABASE_URL" uv run python - "$VERIFY_DIR/manifest.json" <<'PY'
-          import asyncio, json, sys
+          import asyncio, hashlib, json, os, sys
+          from pathlib import Path
           from genereview_link.corpus.readiness import write_release_readiness
           from genereview_link.db.pool import create_pool
           async def main():
               pool = await create_pool()
               try:
+                  root = Path(sys.argv[1]).parent
                   manifest = json.load(open(sys.argv[1]))
+                  with (root / "corpus.dump").open("rb") as stream:
+                      dump_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+                  with (root / "manifest.json").open("rb") as stream:
+                      manifest_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+                  with (root / "SHA256SUMS").open("rb") as stream:
+                      checksums_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
                   await write_release_readiness(
                       pool, manifest,
-                      artifact_digest="sha256:" + manifest["evaluation"]["dump_sha256"],
+                      release_tag=os.environ["EXPECTED_RELEASE_TAG"],
+                      artifact_digest="sha256:" + dump_sha256,
+                      manifest_digest="sha256:" + manifest_sha256,
+                      checksums_digest="sha256:" + checksums_sha256,
                   )
               finally:
                   await pool.close()

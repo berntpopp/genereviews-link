@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import stat
 from collections.abc import Iterable
-from contextlib import suppress
 from pathlib import Path
 from time import monotonic
 from urllib.error import HTTPError, URLError
@@ -129,8 +130,9 @@ def fetch_rights_assets(
     opener = build_opener(_RightsRedirects())
     assets = locator["assets"]
     assert isinstance(assets, list)
-    written: list[Path] = []
+    created: dict[str, tuple[int, int]] = {}
     deadline = monotonic() + RIGHTS_TRANSFER_DEADLINE_SECONDS
+    destination_fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for asset in assets:
             assert isinstance(asset, dict)
@@ -142,35 +144,53 @@ def fetch_rights_assets(
                 },
             )
             digest = hashlib.sha256()
-            target = destination / str(asset["name"])
-            written.append(target)
+            name = str(asset["name"])
             remaining = int(asset["size_bytes"])
             try:
-                with opener.open(request, timeout=60) as response, target.open("xb") as output:
-                    while True:
+                with opener.open(request, timeout=60) as response:
+                    output_fd = os.open(
+                        name,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        0o600,
+                        dir_fd=destination_fd,
+                    )
+                    info = os.fstat(output_fd)
+                    created[name] = (info.st_dev, info.st_ino)
+                    output = os.fdopen(output_fd, "wb")
+                    with output:
+                        while True:
+                            if monotonic() >= deadline:
+                                raise RightsLocatorError(
+                                    "rights asset exceeded its monotonic deadline"
+                                )
+                            chunk = response.read(min(64 * 1024, remaining + 1))
+                            if not chunk:
+                                break
+                            remaining -= len(chunk)
+                            if remaining < 0:
+                                raise RightsLocatorError("rights asset exceeds its declared size")
+                            digest.update(chunk)
+                            output.write(chunk)
                         if monotonic() >= deadline:
                             raise RightsLocatorError("rights asset exceeded its monotonic deadline")
-                        chunk = response.read(min(64 * 1024, remaining + 1))
-                        if not chunk:
-                            break
-                        remaining -= len(chunk)
-                        if remaining < 0:
-                            raise RightsLocatorError("rights asset exceeds its declared size")
-                        digest.update(chunk)
-                        output.write(chunk)
-                    if monotonic() >= deadline:
-                        raise RightsLocatorError("rights asset exceeded its monotonic deadline")
+                        output.flush()
+                        os.fsync(output.fileno())
+                        os.fchmod(output.fileno(), 0o400)
             except (HTTPError, URLError, TimeoutError, OSError) as error:
                 raise RightsLocatorError("rights asset could not be fetched safely") from error
             if remaining != 0 or digest.hexdigest() != asset["sha256"]:
                 raise RightsLocatorError("rights asset bytes do not match locator identity")
-            target.chmod(0o400)
     except BaseException:
-        for target in written:
-            with suppress(FileNotFoundError):
-                target.chmod(0o600)
-            target.unlink(missing_ok=True)
+        for name, identity in created.items():
+            try:
+                current = os.stat(name, dir_fd=destination_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if stat.S_ISREG(current.st_mode) and (current.st_dev, current.st_ino) == identity:
+                os.unlink(name, dir_fd=destination_fd)
         raise
+    finally:
+        os.close(destination_fd)
     return locator
 
 

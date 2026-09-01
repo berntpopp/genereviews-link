@@ -163,14 +163,17 @@ def fetch_handoff(
         raise HandoffLocatorError("handoff destination must be a fresh owner-only directory")
     target = destination_root / expected_object_id
     target.mkdir(mode=0o700)
+    target_fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    target_info = os.fstat(target_fd)
     opener = build_opener(_HandoffRedirects())
     assets = locator["assets"]
     assert isinstance(assets, list)
     deadline = monotonic() + HANDOFF_TRANSFER_DEADLINE_SECONDS
+    created: dict[str, tuple[int, int]] = {}
     try:
         for asset in assets:
             assert isinstance(asset, dict)
-            target_path = target / str(asset["name"])
+            name = str(asset["name"])
             request = Request(  # noqa: S310 - exact API URL validated above
                 str(asset["url"]),
                 headers={"Accept": "application/octet-stream", "Authorization": f"Bearer {token}"},
@@ -178,35 +181,43 @@ def fetch_handoff(
             remaining = int(asset["size_bytes"])
             digest = hashlib.sha256()
             try:
-                with opener.open(request, timeout=60) as response, target_path.open("xb") as output:
-                    while True:
+                with opener.open(request, timeout=60) as response:
+                    output_fd = os.open(
+                        name,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        0o600,
+                        dir_fd=target_fd,
+                    )
+                    info = os.fstat(output_fd)
+                    created[name] = (info.st_dev, info.st_ino)
+                    output = os.fdopen(output_fd, "wb")
+                    with output:
+                        while True:
+                            if monotonic() >= deadline:
+                                raise HandoffLocatorError(
+                                    "handoff asset exceeded its monotonic deadline"
+                                )
+                            chunk = response.read(min(1 << 20, remaining + 1))
+                            if not chunk:
+                                break
+                            remaining -= len(chunk)
+                            if remaining < 0:
+                                raise HandoffLocatorError("handoff asset exceeds its declared size")
+                            digest.update(chunk)
+                            output.write(chunk)
                         if monotonic() >= deadline:
                             raise HandoffLocatorError(
                                 "handoff asset exceeded its monotonic deadline"
                             )
-                        chunk = response.read(min(1 << 20, remaining + 1))
-                        if not chunk:
-                            break
-                        remaining -= len(chunk)
-                        if remaining < 0:
-                            raise HandoffLocatorError("handoff asset exceeds its declared size")
-                        digest.update(chunk)
-                        output.write(chunk)
-                    if monotonic() >= deadline:
-                        raise HandoffLocatorError("handoff asset exceeded its monotonic deadline")
-                    output.flush()
-                    os.fsync(output.fileno())
+                        output.flush()
+                        os.fsync(output.fileno())
+                        os.fchmod(output.fileno(), 0o400)
             except (HTTPError, URLError, TimeoutError, OSError) as error:
                 raise HandoffLocatorError("handoff asset could not be fetched safely") from error
             if remaining or digest.hexdigest() != asset["sha256"]:
                 raise HandoffLocatorError("handoff asset bytes do not match locator identity")
-            target_path.chmod(0o400)
-        target.chmod(0o500)
-        directory_fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        os.fchmod(target_fd, 0o500)
+        os.fsync(target_fd)
         root_fd = os.open(destination_root, os.O_RDONLY | os.O_DIRECTORY)
         try:
             os.fsync(root_fd)
@@ -217,14 +228,32 @@ def fetch_handoff(
         except HandoffError as error:
             raise HandoffLocatorError("downloaded handoff failed sealed verification") from error
     except BaseException:
-        with suppress(FileNotFoundError):
-            target.chmod(0o700)
-        for child in target.iterdir() if target.exists() else ():
-            child.chmod(0o600)
-            child.unlink()
-        with suppress(FileNotFoundError):
-            target.rmdir()
+        os.fchmod(target_fd, 0o700)
+        for name, identity in created.items():
+            try:
+                current = os.stat(name, dir_fd=target_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if stat.S_ISREG(current.st_mode) and (current.st_dev, current.st_ino) == identity:
+                os.unlink(name, dir_fd=target_fd)
+        root_fd = os.open(destination_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            try:
+                current_target = os.stat(expected_object_id, dir_fd=root_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                if stat.S_ISDIR(current_target.st_mode) and (
+                    current_target.st_dev,
+                    current_target.st_ino,
+                ) == (target_info.st_dev, target_info.st_ino):
+                    with suppress(OSError):
+                        os.rmdir(expected_object_id, dir_fd=root_fd)
+        finally:
+            os.close(root_fd)
         raise
+    finally:
+        os.close(target_fd)
     return locator
 
 

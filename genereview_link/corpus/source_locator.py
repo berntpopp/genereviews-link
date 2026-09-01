@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
+import os
 import re
+import stat
 from collections.abc import Iterable
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -111,6 +112,7 @@ async def fetch_source_assets(
     headers = {"Accept": "application/octet-stream", "Authorization": f"Bearer {token}"}
     assets = locator["assets"]
     assert isinstance(assets, list)
+    created: dict[str, tuple[int, int]] = {}
     try:
         for asset in assets:
             assert isinstance(asset, dict)
@@ -123,29 +125,50 @@ async def fetch_source_assets(
                 max_redirects=5,
                 event_hooks={"request": [make_url_guard(_REDIRECT_HOSTS)]},
             ) as client:
-                await stream_to_file(
-                    client,
-                    str(asset["url"]),
-                    destination / name,
-                    max_bytes=int(asset["size_bytes"]),
-                    deadline_seconds=deadline,
-                )
+                identity_output: list[tuple[int, int]] = []
+                try:
+                    digest = await stream_to_file(
+                        client,
+                        str(asset["url"]),
+                        destination / name,
+                        max_bytes=int(asset["size_bytes"]),
+                        deadline_seconds=deadline,
+                        created_identity=identity_output,
+                    )
+                finally:
+                    if identity_output:
+                        created[name] = identity_output[0]
+                if not identity_output:
+                    raise SourceLocatorError("source download did not report file ownership")
             target = destination / name
-            digest = hashlib.sha256()
-            with target.open("rb") as stream:
-                while chunk := stream.read(1 << 20):
-                    digest.update(chunk)
-            if (
-                target.stat().st_size != asset["size_bytes"]
-                or digest.hexdigest() != asset["sha256"]
-            ):
-                raise SourceLocatorError("downloaded source bytes do not match locator")
-            target.chmod(0o400)
+            descriptor = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                info = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or (info.st_dev, info.st_ino) != created[name]
+                    or info.st_size != asset["size_bytes"]
+                    or digest != asset["sha256"]
+                ):
+                    raise SourceLocatorError("downloaded source bytes do not match locator")
+                os.fchmod(descriptor, 0o400)
+            finally:
+                os.close(descriptor)
     except BaseException:
-        for name in SOURCE_ASSETS:
+        for name, created_identity in created.items():
             target = destination / name
-            if target.exists():
-                target.chmod(0o600)
+            try:
+                current = target.stat(follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if (
+                stat.S_ISREG(current.st_mode)
+                and (
+                    current.st_dev,
+                    current.st_ino,
+                )
+                == created_identity
+            ):
                 target.unlink()
         raise
     return locator
