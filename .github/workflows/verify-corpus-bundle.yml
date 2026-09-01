@@ -168,7 +168,7 @@ jobs:
           uv run python - "$verify_dir" <<'PY'
           import hashlib, json, sys
           from pathlib import Path
-          from genereview_link.corpus.handoff import verify_rights_record
+          from genereview_link.corpus.rights import verify_rights_record
           root = Path(sys.argv[1])
           object_id = hashlib.sha256(root.joinpath("seal-manifest.json").read_bytes()).hexdigest()
           seal = json.loads(root.joinpath("seal-manifest.json").read_bytes())
