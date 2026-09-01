@@ -59,7 +59,7 @@ async def test_collect_database_facts_binds_complete_release_provenance() -> Non
             "sidedata_genes_size_bytes": 53_750,
             "sidedata_omim_sha256": "d" * 64,
             "sidedata_omim_size_bytes": 96_486,
-            "chapter_count": 890,
+            "chapter_count": 891,
         }
     )
     pool.fetch = AsyncMock(
@@ -68,12 +68,13 @@ async def test_collect_database_facts_binds_complete_release_provenance() -> Non
             {"namespace": "data", "version": "genereview:0001_chapters"},
         ]
     )
-    pool.fetchval = AsyncMock(side_effect=[41_414, 41_414, True, "180004", "0.8.2"])
+    pool.fetchval = AsyncMock(side_effect=[891, 41_414, 41_414, True, True, "180004", "0.8.2"])
 
     facts = await collect_database_facts(pool)
 
     assert facts is not None
     assert facts.corpus_version == "2026-08-31-r3"
+    assert facts.chapter_count == 891
     assert facts.tarball_source_sha256 == "a" * 64
     assert facts.tarball_last_updated == "2026-08-31 02:41:04"
     assert facts.source == {
@@ -117,7 +118,7 @@ async def test_collect_database_facts_rejects_unknown_migration_namespace() -> N
         }
     )
     pool.fetch = AsyncMock(return_value=[{"namespace": "attacker", "version": "x"}])
-    pool.fetchval = AsyncMock(side_effect=[41_414, 41_414, True, "180004", "0.8.2"])
+    pool.fetchval = AsyncMock(side_effect=[891, 41_414, 41_414, True, True, "180004", "0.8.2"])
 
     with pytest.raises(ValueError, match="migration namespace"):
         await collect_database_facts(pool)

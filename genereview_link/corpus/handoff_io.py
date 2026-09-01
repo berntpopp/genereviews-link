@@ -9,12 +9,14 @@ from pathlib import Path
 from genereview_link.corpus.handoff import CHUNK_BYTES, HandoffError, _open_regular
 
 
-def copy_regular(source: Path, destination: Path) -> None:
-    source_fd, source_info = _open_regular(source)
+def copy_regular(source: Path, destination: Path, *, source_parent_fd: int | None = None) -> None:
+    source_fd, source_info = _open_regular(source, parent_fd=source_parent_fd)
     try:
         if not stat.S_ISREG(source_info.st_mode):
             raise HandoffError(f"{source.name} must be a regular file")
-        parent_fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        from genereview_link.corpus.handoff import _open_directory
+
+        parent_fd = _open_directory(destination.parent)
         try:
             destination_fd = os.open(
                 destination.name,

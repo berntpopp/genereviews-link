@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import re
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from urllib.parse import quote
 
@@ -22,6 +24,7 @@ from genereview_link.download_guard import (
 
 GITHUB_API = "https://api.github.com"
 ASSET_NAMES = ("corpus.dump", "manifest.json", "SHA256SUMS")
+PUBLICATION_ASSET_NAMES = (*ASSET_NAMES, "rights-record.json")
 MAX_METADATA_BYTES = 1 << 20
 MAX_DUMP_BYTES = 2 * 1024**3
 METADATA_DEADLINE_SECONDS = 2 * 60.0
@@ -29,6 +32,7 @@ DUMP_DEADLINE_SECONDS = 45 * 60.0
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _DOWNLOAD_HOSTS = frozenset(
     {
+        "api.github.com",
         "github.com",
         "release-assets.githubusercontent.com",
         "objects.githubusercontent.com",
@@ -43,6 +47,27 @@ class ReleaseAssetError(RuntimeError):
     """A release did not provide one exact bounded data-only asset set."""
 
 
+@dataclass(frozen=True)
+class AssetIdentity:
+    asset_id: int
+    name: str
+    size: int
+    digest: str
+    url: str
+    downloaded_sha256: str = ""
+
+
+@dataclass(frozen=True)
+class ReleaseIdentity:
+    release_id: int
+    tag: str
+    target_commit: str
+    assets: tuple[AssetIdentity, ...]
+
+    def as_json(self) -> dict[str, object]:
+        return asdict(self)
+
+
 def _assert_fresh_directory(destination: Path) -> None:
     try:
         info = destination.lstat()
@@ -54,7 +79,15 @@ def _assert_fresh_directory(destination: Path) -> None:
         raise ReleaseAssetError("destination must be owned by the invoking user")
 
 
-async def _release_assets(repo: str, tag: str, token: str) -> dict[str, str]:
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+async def _release_assets(repo: str, tag: str, token: str) -> ReleaseIdentity:
     if not _REPO.fullmatch(repo) or not tag:
         raise ReleaseAssetError("repository or release tag is invalid")
     headers = {"Accept": "application/vnd.github+json"}
@@ -100,12 +133,12 @@ async def _release_assets(repo: str, tag: str, token: str) -> dict[str, str]:
         raise ReleaseAssetError(
             "source release must be the exact immutable non-draft, non-prerelease release"
         )
-    urls: dict[str, str] = {}
+    identities: dict[str, AssetIdentity] = {}
     for asset in assets:
         if not isinstance(asset, dict):
             raise ReleaseAssetError("release asset metadata is malformed")
         name = asset.get("name")
-        asset_url = asset.get("browser_download_url")
+        asset_url = asset.get("url")
         asset_id = asset.get("id")
         size = asset.get("size")
         digest = asset.get("digest")
@@ -118,30 +151,45 @@ async def _release_assets(repo: str, tag: str, token: str) -> dict[str, str]:
             or size <= 0
             or not isinstance(digest, str)
             or not _SHA256_RE.fullmatch(digest)
+            or asset_url != f"{GITHUB_API}/repos/{repo}/releases/assets/{asset_id}"
         ):
             raise ReleaseAssetError("release asset name or URL is invalid")
-        if name in urls or name not in ASSET_NAMES:
+        if name in identities or name not in PUBLICATION_ASSET_NAMES:
             raise ReleaseAssetError("release has unexpected or duplicate data assets")
-        urls[name] = asset_url
-    if set(urls) != set(ASSET_NAMES):
-        raise ReleaseAssetError(
-            "release must contain exactly corpus.dump, manifest.json, SHA256SUMS"
+        identities[name] = AssetIdentity(
+            asset_id=asset_id,
+            name=name,
+            size=size,
+            digest=digest,
+            url=asset_url,
         )
-    return urls
+    if set(identities) != set(PUBLICATION_ASSET_NAMES):
+        raise ReleaseAssetError(
+            "release must contain the exact data assets and public rights record"
+        )
+    return ReleaseIdentity(
+        release_id=release_id,
+        tag=tag,
+        target_commit=target,
+        assets=tuple(identities[name] for name in PUBLICATION_ASSET_NAMES),
+    )
 
 
 async def download_release_assets(
     repo: str, tag: str, destination: Path, *, token: str = ""
-) -> None:
+) -> ReleaseIdentity:
     """Download exact assets through allowlisted, byte- and deadline-bounded streams."""
     _assert_fresh_directory(destination)
-    urls = await _release_assets(repo, tag, token)
+    identity = await _release_assets(repo, tag, token)
+    assets = {asset.name: asset for asset in identity.assets}
     headers = {"Accept": "application/octet-stream"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    downloaded: dict[str, str] = {}
     try:
-        for name in ("manifest.json", "SHA256SUMS", "corpus.dump"):
-            url = urls[name]
+        for name in PUBLICATION_ASSET_NAMES:
+            asset = assets[name]
+            url = asset.url
             target = destination / name
             limit = MAX_DUMP_BYTES if name == "corpus.dump" else MAX_METADATA_BYTES
             deadline = DUMP_DEADLINE_SECONDS if name == "corpus.dump" else METADATA_DEADLINE_SECONDS
@@ -150,19 +198,32 @@ async def download_release_assets(
                 timeout=STREAM_TIMEOUT,
                 follow_redirects=True,
                 max_redirects=5,
-                # browser_download_url is release-controlled input.  Never add its
-                # host to this reviewed set: the hook runs for the initial URL and
-                # every redirect before any request (and therefore before auth headers
-                # can leave the process).
+                # The initial URL is the API's exact numeric asset identity. The hook
+                # also guards every redirect before any request can leave the process.
                 event_hooks={"request": [make_url_guard(_DOWNLOAD_HOSTS)]},
             ) as client:
                 await stream_to_file(
                     client, url, target, max_bytes=limit, deadline_seconds=deadline
                 )
+            if target.stat().st_size != asset.size:
+                raise ReleaseAssetError(f"downloaded size does not match API identity: {name}")
+            downloaded[name] = _sha256_file(target)
+            if f"sha256:{downloaded[name]}" != asset.digest:
+                raise ReleaseAssetError(f"downloaded digest does not match API identity: {name}")
     except Exception:
-        for name in ASSET_NAMES:
+        for name in PUBLICATION_ASSET_NAMES:
             (destination / name).unlink(missing_ok=True)
         raise
+    result = replace(
+        identity,
+        assets=tuple(
+            replace(asset, downloaded_sha256=downloaded[asset.name]) for asset in identity.assets
+        ),
+    )
+    # The public rights record is identity evidence, not part of the PostgreSQL
+    # data-only restore bundle. Its verified digest remains in ``result``.
+    (destination / "rights-record.json").unlink()
+    return result
 
 
 def main() -> None:
@@ -170,10 +231,15 @@ def main() -> None:
     parser.add_argument("--repo", required=True)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--dest", required=True, type=Path)
+    parser.add_argument("--identity-out", type=Path)
     args = parser.parse_args()
-    asyncio.run(
+    identity = asyncio.run(
         download_release_assets(args.repo, args.tag, args.dest, token=os.getenv("GH_TOKEN", ""))
     )
+    if args.identity_out is not None:
+        args.identity_out.write_text(
+            json.dumps(identity.as_json(), sort_keys=True, separators=(",", ":")) + "\n"
+        )
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -182,24 +183,33 @@ def extract_bundle(archive: Path, destination: Path, *, expected_sha256: str) ->
     return CorpusBundle(root=destination, dump=dump, manifest=manifest)
 
 
-def read_archive_entries(dump: Path) -> list[str]:
+def read_archive_entries(dump: Path, *, file_descriptor: int | None = None) -> list[str]:
     """Return the archive's TOC entries, proving it is a custom-format archive first.
 
     Raises:
         ArchivePolicyError: the file is not a PostgreSQL custom-format archive, or its
             table of contents cannot be read.
     """
-    with dump.open("rb") as handle:
-        if handle.read(len(_CUSTOM_FORMAT_MAGIC)) != _CUSTOM_FORMAT_MAGIC:
-            raise ArchivePolicyError(
-                "corpus artifact is not a PostgreSQL custom-format archive; a plain-SQL "
-                "script is executable content and is never restored"
-            )
+    if file_descriptor is None:
+        with dump.open("rb") as handle:
+            magic = handle.read(len(_CUSTOM_FORMAT_MAGIC))
+        archive_path = dump
+        inherited: tuple[int, ...] = ()
+    else:
+        magic = os.pread(file_descriptor, len(_CUSTOM_FORMAT_MAGIC), 0)
+        archive_path = Path(f"/proc/self/fd/{file_descriptor}")
+        inherited = (file_descriptor,)
+    if magic != _CUSTOM_FORMAT_MAGIC:
+        raise ArchivePolicyError(
+            "corpus artifact is not a PostgreSQL custom-format archive; a plain-SQL "
+            "script is executable content and is never restored"
+        )
     listed = subprocess.run(  # noqa: S603 - explicit absolute argv, never a shell
-        [_pg_restore(), "--list", str(dump)],
+        [_pg_restore(), "--list", str(archive_path)],
         capture_output=True,
         text=True,
         check=False,
+        pass_fds=inherited,
     )
     if listed.returncode != 0:
         raise ArchivePolicyError("corpus archive table of contents could not be read")

@@ -12,12 +12,15 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
+import subprocess
 import tarfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import genereview_link.db.restore as restore
 from genereview_link.db.restore import (
     ArchivePolicyError,
     assert_data_only_archive,
@@ -127,6 +130,34 @@ def test_plain_sql_is_never_opened_as_an_archive(tmp_path: Path) -> None:
     script.write_bytes(b"CREATE EXTENSION plpython3u;\nDROP TABLE genereview_chapters;\n")
     with pytest.raises(ArchivePolicyError, match="custom-format"):
         read_archive_entries(script)
+
+
+def test_archive_toc_consumes_the_already_open_descriptor_during_parent_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "source"
+    replacement = tmp_path / "replacement"
+    parent.mkdir()
+    replacement.mkdir()
+    dump = parent / "corpus.dump"
+    dump.write_bytes(b"PGDMP-safe")
+    (replacement / "corpus.dump").write_bytes(b"PGDMP-attacker")
+    descriptor = os.open(dump, os.O_RDONLY | os.O_NOFOLLOW)
+    parent.rename(tmp_path / "original")
+    parent.symlink_to(replacement, target_is_directory=True)
+
+    def inspect_descriptor(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs["pass_fds"] == (descriptor,)
+        assert Path(argv[-1]).read_bytes() == b"PGDMP-safe"
+        return subprocess.CompletedProcess(argv, 0, stdout=DATA_ENTRIES[0] + "\n", stderr="")
+
+    monkeypatch.setattr(restore.subprocess, "run", inspect_descriptor)
+    try:
+        entries = read_archive_entries(dump, file_descriptor=descriptor)
+    finally:
+        os.close(descriptor)
+
+    assert entries == DATA_ENTRIES[:1]
 
 
 # --- bundle extraction: the committed digest is the trust root -------------------------

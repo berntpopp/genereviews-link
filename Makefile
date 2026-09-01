@@ -176,7 +176,7 @@ bundle: ## Build release bundle from active corpus
 bundle-validate: ## Validate active corpus is ready for bundle publishing
 	uv run genereview-link bundle validate
 
-bundle-publish-local: ## Package an already validated local corpus; set RELEASE_ID=YYYY-MM-DD-rN
+bundle-publish-local: ## Validate, evaluate, and package one locked snapshot; set RELEASE_ID=YYYY-MM-DD-rN
 	uv run genereview-link bundle publish-local --release-id $${RELEASE_ID:?set RELEASE_ID=YYYY-MM-DD-rN}
 
 cuda-check: ## Verify local PyTorch CUDA availability

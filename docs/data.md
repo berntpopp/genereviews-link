@@ -124,6 +124,7 @@ already-embedded, validated database locally; it never uploads, creates a draft,
 release service.
 
 ```bash
+uv sync --group dev --extra cpu --frozen
 make bundle-validate                              # active corpus is bundle-ready
 RELEASE_ID=2026-05-12-r1 make bundle-publish-local
 ```
@@ -132,6 +133,12 @@ RELEASE_ID=2026-05-12-r1 make bundle-publish-local
 publication is deliberately separate: it requires a complete dated affirmative redistribution
 record bound to an immutable sealed handoff object. Do not draft, upload, or publish without that
 record.
+
+`bundle publish-local` is the ergonomic build-to-seal path: it validates, evaluates, and exports
+the candidate while holding the same corpus advisory lock and repeatable-read exported snapshot.
+The resulting manifest binds the evaluation suite/results to the exact corpus source tuple,
+snapshot identifier, and `corpus.dump` digest, so the directory is accepted by `seal-handoff`.
+Metrics copied from another run cannot replace this in-transaction evidence.
 
 The local output is exactly `corpus.dump`, canonical `manifest.json`, and `SHA256SUMS`; it contains
 data only, never schema, migrations, application code, environment files, or credentials. Verify
@@ -143,8 +150,22 @@ has no release-service client. The handoff root is owner-only (`0700`), and seal
 checked with no-follow file descriptors, exact digest/size/mode manifests, and immutable object IDs.
 The sealed publisher wheel name and digest are part of that object identity; the privileged workflow
 installs only that wheel with no index and no dependency resolution. Its handoff verifier uses only
-the Python standard library, so no separately transferred code can shadow it in the credentialed job.
+the Python standard library. It is launched from a neutral directory under `python -I`, inserts only
+the sealed installation target, and proves the verifier module's `__file__` is below that target, so
+the source checkout and ambient site packages cannot shadow it in the credentialed job.
 A separately privileged automation may act only on that sealed handoff after the rights record exists.
+
+The protected publisher consumes one bounded ZIP evidence bundle containing exactly `rights.json`,
+`rights-evidence.json`, and `terms-snapshot.html`. The canonical rights record uses `bundle:` member
+URIs and binds both snapshots by SHA-256. The public release retains the safe canonical rights record
+and the rights/terms/evidence digests; private keys, tokens, and unrelated reviewer material are never
+release assets. A missing, non-affirmative, malformed, or mismatched record fails before any release
+or tag mutation.
+
+Local handoff roots are durable owner-only storage outside both the repository and serving volumes.
+They are retained through program closure; a workflow artifact retention deadline is not evidence
+that a local handoff object still exists. Record only an object ID together with its exact durable
+absolute path after verifying that path—do not infer or claim an object from an earlier log line.
 
 The corpus manifest binds the exact upstream listing path and `last_updated` value, archive digest
 and byte size, and digest/size identity for each of the three side-data files. These fields are
@@ -158,6 +179,10 @@ as a non-owner without privileges in one transaction, and compares the restored 
 embedding counts exactly with the sealed manifest before representative GeneReviews search fixtures run.
 Release publication inventories drafts as well as published releases and mutates only the exact numeric
 release ID after verifying its tag, source revision, asset IDs, sizes, digests, and closed lifecycle state.
+Promotion freezes the exact draft representation and ETag before semantic restore, conditionally
+rechecks that same ETag, creates/checks the immutable tag only at the final serialized point, and uses
+the verified ETag as `If-Match`. Publication automatically dispatches the external verifier with the
+exact release ID/tag/target/assets tuple; closure requires its successful acceptance artifact.
 
 ## Corpus freshness
 

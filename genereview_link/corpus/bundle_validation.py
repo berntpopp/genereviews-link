@@ -8,6 +8,11 @@ from typing import Any
 
 import asyncpg
 
+from genereview_link.corpus.schema_identity import (
+    EXPECTED_CONTROL_MIGRATIONS,
+    EXPECTED_DATA_MIGRATIONS,
+)
+
 
 class _ConnectionPool:
     """Small pool facade used to validate inside a caller-owned transaction."""
@@ -31,29 +36,6 @@ class _ConnectionAcquire:
 
 
 IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-EXPECTED_CONTROL_MIGRATIONS = frozenset(
-    {
-        "0001_base",
-        "0002_corpus_version",
-        "0003_refresh_log",
-        "0004_active_embedding",
-        "0005_corpus_source_identity",
-    }
-)
-EXPECTED_DATA_MIGRATIONS = frozenset(
-    {
-        f"{schema}:{version}"
-        for schema in ("genereview",)
-        for version in (
-            "0001_chapters",
-            "0002_passages",
-            "0003_embeddings_bge384",
-            "0004_passage_type_and_tables",
-            "0005_passage_role",
-            "0006_primary_gene_symbols",
-        )
-    }
-)
 
 
 def _quote_ident(value: str) -> str:
@@ -144,6 +126,17 @@ async def validate_database_ready(
             )
             or 0
         )
+        from genereview_link.retrieval.model_identity import BGE_MODEL_REVISION
+
+        model_revision_matches = bool(
+            await conn.fetchval(
+                f"select count(*) > 0 and "  # noqa: S608
+                f"count(*) filter (where model_revision = $2) = count(*) "
+                f"from {quoted_schema}.{quoted_embedding_table} where model_name = $1",
+                model_name,
+                BGE_MODEL_REVISION,
+            )
+        )
         hnsw_exists = bool(
             await conn.fetchval(
                 """
@@ -172,6 +165,8 @@ async def validate_database_ready(
         errors.append(
             f"embedding count {embedding_count} does not equal passage count {passage_count}"
         )
+    if not model_revision_matches:
+        errors.append("embeddings do not use the exact reviewed model revision")
     if not hnsw_exists:
         errors.append("HNSW index genereview_embeddings_bge384_hnsw_cosine is missing")
     if active_embedding is None:

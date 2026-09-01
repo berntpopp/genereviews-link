@@ -71,6 +71,10 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+    env:
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+      TOKENIZERS_PARALLELISM: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,8 +87,26 @@ jobs:
           DATABASE_URL: postgresql://genereview:genereview@127.0.0.1:5432/genereview
         run: |
           set -euo pipefail
-          uv sync --group dev --frozen
+          uv sync --group dev --extra cpu --frozen
           uv run genereview-link db migrate
+      - name: Fetch and freeze the exact reviewed embedding model snapshot
+        run: |
+          set -euo pipefail
+          timeout 10m uv run python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          import sentence_transformers, torch, transformers
+          from huggingface_hub import snapshot_download
+          from genereview_link.retrieval.model_identity import (
+              BGE_MODEL_FILE, BGE_MODEL_FILE_SHA256, BGE_MODEL_NAME, BGE_MODEL_REVISION,
+          )
+          snapshot = Path(snapshot_download(BGE_MODEL_NAME, revision=BGE_MODEL_REVISION))
+          actual = hashlib.sha256((snapshot / BGE_MODEL_FILE).read_bytes()).hexdigest()
+          if actual != BGE_MODEL_FILE_SHA256:
+              raise SystemExit("reviewed model.safetensors digest mismatch")
+          print(BGE_MODEL_REVISION, torch.__version__, sentence_transformers.__version__, transformers.__version__)
+          PY
+          printf 'HF_HUB_OFFLINE=1\nTRANSFORMERS_OFFLINE=1\n' >> "$GITHUB_ENV"
       - name: Ingest the normalized upstream snapshot into the reviewed schema
         env:
           DATABASE_URL: postgresql://genereview:genereview@127.0.0.1:5432/genereview
@@ -98,13 +120,7 @@ jobs:
           set -euo pipefail
           uv run genereview-link embed
           uv run genereview-link embed --index-only
-      - name: Evaluate the exact freshly built corpus
-        env:
-          DATABASE_URL: postgresql://genereview:genereview@127.0.0.1:5432/genereview
-        run: |
-          set -euo pipefail
-          uv run python tests/eval/run_eval.py --output "$RUNNER_TEMP/evaluation.json"
-      - name: Select first collision-free release suffix and build local bundle
+      - name: Select identity-aware release suffix and build/evaluate one locked snapshot
         env:
           GH_TOKEN: ${{ github.token }}
           PGPASSWORD: genereview
@@ -125,19 +141,134 @@ jobs:
             if test "$(jq -er length "$page_json")" -lt 100; then complete=true; break; fi
           done
           test "$complete" = true
-          release_id=""
+          refs="$RUNNER_TEMP/tag-refs.json"
+          : >"$RUNNER_TEMP/tag-ref-pages.jsonl"
+          refs_complete=false
+          for page in $(seq 1 100); do
+            ref_page="$RUNNER_TEMP/tag-ref-page-$page.json"
+            timeout 60s gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/corpus-data-?per_page=100&page=$page" >"$ref_page"
+            jq -e 'type == "array" and length <= 100' "$ref_page" >/dev/null
+            jq -c '.[]' "$ref_page" >>"$RUNNER_TEMP/tag-ref-pages.jsonl"
+            if test "$(jq -er length "$ref_page")" -lt 100; then refs_complete=true; break; fi
+          done
+          test "$refs_complete" = true
+          jq -sc '.' "$RUNNER_TEMP/tag-ref-pages.jsonl" >"$refs"
+          jq -r '.[].ref | sub("^refs/tags/corpus-data-"; "corpus-data-")' "$refs" >>"$tags"
+          psql -h 127.0.0.1 -U genereview -d genereview -At -v ON_ERROR_STOP=1 -c "
+            select jsonb_build_object(
+              'listing_relpath', listing_relpath, 'last_updated', file_list_etag,
+              'tarball', jsonb_build_object('sha256', tarball_sha256, 'size_bytes', tarball_size_bytes),
+              'side_data', jsonb_build_object(
+                'GRtitle_shortname_NBKid.txt', jsonb_build_object('sha256', sidedata_title_sha256, 'size_bytes', sidedata_title_size_bytes),
+                'NBKid_shortname_genesymbol.txt', jsonb_build_object('sha256', sidedata_genes_sha256, 'size_bytes', sidedata_genes_size_bytes),
+                'NBKid_shortname_OMIM.txt', jsonb_build_object('sha256', sidedata_omim_sha256, 'size_bytes', sidedata_omim_size_bytes)))
+            from public.genereview_corpus_version where is_active and ingest_status='completed'" \
+            > "$RUNNER_TEMP/local-source-identity.json"
+          jq -e 'type == "object"' "$RUNNER_TEMP/local-source-identity.json" >/dev/null
+          first_free_release_id=""
+          published_noop=""
           for n in $(seq 1 10000); do
             candidate="$source_date-r$n"
-            if ! grep -Fxq "corpus-data-$candidate" "$tags"; then
-              release_id="$candidate"
+            candidate_tag="corpus-data-$candidate"
+            matches="$(jq -sc --arg tag "$candidate_tag" '[.[][] | select(.tag_name == $tag)]' "$RUNNER_TEMP"/release-page-*.json)"
+            match_count="$(jq -er length <<<"$matches")"
+            test "$match_count" -le 1
+            if test "$match_count" = 1; then
+              manifest_id="$(jq -er '.[0].assets | map(select(.name == "manifest.json")) | select(length == 1) | .[0].id' <<<"$matches")"
+              manifest_size="$(jq -er '.[0].assets | map(select(.name == "manifest.json")) | select(length == 1) | .[0].size' <<<"$matches")"
+              manifest_digest="$(jq -er '.[0].assets | map(select(.name == "manifest.json")) | select(length == 1) | .[0].digest' <<<"$matches")"
+              test "$manifest_size" -le $((1024 * 1024))
+              remote_manifest="$RUNNER_TEMP/existing-manifest-$n.json"
+              timeout 2m curl --fail --silent --show-error --location \
+                --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 \
+                --max-filesize "$manifest_size" --header 'Accept: application/octet-stream' \
+                --header "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$manifest_id" \
+                --output "$remote_manifest"
+              test "$(stat -c %s "$remote_manifest")" = "$manifest_size"
+              test "sha256:$(sha256sum "$remote_manifest" | cut -d' ' -f1)" = "$manifest_digest"
+              if jq -e --argjson local "$(cat "$RUNNER_TEMP/local-source-identity.json")" '.source == $local' "$remote_manifest" >/dev/null; then
+                release_id="$candidate"
+                published_noop="$candidate_tag"
+                echo "published_noop source identity candidate: $candidate_tag"
+                break
+              fi
+              continue
+            fi
+            if ! jq -e --arg ref "refs/tags/$candidate_tag" '.[] | select(.ref == $ref)' "$refs" >/dev/null; then
+              first_free_release_id="$candidate"
               break
             fi
           done
+          if test -z "${release_id:-}"; then release_id="$first_free_release_id"; fi
           test -n "$release_id"
+          # Drafts, published releases, and tag-only refs were exhausted above. A differing
+          # collision is occupied; an exact source identity is handed to the immutable verifier
+          # as a possible published_noop, never selected by an arbitrary operator-provided rN.
+          # Fresh evaluation runs inside bundle build's locked export-snapshot transaction.
           uv run genereview-link bundle build --release-id "$release_id" \
-            --evaluation-file "$RUNNER_TEMP/evaluation.json" \
             --output "$RUNNER_TEMP/source"
-          uv run python - "$RUNNER_TEMP/source/corpus.dump" <<'PY'
+          source_dir="$RUNNER_TEMP/source"
+          if test -n "$published_noop"; then
+            existing="$(jq -sc --arg tag "$published_noop" '[.[][] | select(.tag_name == $tag)][0]' "$RUNNER_TEMP"/release-page-*.json)"
+            exact=true
+            for asset in corpus.dump manifest.json SHA256SUMS rights-record.json; do
+              asset_id="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .id' <<<"$existing")"
+              size="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .size' <<<"$existing")"
+              digest="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .digest' <<<"$existing")"
+              if test "$asset" = corpus.dump; then limit=$((2 * 1024 * 1024 * 1024)); else limit=$((1024 * 1024)); fi
+              test "$size" -gt 0 && test "$size" -le "$limit"
+              remote="$RUNNER_TEMP/existing-$asset"
+              timeout 45m curl --fail --silent --show-error --location \
+                --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 2700 \
+                --max-filesize "$size" --header 'Accept: application/octet-stream' \
+                --header "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+                --output "$remote"
+              test "$(stat -c %s "$remote")" = "$size"
+              test "sha256:$(sha256sum "$remote" | cut -d' ' -f1)" = "$digest"
+              if test "$asset" = rights-record.json; then
+                uv run python - "$remote" "$source_dir/manifest.json" "$source_dir/corpus.dump" <<'PY' || exact=false
+          import hashlib, json, re, sys
+          from pathlib import Path
+          from genereview_link.corpus.rights import RIGHTS_FIELDS
+          rights_path, manifest_path, dump_path = map(Path, sys.argv[1:])
+          record = json.loads(rights_path.read_bytes())
+          manifest = json.loads(manifest_path.read_bytes())
+          with dump_path.open("rb") as stream:
+              artifact_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+          unsigned = {key: value for key, value in record.items() if key != "rights_record_sha256"}
+          canonical = (json.dumps(unsigned, sort_keys=True, separators=(",", ":")) + "\n").encode()
+          valid = (
+              isinstance(record, dict)
+              and set(record) == RIGHTS_FIELDS
+              and record.get("decision") == "affirmative"
+              and record.get("corpus_release_id") == manifest.get("corpus_release_id")
+              and record.get("source_sha256") == manifest.get("tarball_source_sha256")
+              and record.get("artifact_sha256") == artifact_sha256
+              and record.get("rights_record_sha256") == hashlib.sha256(canonical).hexdigest()
+              and all(re.fullmatch(r"[0-9a-f]{64}", str(record.get(key, ""))) for key in ("object_id", "terms_sha256", "evidence_sha256"))
+          )
+          if not valid:
+              raise SystemExit("existing rights record is not the exact candidate identity")
+          PY
+              else
+                cmp -- "$source_dir/$asset" "$remote" || exact=false
+              fi
+            done
+            if test "$exact" != true; then
+              release_id=""
+              for n in $(seq 1 10000); do
+                candidate="$source_date-r$n"
+                if ! grep -Fxq "corpus-data-$candidate" "$tags"; then release_id="$candidate"; break; fi
+              done
+              test -n "$release_id"
+              source_dir="$RUNNER_TEMP/source-final"
+              uv run genereview-link bundle build --release-id "$release_id" --output "$source_dir"
+              published_noop=""
+            fi
+          fi
+          uv run python - "$source_dir/corpus.dump" <<'PY'
           import sys
           from pathlib import Path
           from genereview_link.db.restore import assert_data_only_archive, read_archive_entries
@@ -145,9 +276,9 @@ jobs:
           PY
           # The restore contract is data-only and fail-closed; these flags are
           # repeated at the actual privileged restore call in the verifier job.
-          pg_restore --list --data-only --no-owner --no-privileges "$RUNNER_TEMP/source/corpus.dump" >/dev/null
+          pg_restore --list --data-only --no-owner --no-privileges "$source_dir/corpus.dump" >/dev/null
           # pg_restore --single-transaction --exit-on-error is mandatory for restore.
-          printf 'SOURCE_DIR=%s\nRELEASE_ID=%s\n' "$RUNNER_TEMP/source" "$release_id" >> "$GITHUB_ENV"
+          printf 'SOURCE_DIR=%s\nRELEASE_ID=%s\n' "$source_dir" "$release_id" >> "$GITHUB_ENV"
       - name: Seal the locally verified handoff
         run: |
           set -euo pipefail
@@ -169,7 +300,6 @@ jobs:
             ${{ runner.temp }}/handoffs
             ${{ runner.temp }}/object-id
           if-no-files-found: error
-          retention-days: 90
 
   publish:
     if: ${{ needs.validate.result == 'success' && inputs.object_id != '' && inputs.handoff_run_id != '' && github.ref == 'refs/heads/main' }}
@@ -178,7 +308,7 @@ jobs:
     timeout-minutes: 90
     environment: data-release
     permissions:
-      actions: read
+      actions: write
       contents: write
       id-token: write
       attestations: write
@@ -197,7 +327,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
       OBJECT_ID: ${{ inputs.object_id }}
-      GENEREVIEWS_RIGHTS_RECORD_JSON: ${{ secrets.GENEREVIEWS_RIGHTS_RECORD_JSON }}
+      GENEREVIEWS_RIGHTS_BUNDLE_BASE64: ${{ secrets.GENEREVIEWS_RIGHTS_BUNDLE_BASE64 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -221,9 +351,34 @@ jobs:
       - name: Reverify exact sealed object and affirmative dated rights
         run: |
           set -euo pipefail
-          test -n "$GENEREVIEWS_RIGHTS_RECORD_JSON"
+          test -n "$GENEREVIEWS_RIGHTS_BUNDLE_BASE64"
           test "$(cat "$RUNNER_TEMP/sealed/object-id")" = "$OBJECT_ID"
-          printf '%s' "$GENEREVIEWS_RIGHTS_RECORD_JSON" > "$RUNNER_TEMP/rights.json"
+          rights_bundle="$RUNNER_TEMP/rights-bundle"
+          mkdir -m 0700 -- "$rights_bundle"
+          RIGHTS_BUNDLE="$rights_bundle" uv run python - <<'PY'
+          import base64, io, os, stat, zipfile
+          from pathlib import Path, PurePosixPath
+          raw = base64.b64decode(os.environ["GENEREVIEWS_RIGHTS_BUNDLE_BASE64"], validate=True)
+          if not 0 < len(raw) <= 4 * 1024 * 1024:
+              raise SystemExit("rights evidence bundle exceeds the reviewed bound")
+          expected = {"rights.json", "rights-evidence.json", "terms-snapshot.html"}
+          root = Path(os.environ["RIGHTS_BUNDLE"])
+          with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+              if set(archive.namelist()) != expected:
+                  raise SystemExit("rights evidence bundle has an unexpected member set")
+              for info in archive.infolist():
+                  if PurePosixPath(info.filename).name != info.filename or info.file_size > 1024 * 1024:
+                      raise SystemExit("unsafe or oversized rights evidence member")
+                  if info.flag_bits & 1 or stat.S_IFMT(info.external_attr >> 16) not in {0, stat.S_IFREG}:
+                      raise SystemExit("rights evidence members must be unencrypted regular files")
+                  data = archive.read(info)
+                  if len(data) != info.file_size:
+                      raise SystemExit("truncated rights evidence member")
+                  target = root / info.filename
+                  target.write_bytes(data)
+                  target.chmod(0o400)
+          PY
+          rights="$rights_bundle/rights.json"
           handoff_root="$RUNNER_TEMP/sealed/handoffs"
           handoff_object="$handoff_root/$OBJECT_ID"
           test -d "$handoff_root" && test ! -L "$handoff_root"
@@ -247,15 +402,25 @@ jobs:
           # This is the stdlib-only equivalent of `bundle publish-handoff`: the sealed wheel
           # performs verify_handoff exact no-follow verification and the rights gate before
           # the privileged draft-first publisher is reached.  No wheel dependencies are needed.
-          PYTHONPATH="$publisher_env" python3 - "$handoff_root" "$OBJECT_ID" "$RUNNER_TEMP/rights.json" <<'PY'
-          import sys
+          neutral="$RUNNER_TEMP/neutral-verifier"
+          mkdir -- "$neutral"
+          cd "$neutral"
+          python3 -I - "$publisher_env" "$handoff_root" "$OBJECT_ID" "$rights" <<'PY'
+          import os, sys
           from pathlib import Path
-          from genereview_link.corpus.handoff import prepare_publish_handoff
-          prepare_publish_handoff(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
+          target = Path(sys.argv[1]).resolve()
+          sys.path.insert(0, str(target))
+          import genereview_link.publisher_verifier as verifier
+          module_file = Path(verifier.__file__).resolve()
+          if target not in module_file.parents:
+              raise SystemExit("sealed verifier import was shadowed outside the installed target")
+          verifier.prepare_publish_handoff(Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4]))
+          print(f"module_file={module_file}")
           PY
-          rights_digest="$(sha256sum "$RUNNER_TEMP/rights.json" | cut -d' ' -f1)"
+          rights_digest="$(sha256sum "$rights" | cut -d' ' -f1)"
           printf 'RIGHTS_DIGEST=%s\n' "$rights_digest" >> "$GITHUB_ENV"
           printf 'PUBLISHER_ENV=%s\n' "$publisher_env" >> "$GITHUB_ENV"
+          printf 'RIGHTS_BUNDLE=%s\n' "$rights_bundle" >> "$GITHUB_ENV"
       - name: Four-state immutable publication gate
         run: |
           set -euo pipefail
@@ -265,8 +430,14 @@ jobs:
           corpus_release_id="$(jq -er .corpus_release_id "$handoff/manifest.json")"
           build_revision="$(jq -er '.app_git_sha | select(test("^[0-9a-f]{40}$"))' "$handoff/manifest.json")"
           rights_digest="${RIGHTS_DIGEST:-}"
+          terms_digest="$(jq -er '.terms_sha256 | select(test("^[0-9a-f]{64}$"))' "$RIGHTS_BUNDLE/rights.json")"
+          evidence_digest="$(jq -er '.evidence_sha256 | select(test("^[0-9a-f]{64}$"))' "$RIGHTS_BUNDLE/rights.json")"
           grep -Eq '^[0-9a-f]{64}$' <<<"$rights_digest"
-          test "$build_revision" = "$GITHUB_SHA"
+          build_run="$RUNNER_TEMP/build-run.json"
+          timeout 60s gh api "repos/$GH_REPO/actions/runs/${{ inputs.handoff_run_id }}" >"$build_run"
+          jq -e --arg revision "$build_revision" --arg repo "$GH_REPO" \
+            '.head_sha == $revision and .head_branch == "main" and .event == "workflow_dispatch" and
+             .conclusion == "success" and .repository.full_name == $repo' "$build_run" >/dev/null
           grep -Eq '^20[0-9]{2}-[0-9]{2}-[0-9]{2}-r[1-9][0-9]*$' <<<"$corpus_release_id"
           tag="corpus-data-$corpus_release_id"
 
@@ -302,32 +473,69 @@ jobs:
               "$(jq -er '.checksums["corpus.dump"]' "$remote_manifest")"
             cmp -- "$handoff/manifest.json" "$remote_manifest"
             admin_url='postgresql://genereview:genereview@127.0.0.1:5432/genereview'
-            PGPASSWORD=genereview psql "$admin_url" -v ON_ERROR_STOP=1 <<'SQL'
-          do $$
-          begin
-            create role corpus_restore login password 'corpus_restore';
-          exception when duplicate_object then null;
-          end $$;
-          grant usage on schema genereview to corpus_restore;
-          grant insert, select on all tables in schema genereview to corpus_restore;
-          grant usage, select on all sequences in schema genereview to corpus_restore;
-          grant insert, select on public.genereview_corpus_version to corpus_restore;
-          SQL
-            PGPASSWORD=corpus_restore pg_restore --no-owner --no-privileges \
+            restore_url='postgresql://genereview_restore:restore@127.0.0.1:5432/genereview'
+            DATABASE_URL="$admin_url" RESTORE_DATABASE_URL="$restore_url" uv run python - <<'PY'
+          import asyncio
+          from genereview_link.config import settings
+          from genereview_link.db.pool import create_pool
+          from genereview_link.db.restore import ensure_restore_role
+          async def main():
+              pool = await create_pool()
+              try:
+                  await ensure_restore_role(pool, settings.RESTORE_ROLE, settings.RESTORE_DATABASE_URL)
+              finally:
+                  await pool.close()
+          asyncio.run(main())
+          PY
+            PGPASSWORD=restore pg_restore --no-owner --no-privileges \
               --single-transaction --exit-on-error \
-              --dbname='postgresql://corpus_restore:corpus_restore@127.0.0.1:5432/genereview' \
+              --dbname="$restore_url" \
               "$remote/corpus.dump"
             DATABASE_URL="$admin_url" uv run genereview-link embed --index-only
+            chapter_count="$(PGPASSWORD=genereview psql "$admin_url" -At -v ON_ERROR_STOP=1 \
+              -c 'select count(*) from genereview.genereview_chapters')"
             count="$(PGPASSWORD=genereview psql "$admin_url" -At -v ON_ERROR_STOP=1 \
               -c 'select count(*) from genereview.genereview_passages')"
             embedding_count="$(PGPASSWORD=genereview psql "$admin_url" -At -v ON_ERROR_STOP=1 \
               -c "select count(*) from genereview.genereview_embeddings_bge384 where model_name = 'BAAI/bge-small-en-v1.5'")"
+            test "$chapter_count" = "$(jq -er '.chapter_count' "$remote_manifest")"
             test "$count" = "$(jq -er '.passage_count' "$remote_manifest")"
             test "$embedding_count" = "$(jq -er '.embedding.count' "$remote_manifest")"
+            test "$(PGPASSWORD=genereview psql "$admin_url" -At -v ON_ERROR_STOP=1 -c "select (current_setting('server_version_num')::int/10000)::text")" = "$(jq -er '.postgres.major_version' "$remote_manifest")"
+            test "$(PGPASSWORD=genereview psql "$admin_url" -At -v ON_ERROR_STOP=1 -c "select extversion from pg_extension where extname='vector'")" = "$(jq -er '.postgres.pgvector_version' "$remote_manifest")"
+            PGPASSWORD=genereview psql "$admin_url" -At -v ON_ERROR_STOP=1 -c "
+              select jsonb_build_object('listing_relpath',listing_relpath,'last_updated',file_list_etag,
+                'tarball',jsonb_build_object('sha256',tarball_sha256,'size_bytes',tarball_size_bytes),
+                'side_data',jsonb_build_object(
+                  'GRtitle_shortname_NBKid.txt',jsonb_build_object('sha256',sidedata_title_sha256,'size_bytes',sidedata_title_size_bytes),
+                  'NBKid_shortname_genesymbol.txt',jsonb_build_object('sha256',sidedata_genes_sha256,'size_bytes',sidedata_genes_size_bytes),
+                  'NBKid_shortname_OMIM.txt',jsonb_build_object('sha256',sidedata_omim_sha256,'size_bytes',sidedata_omim_size_bytes)))
+                from public.genereview_corpus_version where is_active and ingest_status='completed'" >"$RUNNER_TEMP/restored-source.json"
+            jq -e --argjson expected "$(jq -c .source "$remote_manifest")" '. == $expected' "$RUNNER_TEMP/restored-source.json" >/dev/null
+            model_revision="$(jq -er '.computation.model.revision' "$remote_manifest")"
+            test "$(PGPASSWORD=genereview psql "$admin_url" -At -v ON_ERROR_STOP=1 -c "select count(distinct model_revision)=1 and min(model_revision)='$model_revision' from genereview.genereview_embeddings_bge384")" = t
+            while IFS=: read -r namespace version; do
+              migration_count="$(PGPASSWORD=genereview psql "$admin_url" -At -v ON_ERROR_STOP=1 -v n="$namespace" -v v="$version" <<'SQL'
+          select count(*) from public.schema_migrations where namespace = :'n' and version = :'v';
+          SQL
+              )"
+              test "$migration_count" = 1
+            done < <(jq -r '.schema_migrations | to_entries[] | .key as $n | .value[] | ($n + ":" + .)' "$remote_manifest")
+            uv run python - "$remote_manifest" <<'PY'
+          import json, sys
+          from genereview_link.corpus.bundle import _reviewed_migration_digests
+          manifest = json.load(open(sys.argv[1]))
+          if manifest["migration_file_sha256"] != _reviewed_migration_digests():
+              raise SystemExit("restored migration content digests do not match reviewed SQL")
+          PY
             PGPASSWORD=genereview psql "$admin_url" -At -v ON_ERROR_STOP=1 -c \
               "select 1 from pg_indexes where indexname = 'genereview_embeddings_bge384_hnsw_cosine'" | grep -qx 1
+            PGPASSWORD=genereview psql "$admin_url" -At -v ON_ERROR_STOP=1 -c \
+              "select exists(select 1 from genereview.genereview_chapters where 'BRCA1'=any(gene_symbols))" | grep -qx t
+            PGPASSWORD=genereview psql "$admin_url" -At -v ON_ERROR_STOP=1 -c \
+              "select exists(select 1 from genereview.genereview_passages where search_vector @@ plainto_tsquery('english','BRCA1'))" | grep -qx t
             DATABASE_URL="$admin_url" uv run python tests/eval/run_eval.py --output "$RUNNER_TEMP/restored-evaluation.json"
-            jq -e --argjson expected "$(jq -c '.results' "$remote_manifest")" \
+            jq -e --argjson expected "$(jq -c '.evaluation.results' "$remote_manifest")" \
               '.results == $expected' "$RUNNER_TEMP/restored-evaluation.json" >/dev/null
           }
 
@@ -335,20 +543,31 @@ jobs:
             release_id="$1"
             grep -Eq '^[1-9][0-9]{0,18}$' <<<"$release_id"
             release_json="$RUNNER_TEMP/release-$release_id.json"
+            release_headers="$RUNNER_TEMP/release-$release_id.headers"
             remote="$(mktemp -d "$RUNNER_TEMP/remote.XXXXXX")"
-            timeout 60s gh api "repos/$GH_REPO/releases/$release_id" >"$release_json"
+            timeout 60s curl --fail --silent --show-error \
+              --proto '=https' --connect-timeout 15 --max-time 60 \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --dump-header "$release_headers" \
+              "https://api.github.com/repos/$GH_REPO/releases/$release_id" \
+              --output "$release_json"
+            VERIFIED_ETAG="$(awk 'tolower($1) == "etag:" {print $2}' "$release_headers" | tr -d '\r' | tail -n1)"
+            test -n "$VERIFIED_ETAG"
             jq -e --argjson id "$release_id" --arg tag "$tag" --arg revision "$build_revision" \
               --arg rights_marker "rights-record-sha256: $rights_digest" \
+              --arg terms_marker "terms-sha256: $terms_digest" \
+              --arg evidence_marker "rights-evidence-sha256: $evidence_digest" \
               '.id == $id and .tag_name == $tag and .target_commitish == $revision and
                .prerelease == false and
-               (.body | contains($rights_marker)) and
+               (.body | contains($rights_marker) and contains($terms_marker) and contains($evidence_marker)) and
                ((.draft == true and .immutable == false and .published_at == null) or
                 (.draft == false and .immutable == true and (.published_at | type == "string"))) and
-               ([.assets[].name] | sort == ["SHA256SUMS", "corpus.dump", "manifest.json"])' \
+               ([.assets[].name] | sort == ["SHA256SUMS", "corpus.dump", "manifest.json", "rights-record.json"])' \
               "$release_json" >/dev/null
-            asset_ids="$(jq -cer '[.assets[].id] | select(length == 3 and (unique | length) == 3)' "$release_json")"
+            asset_ids="$(jq -cer '[.assets[].id] | select(length == 4 and (unique | length) == 4)' "$release_json")"
             jq -e 'all(.[]; type == "number" and . > 0 and floor == .)' <<<"$asset_ids" >/dev/null
-            for asset in corpus.dump manifest.json SHA256SUMS; do
+            for asset in corpus.dump manifest.json SHA256SUMS rights-record.json; do
               asset_id="$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .id | select(type == "number" and . > 0 and floor == .)' "$release_json")"
               size="$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .size | select(type == "number" and . > 0 and floor == .)' "$release_json")"
               digest="$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest | select(type == "string" and test("^sha256:[0-9a-f]{64}$"))' "$release_json")"
@@ -362,15 +581,23 @@ jobs:
                 --output "$remote/$asset"
               test "$(stat -c %s "$remote/$asset")" = "$size"
               test "sha256:$(sha256sum "$remote/$asset" | cut -d' ' -f1)" = "$digest"
-              cmp -- "$handoff/$asset" "$remote/$asset"
+              expected_asset="$handoff/$asset"
+              if test "$asset" = rights-record.json; then expected_asset="$RIGHTS_BUNDLE/rights.json"; fi
+              cmp -- "$expected_asset" "$remote/$asset"
             done
             REMOTE_DIR="$remote"
-            PYTHONPATH="$PUBLISHER_ENV" python3 - "$RUNNER_TEMP/sealed/handoffs" "$OBJECT_ID" "$RUNNER_TEMP/rights.json" <<'PY'
+            (cd "$RUNNER_TEMP/neutral-verifier" && python3 -I - "$PUBLISHER_ENV" "$RUNNER_TEMP/sealed/handoffs" "$OBJECT_ID" "$RIGHTS_BUNDLE/rights.json" <<'PY'
           import sys
           from pathlib import Path
-          from genereview_link.corpus.handoff import prepare_publish_handoff
-          prepare_publish_handoff(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
+          target = Path(sys.argv[1]).resolve()
+          sys.path.insert(0, str(target))
+          import genereview_link.publisher_verifier as verifier
+          module_file = Path(verifier.__file__).resolve()
+          if target not in module_file.parents:
+              raise SystemExit("sealed verifier import shadowed")
+          verifier.prepare_publish_handoff(Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4]))
           PY
+            )
             timeout 2m gh attestation verify "$remote/corpus.dump" --repo "$GH_REPO" \
               --signer-workflow "$GH_REPO/.github/workflows/corpus-data-release.yml" \
               --source-ref refs/heads/main --source-digest "$build_revision"
@@ -401,10 +628,10 @@ jobs:
             release_id="$(jq -er '.[0].id | select(type == "number" and . > 0 and floor == .) | tostring' <<<"$matches")"
             verify_remote "$release_id"
             if test "$(jq -er '.draft | tostring' "$RUNNER_TEMP/release-$release_id.json")" = true; then
-              semantic_verify "$REMOTE_DIR"
               promote=true
             else
               require_exact_tag
+              FINAL_RELEASE_JSON="$RUNNER_TEMP/release-$release_id.json"
               echo "published_noop: exact immutable release verified"
             fi
           else
@@ -422,7 +649,7 @@ jobs:
             created="$RUNNER_TEMP/created-release.json"
             timeout 60s gh api --method POST "repos/$GH_REPO/releases" \
               -f tag_name="$tag" -f target_commitish="$build_revision" -f name="$tag" \
-              -f body="Immutable GeneReviews research corpus; rights-record-sha256: $rights_digest" \
+              -f body="Immutable GeneReviews research corpus; rights-record-sha256: $rights_digest; terms-sha256: $terms_digest; rights-evidence-sha256: $evidence_digest" \
               -F draft=true -F prerelease=false -F generate_release_notes=false >"$created"
             release_id="$(jq -er --arg tag "$tag" --arg revision "$build_revision" \
               'select(.tag_name == $tag and .target_commitish == $revision and
@@ -430,45 +657,57 @@ jobs:
                       .prerelease == false and (.assets | type == "array" and length == 0)) |
                .id | select(type == "number" and . > 0 and floor == .) | tostring' "$created")"
             grep -Eq '^[1-9][0-9]{0,18}$' <<<"$release_id"
-            for asset in corpus.dump manifest.json SHA256SUMS; do
-              size="$(stat -c %s "$handoff/$asset")"
-              digest="sha256:$(sha256sum "$handoff/$asset" | cut -d' ' -f1)"
+            for asset in corpus.dump manifest.json SHA256SUMS rights-record.json; do
+              source_asset="$handoff/$asset"
+              if test "$asset" = rights-record.json; then source_asset="$RIGHTS_BUNDLE/rights.json"; fi
+              size="$(stat -c %s "$source_asset")"
+              digest="sha256:$(sha256sum "$source_asset" | cut -d' ' -f1)"
               upload="$RUNNER_TEMP/upload-$asset.json"
               timeout 45m curl --fail --silent --show-error \
                 --proto '=https' --connect-timeout 15 --max-time 2700 \
                 --request POST --header 'Accept: application/vnd.github+json' \
                 --header "Authorization: Bearer $GH_TOKEN" \
-                --header 'Content-Type: application/octet-stream' --data-binary "@$handoff/$asset" \
+                --header 'Content-Type: application/octet-stream' --data-binary "@$source_asset" \
                 "https://uploads.github.com/repos/$GH_REPO/releases/$release_id/assets?name=$asset" \
                 --output "$upload"
               jq -e --arg asset "$asset" --arg digest "$digest" --argjson size "$size" \
                 '.name == $asset and .size == $size and .digest == $digest and
                  (.id | type == "number" and . > 0 and floor == .)' "$upload" >/dev/null
             done
-            # The draft and all assets exist before the tag is created/checked.
-            ensure_tag
+            # Keep the tag absent until the final serialized promotion point.
             verify_remote "$release_id"
-            semantic_verify "$REMOTE_DIR"
             promote=true
           fi
 
           if test "$promote" = true; then
-            # Recheck the immutable repository policy, release inventory, and exact tag
-            # immediately before the only mutating promotion call.
+            # Freeze one exact release representation (ETag + asset IDs/digests), run
+            # semantics only on bytes downloaded from that representation, then use the
+            # same ETag for a conditional preflight and the only mutating PATCH.
             timeout 60s gh api "repos/$GH_REPO/immutable-releases" >"$immutable_releases"
             jq -e '.enabled == true' "$immutable_releases" >/dev/null
-            require_exact_tag
             verify_remote "$release_id"
-            before="$RUNNER_TEMP/pre-promotion-release.json"
+            verified_etag="$VERIFIED_ETAG"
+            before="$RUNNER_TEMP/release-$release_id.json"
             after="$RUNNER_TEMP/post-promotion-release.json"
-            timeout 60s gh api "repos/$GH_REPO/releases/$release_id" >"$before"
-            etag_headers="$RUNNER_TEMP/pre-promotion-headers"
-            timeout 60s gh api -i "repos/$GH_REPO/releases/$release_id" >"$etag_headers"
-            etag="$(awk 'tolower($1) == "etag:" {print $2}' "$etag_headers" | tr -d '\r' | tail -n1)"
-            test -n "$etag"
+            frozen="$RUNNER_TEMP/verified-release-state.json"
+            uv run python -m genereview_link.corpus.release_promotion freeze \
+              --release "$before" --etag "$verified_etag" --tag "$tag" \
+              --target "$build_revision" --out "$frozen"
+            semantic_verify "$REMOTE_DIR"
             jq -c '[.assets[] | {id, name, size, digest}] | sort_by(.name)' "$before" \
               >"$RUNNER_TEMP/pre-promotion-assets.json"
-            timeout 60s gh api --method PATCH "repos/$GH_REPO/releases/$release_id" -H "If-Match: $etag" \
+            precondition="$RUNNER_TEMP/precondition.status"
+            timeout 60s curl --silent --show-error --output /dev/null \
+              --write-out '%{http_code}\n' --header "Authorization: Bearer $GH_TOKEN" \
+              --header "If-None-Match: $verified_etag" \
+              "https://api.github.com/repos/$GH_REPO/releases/$release_id" >"$precondition"
+            test "$(cat "$precondition")" = 304
+            ensure_tag
+            require_exact_tag
+            uv run python -m genereview_link.corpus.release_promotion prepatch \
+              --frozen "$frozen" --status "$(cat "$precondition")" \
+              --tag-ref "$RUNNER_TEMP/required-tag-ref.json"
+            timeout 60s gh api --method PATCH "repos/$GH_REPO/releases/$release_id" -H "If-Match: $verified_etag" \
               -F draft=false >"$after"
             jq -e --argjson id "$release_id" --arg tag "$tag" --arg revision "$build_revision" \
               '.id == $id and .tag_name == $tag and .target_commitish == $revision and
@@ -477,5 +716,38 @@ jobs:
             jq -c '[.assets[] | {id, name, size, digest}] | sort_by(.name)' "$after" \
               >"$RUNNER_TEMP/post-promotion-assets.json"
             cmp -- "$RUNNER_TEMP/pre-promotion-assets.json" "$RUNNER_TEMP/post-promotion-assets.json"
-            verify_remote "$release_id"
+            require_exact_tag
+            uv run python -m genereview_link.corpus.release_promotion post \
+              --frozen "$frozen" --published "$after" \
+              --tag-ref "$RUNNER_TEMP/required-tag-ref.json"
+            FINAL_RELEASE_JSON="$after"
           fi
+
+          # Post-publication acceptance is a separate, automatically dispatched verifier
+          # bound to this exact release ID/tag/target/assets tuple. It never mutates a release.
+          final_release="$FINAL_RELEASE_JSON"
+          assets_identity="$(jq -c '[.assets[] | {id,name,size,digest}] | sort_by(.name)' "$final_release")"
+          assets_sha256="$(printf '%s\n' "$assets_identity" | sha256sum | cut -d' ' -f1)"
+          publication_nonce="$(printf '%s\n%s\n%s\n%s\n' "$release_id" "$tag" "$build_revision" "$assets_sha256" | sha256sum | cut -c1-24)"
+          timeout 60s gh workflow run verify-corpus-bundle.yml --ref "$tag" \
+            -f release_tag="$tag" -f release_id="$release_id" \
+            -f target_commit="$build_revision" -f assets_sha256="$assets_sha256" \
+            -f publication_nonce="$publication_nonce"
+          verifier_run=""
+          for _attempt in $(seq 1 30); do
+            verifier_run="$(gh run list --workflow verify-corpus-bundle.yml --commit "$build_revision" \
+              --event workflow_dispatch --limit 30 --json databaseId,displayTitle \
+              --jq ".[] | select(.displayTitle == \"Verify corpus release $release_id ($publication_nonce)\") | .databaseId" | head -n1)"
+            test -n "$verifier_run" && break
+            sleep 2
+          done
+          test -n "$verifier_run"
+          timeout 95m gh run watch "$verifier_run" --exit-status
+          acceptance="$RUNNER_TEMP/post-publication-acceptance"
+          mkdir -- "$acceptance"
+          gh run download "$verifier_run" --name "corpus-publication-verification-$release_id" --dir "$acceptance"
+          jq -e --argjson release_id "$release_id" --arg tag "$tag" \
+            --arg target "$build_revision" --arg assets "$assets_sha256" \
+            '.release_id == $release_id and .tag == $tag and .target_commit == $target and
+             .assets_sha256 == $assets and .status == "passed"' \
+            "$acceptance/publication-verification.json" >/dev/null

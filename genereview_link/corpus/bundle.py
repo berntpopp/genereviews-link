@@ -85,6 +85,7 @@ class BundleManifest:
             "result_sha256": "",
         }
     )
+    computation: dict[str, object] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     created_by: str = "manual"
     license: dict[str, object] = field(

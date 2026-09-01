@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import re
 import stat
 import tempfile
+from ctypes import CDLL, get_errno
 from dataclasses import dataclass
+from errno import EEXIST, ENOSYS
 from pathlib import Path
 
 MAX_METADATA_BYTES = 1 << 20
@@ -48,6 +49,18 @@ class SealedHandoff:
     manifest: Path
 
 
+class _FDGuard:
+    def __init__(self, *fds: int) -> None:
+        self.fds = list(fds)
+
+    def close(self) -> None:
+        while self.fds:
+            os.close(self.fds.pop())
+
+    def __del__(self) -> None:
+        self.close()
+
+
 def _regular_file(path: Path) -> os.stat_result:
     try:
         info = path.lstat()
@@ -58,16 +71,19 @@ def _regular_file(path: Path) -> os.stat_result:
     return info
 
 
-def _open_regular(path: Path) -> tuple[int, os.stat_result]:
-    parent_fd: int | None = None
+def _open_regular(path: Path, *, parent_fd: int | None = None) -> tuple[int, os.stat_result]:
+    owns_parent = parent_fd is None
     try:
-        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        if owns_parent:
+            parent_fd = _open_directory(path.parent)
+        assert parent_fd is not None
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
     except OSError as error:
-        if parent_fd is not None:
+        if owns_parent and parent_fd is not None:
             os.close(parent_fd)
         raise HandoffError(f"unsafe or missing required file: {path.name}") from error
-    os.close(parent_fd)
+    if owns_parent:
+        os.close(parent_fd)
     info = os.fstat(fd)
     if not stat.S_ISREG(info.st_mode):
         os.close(fd)
@@ -75,8 +91,29 @@ def _open_regular(path: Path) -> tuple[int, os.stat_result]:
     return fd, info
 
 
-def _read_capped(path: Path, *, limit: int = MAX_METADATA_BYTES) -> bytes:
-    fd, info = _open_regular(path)
+def _open_directory(path: Path) -> int:
+    """Open every path component with openat/O_NOFOLLOW and return the final fd."""
+    absolute = path.absolute()
+    current = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in absolute.parts[1:]:
+            next_fd = os.open(
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=current,
+            )
+            os.close(current)
+            current = next_fd
+        return current
+    except BaseException:
+        os.close(current)
+        raise
+
+
+def _read_capped(
+    path: Path, *, limit: int = MAX_METADATA_BYTES, parent_fd: int | None = None
+) -> bytes:
+    fd, info = _open_regular(path, parent_fd=parent_fd)
     try:
         if info.st_size > limit:
             raise HandoffError(f"{path.name} exceeds {limit} byte limit")
@@ -96,15 +133,15 @@ def _read_capped(path: Path, *, limit: int = MAX_METADATA_BYTES) -> bytes:
     return value
 
 
-def _sha256(path: Path) -> tuple[str, int]:
-    digest, size, _ = _sha256_facts(path)
+def _sha256(path: Path, *, parent_fd: int | None = None) -> tuple[str, int]:
+    digest, size, _ = _sha256_facts(path, parent_fd=parent_fd)
     return digest, size
 
 
-def _sha256_facts(path: Path) -> tuple[str, int, int]:
+def _sha256_facts(path: Path, *, parent_fd: int | None = None) -> tuple[str, int, int]:
     digest = hashlib.sha256()
     size = 0
-    fd, info = _open_regular(path)
+    fd, info = _open_regular(path, parent_fd=parent_fd)
     try:
         while chunk := os.read(fd, CHUNK_BYTES):
             digest.update(chunk)
@@ -120,9 +157,9 @@ def _canonical_json(value: object) -> bytes:
     ).encode()
 
 
-def _load_json(path: Path) -> dict[str, object]:
+def _load_json(path: Path, *, parent_fd: int | None = None) -> dict[str, object]:
     try:
-        value = json.loads(_read_capped(path))
+        value = json.loads(_read_capped(path, parent_fd=parent_fd))
     except json.JSONDecodeError as error:
         raise HandoffError(f"invalid JSON: {path.name}") from error
     if not isinstance(value, dict):
@@ -130,9 +167,9 @@ def _load_json(path: Path) -> dict[str, object]:
     return value
 
 
-def _parse_sums(path: Path) -> dict[str, str]:
+def _parse_sums(path: Path, *, parent_fd: int | None = None) -> dict[str, str]:
     try:
-        lines = _read_capped(path).decode("ascii").splitlines()
+        lines = _read_capped(path, parent_fd=parent_fd).decode("ascii").splitlines()
     except UnicodeDecodeError as error:
         raise HandoffError("SHA256SUMS must be ASCII") from error
     sums: dict[str, str] = {}
@@ -153,10 +190,15 @@ def _parse_sums(path: Path) -> dict[str, str]:
     return sums
 
 
-def _verify_source(source: Path, *, allow_extra: bool = False) -> list[dict[str, object]]:
-    if not source.is_dir() or source.is_symlink():
-        raise HandoffError("source must be a real directory")
-    names = {path.name for path in source.iterdir()}
+def _verify_source(
+    source: Path, *, allow_extra: bool = False, directory_fd: int | None = None
+) -> list[dict[str, object]]:
+    if directory_fd is None:
+        if not source.is_dir() or source.is_symlink():
+            raise HandoffError("source must be a real directory")
+        names = {path.name for path in source.iterdir()}
+    else:
+        names = set(os.listdir(directory_fd))
     if not _SOURCE_FILES.issubset(names) or (not allow_extra and names != _SOURCE_FILES):
         raise HandoffError("source must contain exactly the required regular files")
     if allow_extra:
@@ -164,202 +206,25 @@ def _verify_source(source: Path, *, allow_extra: bool = False) -> list[dict[str,
         if any(name != _SEAL_MANIFEST_FILE and not _valid_wheel_name(name) for name in extras):
             raise HandoffError("source contains an unexpected extra file")
         for name in extras:
-            _regular_file(source / name)
-    checksums = _parse_sums(source / "SHA256SUMS")
+            _sha256_facts(source / name, parent_fd=directory_fd)
+    checksums = _parse_sums(source / "SHA256SUMS", parent_fd=directory_fd)
     files: list[dict[str, object]] = []
     for name in sorted(_SOURCE_FILES):
         path = source / name
-        digest, size, mode = _sha256_facts(path)
+        digest, size, mode = _sha256_facts(path, parent_fd=directory_fd)
         if name in checksums and checksums[name] != digest:
             raise HandoffError(f"checksum mismatch for {name}")
         files.append({"name": name, "sha256": digest, "size": size, "mode": mode})
     return files
 
 
-def verify_data_only_bundle(bundle: Path, *, allow_extra: bool = False) -> dict[str, object]:
+def verify_data_only_bundle(
+    bundle: Path, *, allow_extra: bool = False, directory_fd: int | None = None
+) -> dict[str, object]:
     """Validate a fresh local bundle before restore or sealing."""
-    _verify_source(bundle, allow_extra=allow_extra)
-    metadata = _load_json(bundle / "manifest.json")
-    from genereview_link.corpus.bundle import BundleManifest
+    from genereview_link.corpus.bundle_verifier import verify_data_only_bundle_impl
 
-    expected = BundleManifest()
-    stable = set(expected.__dataclass_fields__) - {"created_at", "checksums"}
-    if set(metadata) != stable | {"checksums"}:
-        raise HandoffError("manifest.json has missing, extra, or volatile fields")
-    for name in stable:
-        if type(metadata[name]) is not type(getattr(expected, name)):
-            raise HandoffError(f"manifest.json field has invalid type: {name}")
-    if (
-        metadata["manifest_version"] != "3"
-        or metadata["bundle_format"] != "postgresql-custom-data-only"
-    ):
-        raise HandoffError("manifest.json is not a v3 data-only bundle")
-    app_git_sha = metadata.get("app_git_sha")
-    if not (
-        isinstance(app_git_sha, str)
-        and len(app_git_sha) in {40, 64}
-        and all(char in "0123456789abcdef" for char in app_git_sha)
-    ):
-        raise HandoffError("manifest.json application Git revision is incomplete")
-    app_version = metadata.get("app_version")
-    if not (
-        isinstance(app_version, str)
-        and app_version
-        and metadata.get("genereview_link_version") == app_version
-    ):
-        raise HandoffError("manifest.json application version identity is incomplete")
-    source_sha256 = metadata.get("tarball_source_sha256")
-    if not (
-        isinstance(source_sha256, str)
-        and len(source_sha256) == 64
-        and all(char in "0123456789abcdef" for char in source_sha256)
-    ):
-        raise HandoffError("manifest.json tarball_source_sha256 must be a lowercase SHA-256")
-    embedding = metadata.get("embedding")
-    if not isinstance(embedding, dict) or set(embedding) != {
-        "model_name",
-        "dimension",
-        "distance_metric",
-        "active_table",
-        "count",
-        "expected_count",
-    }:
-        raise HandoffError("manifest.json embedding identity is incomplete")
-    if any(
-        type(embedding[name]) is not expected_type
-        for name, expected_type in {
-            "model_name": str,
-            "dimension": int,
-            "distance_metric": str,
-            "active_table": str,
-            "count": int,
-            "expected_count": int,
-        }.items()
-    ):
-        raise HandoffError("manifest.json embedding identity has invalid types")
-    if (
-        embedding["count"] != metadata["passage_count"]
-        or embedding["expected_count"] != metadata["passage_count"]
-    ):
-        raise HandoffError("manifest.json embedding count does not match passage_count")
-    hnsw = metadata.get("hnsw")
-    if not (
-        isinstance(hnsw, dict)
-        and set(hnsw) == {"index_name", "exists"}
-        and hnsw.get("index_name") == "genereview_embeddings_bge384_hnsw_cosine"
-        and hnsw.get("exists") is True
-    ):
-        raise HandoffError("manifest.json lacks the validated HNSW identity")
-    migrations = metadata.get("schema_migrations")
-    if not (
-        isinstance(migrations, dict)
-        and set(migrations) == {"control", "data"}
-        and all(
-            isinstance(values, list)
-            and values
-            and all(isinstance(value, str) and value for value in values)
-            and len(values) == len(set(values))
-            for values in migrations.values()
-        )
-    ):
-        raise HandoffError("manifest.json schema migration identity is incomplete")
-    from genereview_link.corpus.bundle_validation import (
-        EXPECTED_CONTROL_MIGRATIONS,
-        EXPECTED_DATA_MIGRATIONS,
-    )
-
-    if (
-        set(migrations["control"]) != EXPECTED_CONTROL_MIGRATIONS
-        or set(migrations["data"]) != EXPECTED_DATA_MIGRATIONS
-    ):
-        raise HandoffError("manifest.json schema migrations do not match reviewed migrations")
-    migration_digests = metadata.get("migration_file_sha256")
-    from genereview_link.corpus.bundle import _reviewed_migration_digests
-
-    expected_migration_digests = _reviewed_migration_digests()
-    if migration_digests != expected_migration_digests:
-        raise HandoffError("manifest.json migration file digests do not match reviewed SQL")
-    postgres = metadata.get("postgres")
-    if not (
-        isinstance(postgres, dict)
-        and set(postgres) == {"major_version", "pgvector_version"}
-        and all(isinstance(postgres[name], str) and postgres[name] for name in postgres)
-    ):
-        raise HandoffError("manifest.json PostgreSQL identity is incomplete")
-    if postgres != {"major_version": "18", "pgvector_version": "0.8.2"}:
-        raise HandoffError("manifest.json PostgreSQL identity does not match reviewed runtime")
-    from genereview_link.corpus.source_identity import validate_source_identity
-
-    try:
-        validate_source_identity(
-            metadata.get("source"),
-            tarball_sha256=source_sha256,
-            last_updated=str(metadata.get("tarball_last_updated")),
-        )
-    except ValueError as error:
-        raise HandoffError("manifest.json upstream source identity is incomplete") from error
-    validation = metadata.get("validation")
-    if not isinstance(validation, dict) or validation.get("status") != "passed":
-        raise HandoffError("manifest.json lacks a passing candidate validation")
-    evaluation = metadata.get("evaluation")
-    if not isinstance(evaluation, dict) or set(evaluation) != {
-        "status",
-        "suite",
-        "suite_sha256",
-        "model_name",
-        "results",
-        "result_sha256",
-    }:
-        raise HandoffError("manifest.json lacks exact evaluation evidence")
-    if (
-        evaluation["status"] != "passed"
-        or evaluation["suite"] != "tests/eval/genereviews_queries.jsonl"
-        or evaluation["model_name"] != "BAAI/bge-small-en-v1.5"
-        or not isinstance(evaluation["suite_sha256"], str)
-        or not re.fullmatch(r"[0-9a-f]{64}", evaluation["suite_sha256"])
-        or not isinstance(evaluation["result_sha256"], str)
-        or not re.fullmatch(r"[0-9a-f]{64}", evaluation["result_sha256"])
-        or not isinstance(evaluation["results"], dict)
-        or set(evaluation["results"]) != {"mrr_at_10", "section_precision_at_5", "queries_run"}
-        or type(evaluation["results"]["queries_run"]) is not int
-        or evaluation["results"]["queries_run"] <= 0
-        or any(
-            type(evaluation["results"][name]) not in {int, float}
-            or not math.isfinite(evaluation["results"][name])
-            or not 0 <= evaluation["results"][name] <= 1
-            for name in ("mrr_at_10", "section_precision_at_5")
-        )
-    ):
-        raise HandoffError("manifest.json evaluation evidence is invalid")
-    if (
-        hashlib.sha256(_canonical_json(evaluation["results"])).hexdigest()
-        != evaluation["result_sha256"]
-    ):
-        raise HandoffError("manifest.json evaluation result digest mismatch")
-    from genereview_link.corpus.source_identity import validate_release_id
-
-    try:
-        validate_release_id(str(metadata["corpus_release_id"]))
-    except ValueError as error:
-        raise HandoffError("manifest.json corpus_release_id is invalid") from error
-    updated = metadata.get("tarball_last_updated")
-    release_id = str(metadata["corpus_release_id"])
-    if (
-        not isinstance(updated, str)
-        or len(updated) < 10
-        or release_id[:10] != updated[:10]
-        or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", updated[:10])
-    ):
-        raise HandoffError(
-            "manifest.json corpus_release_id date must match upstream last_updated date"
-        )
-    checksums = metadata["checksums"]
-    if not isinstance(checksums, dict) or set(checksums) != {"corpus.dump"}:
-        raise HandoffError("manifest.json checksums must cover exactly corpus.dump")
-    digest, _ = _sha256(bundle / "corpus.dump")
-    if checksums["corpus.dump"] != digest:
-        raise HandoffError("manifest checksum mismatch for corpus.dump")
-    return metadata
+    return verify_data_only_bundle_impl(bundle, allow_extra=allow_extra, directory_fd=directory_fd)
 
 
 def _publisher_wheel(publisher_tool: Path) -> tuple[Path, str, int, int]:
@@ -388,13 +253,17 @@ def _assert_handoff_root(handoff_root: Path) -> None:
     if not handoff_root.is_absolute():
         raise HandoffError("handoff root must be an absolute durable path")
     resolved = handoff_root.resolve()
-    checkout = Path.cwd().resolve()
+    repository = Path(__file__).resolve().parents[2]
     serving = os.getenv("GENEREVIEW_SERVING_ROOT")
-    if resolved == checkout or checkout in resolved.parents:
-        raise HandoffError("handoff root must be outside the checkout")
+    if resolved == repository or repository in resolved.parents or resolved in repository.parents:
+        raise HandoffError("handoff root must not overlap the repository root")
     if serving:
         serving_path = Path(serving).resolve()
-        if resolved == serving_path or serving_path in resolved.parents:
+        if (
+            resolved == serving_path
+            or serving_path in resolved.parents
+            or resolved in serving_path.parents
+        ):
             raise HandoffError("handoff root must be outside serving volumes")
     try:
         info = handoff_root.lstat()
@@ -406,10 +275,58 @@ def _assert_handoff_root(handoff_root: Path) -> None:
         raise HandoffError("handoff root must be owner-only mode 0700")
 
 
+def _assert_local_archive(dump: Path, *, parent_fd: int) -> None:
+    from genereview_link.db.restore import (
+        ArchivePolicyError,
+        assert_data_only_archive,
+        read_archive_entries,
+    )
+
+    archive_fd, _ = _open_regular(dump, parent_fd=parent_fd)
+    try:
+        assert_data_only_archive(read_archive_entries(dump, file_descriptor=archive_fd))
+    except ArchivePolicyError as error:
+        raise HandoffError(f"corpus.dump archive policy failed: {error}") from error
+    finally:
+        os.close(archive_fd)
+
+
+def _rename_noreplace(source: Path, target: Path) -> None:
+    """Atomically publish a directory without ever replacing an existing target."""
+    libc = CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        raise HandoffError("atomic no-replace rename is unavailable on this platform")
+    source_parent = _open_directory(source.parent)
+    target_parent = _open_directory(target.parent)
+    try:
+        result = renameat2(
+            source_parent,
+            os.fsencode(source.name),
+            target_parent,
+            os.fsencode(target.name),
+            1,  # RENAME_NOREPLACE
+        )
+    finally:
+        os.close(source_parent)
+        os.close(target_parent)
+    if result == 0:
+        return
+    error = get_errno()
+    if error == EEXIST:
+        raise FileExistsError(target)
+    if error == ENOSYS:
+        raise HandoffError("atomic no-replace rename is unavailable on this platform")
+    raise OSError(error, os.strerror(error), target)
+
+
 def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> SealedHandoff:
     """Verify and atomically seal one exact data-only bundle without publishing."""
-    source_files = _verify_source(source)
-    source_manifest = verify_data_only_bundle(source)
+    source_directory_fd = _open_directory(source)
+    source_descriptors = _FDGuard(source_directory_fd)
+    _assert_local_archive(source / "corpus.dump", parent_fd=source_directory_fd)
+    source_files = _verify_source(source, directory_fd=source_directory_fd)
+    source_manifest = verify_data_only_bundle(source, directory_fd=source_directory_fd)
     files = [
         {"name": entry["name"], "sha256": entry["sha256"], "size": entry["size"], "mode": 0o400}
         for entry in source_files
@@ -442,7 +359,11 @@ def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> S
             entry["name"]: entry for entry in files if entry["name"] in _SOURCE_FILES
         }
         for name in sorted(_SOURCE_FILES):
-            _copy_regular(source / name, staging / name)
+            _copy_regular(
+                source / name,
+                staging / name,
+                source_parent_fd=source_directory_fd,
+            )
             copied_digest, copied_size, _ = _sha256_facts(staging / name)
             if (
                 copied_digest != expected_source[name]["sha256"]
@@ -461,13 +382,21 @@ def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> S
             os.fsync(file.fileno())
         for path in staging.iterdir():
             path.chmod(0o400)
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
         staging.chmod(0o500)
         staging_fd = os.open(staging, os.O_RDONLY)
         try:
             os.fsync(staging_fd)
         finally:
             os.close(staging_fd)
-        os.replace(staging, target)
+        try:
+            _rename_noreplace(staging, target)
+        except FileExistsError as error:
+            raise HandoffError(f"handoff object already exists: {object_id}") from error
         root_fd = os.open(handoff_root, os.O_RDONLY)
         try:
             os.fsync(root_fd)
@@ -475,10 +404,13 @@ def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> S
             os.close(root_fd)
     except BaseException:
         if staging.exists():
+            staging.chmod(0o700)
             for path in staging.iterdir():
+                path.chmod(0o600)
                 path.unlink()
             staging.rmdir()
         raise
+    source_descriptors.close()
     return SealedHandoff(object_id=object_id, path=target, manifest=target / "seal-manifest.json")
 
 
@@ -487,20 +419,30 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
         raise HandoffError("object_id must be a lowercase SHA-256")
     _assert_handoff_root(handoff_root)
     target = handoff_root / object_id
-    if not target.is_dir() or target.is_symlink():
-        raise HandoffError("sealed handoff object is missing or unsafe")
-    target_info = target.lstat()
+    root_fd = _open_directory(handoff_root)
+    try:
+        target_fd = os.open(
+            object_id,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+            dir_fd=root_fd,
+        )
+    except OSError as error:
+        os.close(root_fd)
+        raise HandoffError("sealed handoff object is missing or unsafe") from error
+    descriptors = _FDGuard(root_fd, target_fd)
+    target_info = os.fstat(target_fd)
     if target_info.st_uid != os.geteuid() or stat.S_IMODE(target_info.st_mode) != 0o500:
         raise HandoffError("sealed handoff object must be owned by the invoking user and mode 0500")
     manifest = target / "seal-manifest.json"
-    _, _, manifest_mode = _sha256_facts(manifest)
-    manifest_info = manifest.lstat()
+    _, _, manifest_mode = _sha256_facts(manifest, parent_fd=target_fd)
+    manifest_fd, manifest_info = _open_regular(manifest, parent_fd=target_fd)
+    os.close(manifest_fd)
     if manifest_info.st_uid != os.geteuid() or manifest_mode != 0o400:
         raise HandoffError("sealed seal-manifest.json must be owner-read-only mode 0400")
-    manifest_bytes = _read_capped(manifest)
+    manifest_bytes = _read_capped(manifest, parent_fd=target_fd)
     if hashlib.sha256(manifest_bytes).hexdigest() != object_id:
         raise HandoffError("sealed handoff object ID does not match its manifest")
-    record = _load_json(manifest)
+    record = _load_json(manifest, parent_fd=target_fd)
     if (
         record.get("format") != "genereviews-local-handoff-v1"
         or not isinstance(record.get("corpus_release_id"), str)
@@ -536,9 +478,7 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
         != _SOURCE_FILES | publisher_names
     ):
         raise HandoffError("seal manifest has an incomplete file list")
-    if {path.name for path in target.iterdir()} != _SOURCE_FILES | publisher_names | {
-        "seal-manifest.json"
-    }:
+    if set(os.listdir(target_fd)) != _SOURCE_FILES | publisher_names | {"seal-manifest.json"}:
         raise HandoffError("sealed handoff object has unexpected files")
     expected = {entry["name"]: entry for entry in files if isinstance(entry, dict)}
     if len(expected) != len(files):
@@ -555,8 +495,9 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
         ):
             raise HandoffError("seal manifest file entry has invalid digest, size, or mode")
         path = target / name
-        digest, size, mode = _sha256_facts(path)
-        info = path.lstat()
+        digest, size, mode = _sha256_facts(path, parent_fd=target_fd)
+        file_fd, info = _open_regular(path, parent_fd=target_fd)
+        os.close(file_fd)
         if info.st_uid != os.geteuid() or mode != 0o400:
             raise HandoffError(f"sealed {name} must be owned by the invoking user and mode 0400")
         if entry["sha256"] != digest or entry["size"] != size:
@@ -566,17 +507,18 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
             raise HandoffError("sealed corpus.dump does not match source/artifact identity")
     if publisher["sha256"] != expected[publisher_name]["sha256"]:
         raise HandoffError("sealed publisher wheel does not match seal manifest")
-    checksums = _parse_sums(target / "SHA256SUMS")
+    checksums = _parse_sums(target / "SHA256SUMS", parent_fd=target_fd)
     for name, digest in checksums.items():
-        actual, _ = _sha256(target / name)
+        actual, _ = _sha256(target / name, parent_fd=target_fd)
         if actual != digest:
             raise HandoffError(f"checksum mismatch for {name}")
-    embedded = verify_data_only_bundle(target, allow_extra=True)
+    embedded = verify_data_only_bundle(target, allow_extra=True, directory_fd=target_fd)
     if (
         record["source_sha256"] != embedded["tarball_source_sha256"]
         or record["corpus_release_id"] != embedded["corpus_release_id"]
     ):
         raise HandoffError("sealed source/release identity does not match embedded manifest")
+    descriptors.close()
     return SealedHandoff(object_id=object_id, path=target, manifest=manifest)
 
 

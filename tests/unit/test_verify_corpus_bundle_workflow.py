@@ -45,3 +45,9 @@ def test_verifier_uses_exact_assets_and_rebuilds_schema_before_restore() -> None
     assert '-v EXPECTED_CHAPTER_COUNT="$EXPECTED_CHAPTER_COUNT"' in scripts
     assert '-v EXPECTED_PASSAGE_COUNT="$EXPECTED_PASSAGE_COUNT"' in scripts
     assert '-v EXPECTED_EMBEDDING_COUNT="$EXPECTED_EMBEDDING_COUNT"' in scripts
+    assert "pg_restore" in scripts and '"$RESTORE_DATABASE_URL"' in scripts
+    assert 'test "$(jq -er .target_commit "$RELEASE_IDENTITY")" = "$EXPECTED_APP_SHA"' in scripts
+    assert "active_source_identity" in scripts
+    assert "model_revision" in scripts
+    assert "side_data" in scripts
+    assert "corpus-publication-verification" in str(verify["steps"])

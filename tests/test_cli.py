@@ -117,6 +117,18 @@ class TestBundleCommands:
         assert "--repo" not in flags
         assert "--draft" not in flags
 
+    def test_bundle_build_describes_directory_checksum_contents(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        built = Path("genereview-corpus-data-2026-08-30-r1")
+        monkeypatch.setattr(cli, "_build_bundle", lambda **_kwargs: built)
+
+        result = runner.invoke(app, ["bundle", "build", "--release-id", "2026-08-30-r1"])
+
+        assert result.exit_code == 0, result.output
+        assert "SHA256SUMS" in result.output
+        assert ".sha256" not in result.output
+
     def test_bundle_publish_local_only_runs_the_local_packager(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

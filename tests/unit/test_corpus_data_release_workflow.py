@@ -29,6 +29,10 @@ def test_data_release_build_is_data_only_and_unprivileged() -> None:
     assert "@sha256:" in service["image"]
     steps = build["steps"]
     scripts = "\n".join(str(step.get("run", "")) for step in steps)
+    assert "uv sync --group dev --extra cpu --frozen" in scripts
+    assert "BGE_MODEL_REVISION" in scripts
+    assert "model.safetensors" in scripts
+    assert "HF_HUB_OFFLINE=1" in scripts
     assert "--data-only" in scripts
     assert "--no-owner" in scripts
     assert "--no-privileges" in scripts
@@ -53,7 +57,7 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     assert isinstance(publish, dict)
     assert publish["timeout-minutes"] == 90
     assert publish["permissions"] == {
-        "actions": "read",
+        "actions": "write",
         "contents": "write",
         "id-token": "write",
         "attestations": "write",
@@ -62,13 +66,15 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     steps = publish["steps"]
     assert any(str(step.get("uses", "")).startswith("actions/checkout@") for step in steps)
     scripts = "\n".join(str(step.get("run", "")) for step in steps)
-    assert "GENEREVIEWS_RIGHTS_RECORD_JSON" in scripts
+    assert "GENEREVIEWS_RIGHTS_BUNDLE_BASE64" in scripts
+    assert "rights-evidence" in scripts
+    assert "terms-snapshot" in scripts
     assert "publish-handoff" in scripts
     assert "verify_handoff" in scripts
     assert "gh attestation verify" in scripts
     assert "attest=" not in scripts
     assert "semantic" in scripts.lower()
-    assert "corpus_restore" in scripts
+    assert "genereview_restore" in scripts
     assert "HTTP 404" in scripts
     assert "repos/$GH_REPO/immutable-releases" in scripts
     assert "jq -e '.enabled == true'" in scripts
@@ -89,15 +95,22 @@ def test_data_release_publisher_accepts_only_sealed_rights_bound_handoff() -> No
     build_scripts = "\n".join(str(step.get("run", "")) for step in build["steps"])
     assert "pip download" not in build_scripts
     assert "PUBLISHER_ENV" in scripts
+    assert "python3 -I" in scripts
+    assert "sys.path.insert(0" in scripts
+    assert "module_file" in scripts
+    assert "PYTHONPATH=" not in scripts
+    assert (
+        "retention-days: 90" not in (ROOT / ".github/workflows/corpus-data-release.yml").read_text()
+    )
 
 
 def test_publisher_uses_protected_secret_not_repository_variable() -> None:
     workflow = _workflow()
     publish = workflow["jobs"]["publish"]
     assert isinstance(publish, dict)
-    text = str(publish.get("env", {}).get("GENEREVIEWS_RIGHTS_RECORD_JSON", ""))
-    assert text == "${{ secrets.GENEREVIEWS_RIGHTS_RECORD_JSON }}"
-    assert "vars.GENEREVIEWS_RIGHTS_RECORD_JSON" not in str(publish)
+    text = str(publish.get("env", {}).get("GENEREVIEWS_RIGHTS_BUNDLE_BASE64", ""))
+    assert text == "${{ secrets.GENEREVIEWS_RIGHTS_BUNDLE_BASE64 }}"
+    assert "vars.GENEREVIEWS_RIGHTS_BUNDLE_BASE64" not in str(publish)
 
 
 def test_each_promotion_path_uses_exact_release_and_tag_identities() -> None:
@@ -120,6 +133,23 @@ def test_each_promotion_path_uses_exact_release_and_tag_identities() -> None:
     assert script.count("verify_remote") >= 3
     assert "require_exact_tag" in script
     assert "published_noop: exact immutable release verified" in script
+    assert "If-Match: $verified_etag" in script
+    assert "If-None-Match: $verified_etag" in script
+    assert "precondition" in script.lower()
+    assert "post-publication" in script.lower()
+    assert "verify-corpus-bundle.yml" in script
+    assert "corpus-publication-verification" in script
+
+
+def test_release_suffix_selection_is_identity_aware_and_exhaustive() -> None:
+    workflow = _workflow()
+    scripts = "\n".join(str(step.get("run", "")) for step in workflow["jobs"]["build"]["steps"])
+    assert "git/matching-refs/tags/corpus-data-" in scripts
+    assert "source identity" in scripts.lower()
+    assert "published_noop" in scripts
+    assert "first_free_release_id" in scripts
+    assert "rights-record.json" in scripts
+    assert "existing rights record is not the exact candidate identity" in scripts
 
 
 def test_dispatch_validation_cannot_skip_malformed_input_combinations() -> None:

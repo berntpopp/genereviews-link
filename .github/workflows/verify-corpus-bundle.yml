@@ -1,10 +1,28 @@
 name: Verify data-only corpus bundle
 
+run-name: Verify corpus release ${{ inputs.release_id }} (${{ inputs.publication_nonce }})
+
 on:
   workflow_dispatch:
     inputs:
       release_tag:
         description: Immutable release tag containing the exact data-only assets
+        required: true
+        type: string
+      release_id:
+        description: Exact numeric GitHub release database ID
+        required: true
+        type: string
+      target_commit:
+        description: Exact trusted release target commit
+        required: true
+        type: string
+      assets_sha256:
+        description: SHA-256 of canonical API asset ID/size/digest identity
+        required: true
+        type: string
+      publication_nonce:
+        description: Unique binding for the publisher waiting on this exact run
         required: true
         type: string
 
@@ -34,7 +52,11 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgresql://genereview:ci@localhost:5432/genereview
-      RESTORE_DATABASE_URL: postgresql://corpus_restore:restore@localhost:5432/genereview
+      RESTORE_DATABASE_URL: postgresql://genereview_restore:restore@localhost:5432/genereview
+      EXPECTED_RELEASE_ID: ${{ inputs.release_id }}
+      EXPECTED_RELEASE_TAG: ${{ inputs.release_tag }}
+      EXPECTED_TARGET_COMMIT: ${{ inputs.target_commit }}
+      EXPECTED_ASSETS_SHA256: ${{ inputs.assets_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,8 +73,10 @@ jobs:
           set -euo pipefail
           umask 077
           verify_dir="$(mktemp -d "$RUNNER_TEMP/verify.XXXXXX")"
+          release_identity="$RUNNER_TEMP/release-identity.json"
           uv run python -m genereview_link.corpus.release_assets \
-            --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" --dest "$verify_dir"
+            --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" --dest "$verify_dir" \
+            --identity-out "$release_identity"
           uv run python - "$verify_dir/corpus.dump" <<'PY'
           from pathlib import Path
           from genereview_link.db.restore import assert_data_only_archive, read_archive_entries
@@ -64,10 +88,16 @@ jobs:
           verify_data_only_bundle(Path(__import__('sys').argv[1]))
           PY
           source_revision="$(jq -er '.app_git_sha | select(test("^[0-9a-f]{40,64}$"))' "$verify_dir/manifest.json")"
+          test "$source_revision" = "$EXPECTED_TARGET_COMMIT"
+          test "$(jq -er .release_id "$release_identity")" = "$EXPECTED_RELEASE_ID"
+          test "$(jq -er .target_commit "$release_identity")" = "$source_revision"
+          assets_sha256="$(jq -c '[.assets[] | {id:.asset_id,name,size,digest}] | sort_by(.name)' "$release_identity" | sha256sum | cut -d' ' -f1)"
+          test "$assets_sha256" = "$EXPECTED_ASSETS_SHA256"
           gh attestation verify "$verify_dir/corpus.dump" --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/corpus-data-release.yml" \
             --source-ref refs/heads/main --source-digest "$source_revision"
           printf 'VERIFY_DIR=%s\n' "$verify_dir" >> "$GITHUB_ENV"
+          printf 'RELEASE_IDENTITY=%s\n' "$release_identity" >> "$GITHUB_ENV"
       - name: Apply reviewed migrations before restoring data
         run: genereview-link db migrate
       - name: Create exact restricted restore role
@@ -89,7 +119,12 @@ jobs:
       - name: Restore the data-only archive with transactional fail-closed flags
         run: |
           set -euo pipefail
-          pg_restore --data-only --no-owner --no-privileges --single-transaction --exit-on-error -d "$DATABASE_URL" "$VERIFY_DIR/corpus.dump"
+          pg_restore --data-only --no-owner --no-privileges --single-transaction --exit-on-error -d "$RESTORE_DATABASE_URL" "$VERIFY_DIR/corpus.dump"
+          for table in genereview.genereview_chapters genereview.genereview_passages genereview.genereview_embeddings_bge384 public.genereview_corpus_version; do
+            test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select has_table_privilege('genereview_restore', '$table', 'INSERT')")" = t
+            test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select has_table_privilege('genereview_restore', '$table', 'UPDATE,DELETE,TRUNCATE,TRIGGER')")" = f
+          done
+          test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select rolsuper or rolcreatedb or rolcreaterole or rolreplication or rolbypassrls from pg_roles where rolname='genereview_restore'")" = f
       - name: Rebuild HNSW from reviewed code after data-only restore
         run: genereview-link embed --index-only
       - name: Verify exact manifest counts, HNSW, and representative search fixtures
@@ -108,7 +143,8 @@ jobs:
                   print(f"MIGRATION_{namespace}_{version.replace(':', '_')}=1")
           PY
           )"
-          test "$(jq -er '.app_git_sha' "$VERIFY_DIR/manifest.json")" = "$GITHUB_SHA"
+          EXPECTED_APP_SHA="$(jq -er '.app_git_sha' "$VERIFY_DIR/manifest.json")"
+          test "$(jq -er .target_commit "$RELEASE_IDENTITY")" = "$EXPECTED_APP_SHA"
           uv run python - "$VERIFY_DIR/manifest.json" <<'PY'
           import json, sys
           from genereview_link.corpus.bundle import _reviewed_migration_digests
@@ -126,9 +162,12 @@ jobs:
             namespace="${migration%%:*}"
             version="${migration#*:}"
             if test "$namespace" = "$version"; then version="$namespace"; namespace=control; fi
-            test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 \
-              -v n="$namespace" -v v="$version" -c \
-              "select count(*) from public.schema_migrations where namespace = :'n' and version = :'v'")" = 1
+            migration_count="$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 \
+              -v n="$namespace" -v v="$version" <<'SQL'
+          select count(*) from public.schema_migrations where namespace = :'n' and version = :'v';
+          SQL
+            )"
+            test "$migration_count" = 1
           done < <(jq -r '.schema_migrations | to_entries[] | .key as $namespace | .value[] | ($namespace + ":" + .)' "$VERIFY_DIR/manifest.json")
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
             -v EXPECTED_CHAPTER_COUNT="$EXPECTED_CHAPTER_COUNT" \
@@ -167,3 +206,34 @@ jobs:
           \quit 1
           \endif
           SQL
+          psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "
+            select jsonb_build_object(
+              'listing_relpath', listing_relpath,
+              'last_updated', file_list_etag,
+              'tarball', jsonb_build_object('sha256', tarball_sha256, 'size_bytes', tarball_size_bytes),
+              'side_data', jsonb_build_object(
+                'GRtitle_shortname_NBKid.txt', jsonb_build_object('sha256', sidedata_title_sha256, 'size_bytes', sidedata_title_size_bytes),
+                'NBKid_shortname_genesymbol.txt', jsonb_build_object('sha256', sidedata_genes_sha256, 'size_bytes', sidedata_genes_size_bytes),
+                'NBKid_shortname_OMIM.txt', jsonb_build_object('sha256', sidedata_omim_sha256, 'size_bytes', sidedata_omim_size_bytes)))
+            from public.genereview_corpus_version where is_active and ingest_status='completed'" \
+            > "$RUNNER_TEMP/active_source_identity.json"
+          jq -e --argjson expected "$(jq -c .source "$VERIFY_DIR/manifest.json")" '. == $expected' \
+            "$RUNNER_TEMP/active_source_identity.json" >/dev/null
+          model_revision="$(jq -er '.computation.model.revision' "$VERIFY_DIR/manifest.json")"
+          test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select count(distinct model_revision)=1 and min(model_revision)='$model_revision' from genereview.genereview_embeddings_bge384")" = t
+          test "$(sha256sum uv.lock | cut -d' ' -f1)" = "$(jq -er '.computation.uv_lock_sha256' "$VERIFY_DIR/manifest.json")"
+          DATABASE_URL="$DATABASE_URL" uv run python tests/eval/run_eval.py --output "$RUNNER_TEMP/restored-evaluation.json"
+          jq -e --argjson expected "$(jq -c '.evaluation.results' "$VERIFY_DIR/manifest.json")" \
+            '.results == $expected' "$RUNNER_TEMP/restored-evaluation.json" >/dev/null
+          printf '{"release_id":%s,"tag":%s,"target_commit":%s,"assets_sha256":%s,"status":"passed"}\n' \
+            "$EXPECTED_RELEASE_ID" \
+            "$(jq -Rn --arg value "$EXPECTED_RELEASE_TAG" '$value')" \
+            "$(jq -Rn --arg value "$EXPECTED_TARGET_COMMIT" '$value')" \
+            "$(jq -Rn --arg value "$EXPECTED_ASSETS_SHA256" '$value')" \
+            > "$RUNNER_TEMP/publication-verification.json"
+      - name: Upload exact post-publication acceptance evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: corpus-publication-verification-${{ inputs.release_id }}
+          path: ${{ runner.temp }}/publication-verification.json
+          if-no-files-found: error

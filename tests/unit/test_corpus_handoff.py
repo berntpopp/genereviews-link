@@ -20,6 +20,12 @@ from genereview_link.corpus.handoff import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _valid_postgres_archive_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Most handoff tests isolate sealing; archive-policy tests own pg_restore coverage."""
+    monkeypatch.setattr(handoff, "_assert_local_archive", lambda _path, *, parent_fd: None)
+
+
 def _source(tmp_path: Path) -> Path:
     work = tmp_path / "work"
     work.mkdir()
@@ -34,8 +40,10 @@ def _source(tmp_path: Path) -> Path:
 def _write_rights(path: Path, record: dict[str, object], tmp_path: Path) -> None:
     evidence = tmp_path / "rights-evidence.json"
     evidence.write_text('{"decision":"affirmative"}\n')
-    record.setdefault("terms_uri", "https://example.org/terms/2026-08")
-    record.setdefault("terms_sha256", "b" * 64)
+    terms = tmp_path / "terms-snapshot.html"
+    terms.write_text("<html>reviewed terms 2026-08</html>\n")
+    record["terms_uri"] = str(terms)
+    record["terms_sha256"] = hashlib.sha256(terms.read_bytes()).hexdigest()
     record["evidence_uri"] = str(evidence)
     record["evidence_sha256"] = hashlib.sha256(evidence.read_bytes()).hexdigest()
     unsigned = dict(record)
@@ -58,7 +66,7 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
         "section_precision_at_5": 0.4,
         "queries_run": 5,
     }
-    return BundleManifest(
+    manifest = BundleManifest(
         corpus_release_id=release_id,
         corpus_version="2026-08-30-r3",
         tarball_source_sha256="a" * 64,
@@ -114,6 +122,33 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
             "suite": "tests/eval/genereviews_queries.jsonl",
             "suite_sha256": "e" * 64,
             "model_name": "BAAI/bge-small-en-v1.5",
+            "corpus_identity": {
+                "corpus_version": "2026-08-30-r3",
+                "source": {
+                    "listing_relpath": "ca/84/gene_NBK1116.tar.gz",
+                    "last_updated": "2026-08-30 02:41:04",
+                    "tarball": {"sha256": "a" * 64, "size_bytes": 123},
+                    "side_data": {
+                        "GRtitle_shortname_NBKid.txt": {
+                            "sha256": "b" * 64,
+                            "size_bytes": 10,
+                        },
+                        "NBKid_shortname_genesymbol.txt": {
+                            "sha256": "c" * 64,
+                            "size_bytes": 11,
+                        },
+                        "NBKid_shortname_OMIM.txt": {
+                            "sha256": "d" * 64,
+                            "size_bytes": 12,
+                        },
+                    },
+                },
+                "chapter_count": 890,
+                "passage_count": 0,
+                "embedding_count": 0,
+            },
+            "export_snapshot": "00000003-0000001B-1",
+            "dump_sha256": hashlib.sha256(b"PGDMP-data").hexdigest(),
             "results": evaluation_results,
             "result_sha256": hashlib.sha256(
                 (
@@ -121,7 +156,38 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
                 ).encode()
             ).hexdigest(),
         },
+        computation={
+            "uv_lock_sha256": "f" * 64,
+            "model": {
+                "name": "BAAI/bge-small-en-v1.5",
+                "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+                "files": {
+                    "model.safetensors": "3c9f31665447c8911517620762200d2245a2518d6e7208acc78cd9db317e21ad"
+                },
+            },
+            "runtime": {
+                "python": "3.12.9",
+                "torch": "2.13.0+cpu",
+                "sentence_transformers": "5.1.2",
+                "transformers": "5.8.0",
+                "device": "cpu",
+            },
+            "determinism": {
+                "normalize_embeddings": True,
+                "python_seed": 0,
+                "numpy_seed": 0,
+                "torch_seed": 0,
+                "batch_size": 64,
+            },
+            "builder": {"source_sha": "b" * 40, "identity": "local:test"},
+            "embedding": {
+                "model_name": "BAAI/bge-small-en-v1.5",
+                "model_revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+                "table": "genereview_embeddings_bge384",
+            },
+        },
     )
+    return manifest
 
 
 def _publisher_tool(tmp_path: Path) -> Path:
@@ -166,12 +232,17 @@ def test_seal_rejects_a_source_file_changed_during_copy(
     original_copy = handoff._copy_regular
     changed = False
 
-    def change_then_copy(source_path: Path, destination: Path) -> None:
+    def change_then_copy(
+        source_path: Path,
+        destination: Path,
+        *,
+        source_parent_fd: int | None = None,
+    ) -> None:
         nonlocal changed
         if source_path == source / "corpus.dump" and not changed:
             changed = True
             source_path.write_bytes(b"PGDMP-attacker")
-        original_copy(source_path, destination)
+        original_copy(source_path, destination, source_parent_fd=source_parent_fd)
 
     monkeypatch.setattr(handoff, "_copy_regular", change_then_copy)
 
@@ -273,7 +344,11 @@ def test_capped_read_rejects_a_file_replaced_by_a_symlink_before_open(
     original_open = handoff.os.open
 
     def swap_then_open(path: Path, flags: int, *args: object, **kwargs: object) -> int:
-        if Path(path) == victim and not victim.is_symlink():
+        if (
+            Path(path) == Path(victim.name)
+            and kwargs.get("dir_fd") is not None
+            and not victim.is_symlink()
+        ):
             victim.unlink()
             victim.symlink_to(replacement)
         return original_open(path, flags, *args, **kwargs)
@@ -293,7 +368,11 @@ def test_digest_rejects_a_file_replaced_by_a_symlink_before_open(
     original_open = handoff.os.open
 
     def swap_then_open(path: Path, flags: int, *args: object, **kwargs: object) -> int:
-        if Path(path) == victim and not victim.is_symlink():
+        if (
+            Path(path) == Path(victim.name)
+            and kwargs.get("dir_fd") is not None
+            and not victim.is_symlink()
+        ):
             victim.unlink()
             victim.symlink_to(replacement)
         return original_open(path, flags, *args, **kwargs)
@@ -301,6 +380,60 @@ def test_digest_rejects_a_file_replaced_by_a_symlink_before_open(
     monkeypatch.setattr(handoff.os, "open", swap_then_open)
     with pytest.raises(HandoffError, match="unsafe"):
         handoff._sha256(victim)
+
+
+def test_digest_rejects_parent_directory_swap_before_openat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "parent"
+    replacement = tmp_path / "replacement-parent"
+    parent.mkdir()
+    replacement.mkdir()
+    (parent / "corpus.dump").write_bytes(b"safe")
+    (replacement / "corpus.dump").write_bytes(b"attacker")
+    original_open = handoff.os.open
+    swapped = False
+
+    def swap_parent(path: Path, flags: int, *args: object, **kwargs: object) -> int:
+        nonlocal swapped
+        if Path(path) == Path("parent") and not swapped:
+            swapped = True
+            parent.rename(tmp_path / "original-parent")
+            parent.symlink_to(replacement, target_is_directory=True)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(handoff.os, "open", swap_parent)
+
+    with pytest.raises(HandoffError, match="unsafe"):
+        handoff._sha256(parent / "corpus.dump")
+
+
+def test_digest_consumes_open_parent_descriptor_during_late_parent_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "parent"
+    replacement = tmp_path / "replacement-parent"
+    parent.mkdir()
+    replacement.mkdir()
+    (parent / "corpus.dump").write_bytes(b"safe")
+    (replacement / "corpus.dump").write_bytes(b"attacker")
+    original_open = handoff.os.open
+    swapped = False
+
+    def swap_after_parent_open(path: Path, flags: int, *args: object, **kwargs: object) -> int:
+        nonlocal swapped
+        if Path(path) == Path("corpus.dump") and kwargs.get("dir_fd") is not None and not swapped:
+            swapped = True
+            parent.rename(tmp_path / "original-parent")
+            parent.symlink_to(replacement, target_is_directory=True)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(handoff.os, "open", swap_after_parent_open)
+
+    digest, size = handoff._sha256(parent / "corpus.dump")
+
+    assert digest == hashlib.sha256(b"safe").hexdigest()
+    assert size == len(b"safe")
 
 
 def test_handoff_rejects_a_file_mode_changed_before_the_digest_open(
@@ -313,7 +446,7 @@ def test_handoff_rejects_a_file_mode_changed_before_the_digest_open(
     original_open = handoff.os.open
 
     def relax_then_open(path: Path, flags: int, *args: object, **kwargs: object) -> int:
-        if Path(path) == victim:
+        if Path(path) == Path(victim.name) and kwargs.get("dir_fd") is not None:
             victim.chmod(0o644)
         return original_open(path, flags, *args, **kwargs)
 
@@ -534,3 +667,103 @@ def test_rights_record_rejects_future_decision_and_relative_evidence(tmp_path: P
     rights.write_text(json.dumps(record))
     with pytest.raises(HandoffError, match="durable"):
         verify_rights_record(rights, sealed.object_id)
+
+
+def test_rights_record_rejects_changed_terms_snapshot(tmp_path: Path) -> None:
+    sealed = seal_handoff(
+        _source(tmp_path), tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path)
+    )
+    record = {
+        "object_id": sealed.object_id,
+        "decision": "affirmative",
+        "responsible_reviewer": "reviewer@example.org",
+        "rights_authority": "rights@example.org",
+        "decision_time": "2026-08-30T12:00:00Z",
+        "terms_version": "2026-08",
+        "permitted_asset_use": "immutable research corpus artifact",
+        "attribution": "GeneReviews",
+        "source_sha256": "a" * 64,
+        "artifact_sha256": hashlib.sha256(
+            sealed.path.joinpath("corpus.dump").read_bytes()
+        ).hexdigest(),
+        "corpus_release_id": "2026-08-30-r1",
+    }
+    rights = tmp_path / "rights.json"
+    _write_rights(rights, record, tmp_path)
+    Path(str(record["terms_uri"])).write_text("changed after review\n")
+
+    with pytest.raises(HandoffError, match="terms document digest"):
+        prepare_publish_handoff(tmp_path / "handoffs", sealed.object_id, rights)
+
+
+def test_seal_checks_real_postgres_archive_policy_before_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called: list[tuple[Path, int]] = []
+    monkeypatch.setattr(
+        handoff,
+        "_assert_local_archive",
+        lambda path, *, parent_fd: called.append((path, parent_fd)),
+        raising=False,
+    )
+
+    source = _source(tmp_path)
+    seal_handoff(source, tmp_path / "handoffs", publisher_tool=_publisher_tool(tmp_path))
+
+    assert len(called) == 1
+    assert called[0][0] == source / "corpus.dump"
+    assert called[0][1] >= 0
+
+
+def test_handoff_root_rejects_repository_parent_and_serving_overlap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("GENEREVIEW_SERVING_ROOT", str(tmp_path / "serving"))
+    (tmp_path / "serving").mkdir()
+
+    with pytest.raises(HandoffError, match="repository"):
+        handoff._assert_handoff_root(repository_root)
+    with pytest.raises(HandoffError, match="serving"):
+        handoff._assert_handoff_root(tmp_path)
+
+
+def test_seal_never_overwrites_target_created_at_final_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "handoffs"
+
+    def racing_rename(source: Path, target: Path) -> None:
+        target.mkdir()
+        raise FileExistsError(target)
+
+    monkeypatch.setattr(handoff, "_rename_noreplace", racing_rename, raising=False)
+
+    with pytest.raises(HandoffError, match="already exists"):
+        seal_handoff(_source(tmp_path), root, publisher_tool=_publisher_tool(tmp_path))
+    target = next(path for path in root.iterdir() if not path.name.startswith(".seal-"))
+    assert target.is_dir()
+
+
+def test_privileged_verifier_path_has_no_asyncpg_transitive_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import builtins
+    import importlib
+    import sys
+
+    real_import = builtins.__import__
+
+    def reject_asyncpg(name: str, *args: object, **kwargs: object) -> object:
+        if name == "asyncpg" or name.startswith("asyncpg."):
+            raise AssertionError("stdlib-only publisher verifier imported asyncpg")
+        return real_import(name, *args, **kwargs)
+
+    for name in list(sys.modules):
+        if name.startswith("genereview_link.publisher_verifier"):
+            sys.modules.pop(name)
+    monkeypatch.setattr(builtins, "__import__", reject_asyncpg)
+    verifier = importlib.import_module("genereview_link.publisher_verifier")
+
+    assert Path(verifier.__file__).is_file()
+    assert callable(verifier.prepare_publish_handoff)

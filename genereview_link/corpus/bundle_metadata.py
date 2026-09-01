@@ -138,6 +138,11 @@ async def collect_database_facts_from_connection(
             raise ValueError(f"unexpected migration namespace: {namespace}")
         migrations[namespace].append(str(migration["version"]))
 
+    chapter_count = int(
+        await connection.fetchval('select count(*) from "genereview".genereview_chapters') or 0
+    )
+    if chapter_count != int(row["chapter_count"] or 0):
+        raise ValueError("active corpus control-row chapter count does not match snapshot data")
     passage_count = int(
         await connection.fetchval('select count(*) from "genereview".genereview_passages') or 0
     )
@@ -151,6 +156,21 @@ async def collect_database_facts_from_connection(
         )
         or 0
     )
+    from genereview_link.retrieval.model_identity import BGE_MODEL_REVISION
+
+    revision_matches = bool(
+        await connection.fetchval(
+            """
+            select count(*) > 0
+               and count(*) filter (where model_revision = $1) = count(*)
+              from "genereview".genereview_embeddings_bge384
+             where model_name = 'BAAI/bge-small-en-v1.5'
+            """,
+            BGE_MODEL_REVISION,
+        )
+    )
+    if not revision_matches:
+        raise ValueError("active corpus embeddings do not use the reviewed model revision")
     hnsw_exists = bool(
         await connection.fetchval(
             """
@@ -201,7 +221,7 @@ async def collect_database_facts_from_connection(
         tarball_size_bytes=source_size,
         listing_relpath=str(row["listing_relpath"]),
         side_data=side_data,
-        chapter_count=int(row["chapter_count"] or 0),
+        chapter_count=chapter_count,
         passage_count=passage_count,
         embedding_count=embedding_count,
         hnsw_exists=hnsw_exists,

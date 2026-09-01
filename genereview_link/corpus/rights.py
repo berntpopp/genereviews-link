@@ -45,9 +45,11 @@ def _canonical(value: object) -> bytes:
 
 
 def _read_bounded(path: Path) -> bytes:
+    from genereview_link.corpus.handoff import _open_directory
+
     parent_fd: int | None = None
     try:
-        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        parent_fd = _open_directory(path.parent)
         fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
     except OSError as error:
         if parent_fd is not None:
@@ -80,9 +82,11 @@ def _load_json(path: Path) -> dict[str, object]:
 
 
 def _digest_file(path: Path) -> str:
+    from genereview_link.corpus.handoff import _open_directory
+
     parent_fd: int | None = None
     try:
-        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        parent_fd = _open_directory(path.parent)
         fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
     except OSError as error:
         if parent_fd is not None:
@@ -103,6 +107,10 @@ def _digest_file(path: Path) -> str:
 
 def _validate_durable_uri(value: str, *, label: str, local_only: bool = False) -> None:
     parsed = urlparse(value)
+    if parsed.scheme == "bundle":
+        if parsed.netloc or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", parsed.path):
+            raise RightsError(f"{label} bundle member is invalid")
+        return
     if parsed.scheme in {"http", "https", "s3"}:
         if local_only:
             raise RightsError(f"{label} must identify an existing durable local document")
@@ -115,6 +123,13 @@ def _validate_durable_uri(value: str, *, label: str, local_only: bool = False) -
         return
     if not value.startswith("/"):
         raise RightsError(f"{label} must be a durable URI or absolute path")
+
+
+def _document_path(value: str, *, bundle_root: Path) -> Path:
+    parsed = urlparse(value)
+    if parsed.scheme == "bundle":
+        return bundle_root / parsed.path
+    return Path(parsed.path if value.startswith("file:") else value)
 
 
 def verify_rights_record(
@@ -143,12 +158,22 @@ def verify_rights_record(
     for name in ("source_sha256", "artifact_sha256", "terms_sha256", "evidence_sha256"):
         if not SHA256_RE.fullmatch(record[name]):
             raise RightsError(f"rights record {name} must be a lowercase SHA-256")
-    _validate_durable_uri(record["terms_uri"], label="terms_uri")
+    _validate_durable_uri(record["terms_uri"], label="terms_uri", local_only=True)
     _validate_durable_uri(record["evidence_uri"], label="evidence_uri", local_only=True)
+    terms = record["terms_uri"]
+    terms_path = _document_path(terms, bundle_root=rights_path.parent)
+    if _digest_file(terms_path) != record["terms_sha256"]:
+        raise RightsError("terms document digest does not match rights record")
     evidence = record["evidence_uri"]
     if evidence.startswith("/") or evidence.startswith("file:"):
-        evidence_path = Path(urlparse(evidence).path if evidence.startswith("file:") else evidence)
+        evidence_path = _document_path(evidence, bundle_root=rights_path.parent)
         if _digest_file(evidence_path) != record["evidence_sha256"]:
+            raise RightsError("evidence document digest does not match rights record")
+    elif evidence.startswith("bundle:"):
+        if (
+            _digest_file(_document_path(evidence, bundle_root=rights_path.parent))
+            != record["evidence_sha256"]
+        ):
             raise RightsError("evidence document digest does not match rights record")
     decision_time = record["decision_time"]
     if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z", decision_time):

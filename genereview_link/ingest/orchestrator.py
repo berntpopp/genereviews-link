@@ -94,7 +94,7 @@ async def backfill_embeddings(
                     nbk,
                     pid,
                     provider.model_name,
-                    None,  # model_revision
+                    getattr(provider, "model_revision", None),
                     text_hash(text),
                     vec,
                 )
