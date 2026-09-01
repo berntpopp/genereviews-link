@@ -13,6 +13,10 @@ from urllib.parse import quote
 
 import httpx
 
+from genereview_link.download_admission import (
+    DownloadAdmissionError,
+    PinnedDownloadDirectory,
+)
 from genereview_link.download_guard import (
     STREAM_TIMEOUT,
     DownloadOwnership,
@@ -76,15 +80,11 @@ class ReleaseIdentity:
         return asdict(self)
 
 
-def _assert_fresh_directory(destination: Path) -> None:
+def _open_fresh_directory(destination: Path) -> PinnedDownloadDirectory:
     try:
-        info = destination.lstat()
-    except FileNotFoundError as error:
+        return PinnedDownloadDirectory.open_fresh(destination)
+    except DownloadAdmissionError as error:
         raise ReleaseAssetError("destination must be a pre-created fresh directory") from error
-    if destination.is_symlink() or not destination.is_dir() or any(destination.iterdir()):
-        raise ReleaseAssetError("destination must be a fresh real directory")
-    if info.st_uid != os.geteuid():
-        raise ReleaseAssetError("destination must be owned by the invoking user")
 
 
 async def _release_assets(
@@ -205,10 +205,14 @@ async def download_release_assets(
     allow_draft: bool = False,
 ) -> ReleaseIdentity:
     """Download exact assets through allowlisted, byte- and deadline-bounded streams."""
-    _assert_fresh_directory(destination)
-    identity = await _release_assets(
-        repo, tag, token, release_id=release_id, allow_draft=allow_draft
-    )
+    directory = _open_fresh_directory(destination)
+    try:
+        identity = await _release_assets(
+            repo, tag, token, release_id=release_id, allow_draft=allow_draft
+        )
+    except BaseException:
+        directory.close()
+        raise
     assets = {asset.name: asset for asset in identity.assets}
     headers = {"Accept": "application/octet-stream"}
     if token:
@@ -242,6 +246,7 @@ async def download_release_assets(
                         deadline_seconds=deadline,
                         created_ownership=ownership_output,
                         defer_admission=True,
+                        destination_directory=directory,
                     )
                 finally:
                     retained.extend(ownership_output)
@@ -265,9 +270,14 @@ async def download_release_assets(
                 raise ReleaseAssetError(
                     f"downloaded digest failed exact admission: {name}"
                 ) from error
-        if len(created) != len(PUBLICATION_ASSET_NAMES) or any(
-            not ownership.matches_path() or not ownership.parent_matches_path()
-            for ownership in created.values()
+        if (
+            len(created) != len(PUBLICATION_ASSET_NAMES)
+            or directory.names() != frozenset(PUBLICATION_ASSET_NAMES)
+            or not directory.matches_path()
+            or any(
+                not ownership.matches_path() or not ownership.parent_matches_path()
+                for ownership in created.values()
+            )
         ):
             raise ReleaseAssetError("release asset path changed before complete admission")
     except BaseException:
@@ -277,6 +287,7 @@ async def download_release_assets(
     finally:
         for ownership in retained:
             ownership.close()
+        directory.close()
     result = replace(
         identity,
         assets=tuple(

@@ -25,6 +25,7 @@ import httpx
 from genereview_link.download_admission import DisallowedURLError as DisallowedURLError
 from genereview_link.download_admission import DownloadDeadlineError as DownloadDeadlineError
 from genereview_link.download_admission import DownloadOwnership as DownloadOwnership
+from genereview_link.download_admission import PinnedDownloadDirectory as PinnedDownloadDirectory
 from genereview_link.download_admission import ResponseTooLargeError as ResponseTooLargeError
 
 # Per-read deadlines protect a stalled socket.  The independent end-to-end
@@ -100,6 +101,7 @@ async def stream_to_file(
     deadline_seconds: float = MAX_DOWNLOAD_SECONDS,
     created_ownership: list[DownloadOwnership] | None = None,
     defer_admission: bool = False,
+    destination_directory: PinnedDownloadDirectory | None = None,
 ) -> str:
     """Stream *url* to *dest* under byte and monotonic time caps; return SHA-256.
 
@@ -112,7 +114,13 @@ async def stream_to_file(
         raise ValueError("created_ownership output must be empty")
     if defer_admission and created_ownership is None:
         raise ValueError("deferred admission requires retained ownership")
-    ownership = DownloadOwnership.anonymous(dest)
+    if destination_directory is not None and dest.parent != destination_directory.path:
+        raise ValueError("destination path is outside the pinned download directory")
+    ownership = (
+        destination_directory.anonymous(dest.name)
+        if destination_directory is not None
+        else DownloadOwnership.anonymous(dest)
+    )
     if created_ownership is not None:
         created_ownership.append(ownership)
     sha = hashlib.sha256()

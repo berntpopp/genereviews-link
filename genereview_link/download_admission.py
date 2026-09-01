@@ -71,21 +71,33 @@ class DownloadOwnership:
         """Create an unnamed regular inode beneath a pinned destination directory."""
         parent_fd = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
+            return cls._anonymous_at(
+                parent_fd=parent_fd,
+                parent_path=destination.parent,
+                name=destination.name,
+            )
+        finally:
+            os.close(parent_fd)
+
+    @classmethod
+    def _anonymous_at(cls, *, parent_fd: int, parent_path: Path, name: str) -> DownloadOwnership:
+        owned_parent = os.dup(parent_fd)
+        try:
             try:
-                os.stat(destination.name, dir_fd=parent_fd, follow_symlinks=False)
+                os.stat(name, dir_fd=owned_parent, follow_symlinks=False)
             except FileNotFoundError:
                 pass
             else:
-                raise FileExistsError(destination)
-            file_fd = os.open(".", os.O_RDWR | os.O_TMPFILE, 0o600, dir_fd=parent_fd)
+                raise FileExistsError(parent_path / name)
+            file_fd = os.open(".", os.O_RDWR | os.O_TMPFILE, 0o600, dir_fd=owned_parent)
         except BaseException:
-            os.close(parent_fd)
+            os.close(owned_parent)
             raise
         return cls(
-            parent_fd=parent_fd,
+            parent_fd=owned_parent,
             file_fd=file_fd,
-            name=destination.name,
-            parent_path=destination.parent,
+            name=name,
+            parent_path=parent_path,
             admitted=False,
         )
 
@@ -214,6 +226,11 @@ class DownloadOwnership:
         ):
             self.unlink_if_owned()
             raise DownloadAdmissionError("admitted download identity changed")
+        if not self.parent_matches_path():
+            self.unlink_if_owned()
+            raise DownloadAdmissionError(
+                "download destination parent identity changed after admission"
+            )
 
     def matches_path(self) -> bool:
         if self._parent_fd is None or not self._admitted:
@@ -266,6 +283,73 @@ class DownloadOwnership:
         finally:
             if parent_fd is not None:
                 os.close(parent_fd)
+
+
+class PinnedDownloadDirectory:
+    """One fresh owned destination directory pinned across every download."""
+
+    __slots__ = ("_directory_fd", "path")
+
+    def __init__(self, *, directory_fd: int, path: Path) -> None:
+        self._directory_fd: int | None = directory_fd
+        self.path = path
+
+    @classmethod
+    def open_fresh(cls, path: Path) -> PinnedDownloadDirectory:
+        try:
+            directory_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError as error:
+            raise DownloadAdmissionError(
+                "download destination must be a pre-created fresh real directory"
+            ) from error
+        pinned = cls(directory_fd=directory_fd, path=path)
+        try:
+            info = os.fstat(directory_fd)
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or os.listdir(directory_fd)
+                or not pinned.matches_path()
+            ):
+                raise DownloadAdmissionError(
+                    "download destination must be a fresh owned real directory"
+                )
+            return pinned
+        except BaseException:
+            pinned.close()
+            raise
+
+    def fileno(self) -> int:
+        if self._directory_fd is None:
+            raise DownloadAdmissionError("download destination directory is closed")
+        return self._directory_fd
+
+    def anonymous(self, name: str) -> DownloadOwnership:
+        return DownloadOwnership._anonymous_at(
+            parent_fd=self.fileno(), parent_path=self.path, name=name
+        )
+
+    def names(self) -> frozenset[str]:
+        return frozenset(os.listdir(self.fileno()))
+
+    def matches_path(self) -> bool:
+        if self._directory_fd is None:
+            return False
+        pinned = os.fstat(self._directory_fd)
+        try:
+            current = self.path.stat(follow_symlinks=False)
+        except OSError:
+            return False
+        return stat.S_ISDIR(current.st_mode) and (
+            current.st_dev,
+            current.st_ino,
+        ) == (pinned.st_dev, pinned.st_ino)
+
+    def close(self) -> None:
+        directory_fd = self._directory_fd
+        self._directory_fd = None
+        if directory_fd is not None:
+            os.close(directory_fd)
 
 
 class _ExactRedirects(HTTPRedirectHandler):
@@ -362,6 +446,7 @@ __all__ = [
     "DownloadAdmissionError",
     "DownloadDeadlineError",
     "DownloadOwnership",
+    "PinnedDownloadDirectory",
     "ResponseTooLargeError",
     "download_exact_https",
 ]

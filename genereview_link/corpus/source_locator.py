@@ -9,6 +9,10 @@ from urllib.parse import unquote, urlsplit
 
 import httpx
 
+from genereview_link.download_admission import (
+    DownloadAdmissionError,
+    PinnedDownloadDirectory,
+)
 from genereview_link.download_guard import (
     STREAM_TIMEOUT,
     DownloadOwnership,
@@ -110,8 +114,10 @@ async def fetch_source_assets(
     token: str,
 ) -> dict[str, object]:
     locator = load_source_locator(raw, allowed_repositories=allowed_repositories)
-    if destination.is_symlink() or not destination.is_dir() or any(destination.iterdir()):
-        raise SourceLocatorError("source destination must be a fresh real directory")
+    try:
+        directory = PinnedDownloadDirectory.open_fresh(destination)
+    except DownloadAdmissionError as error:
+        raise SourceLocatorError("source destination must be a fresh real directory") from error
     headers = {"Accept": "application/octet-stream", "Authorization": f"Bearer {token}"}
     assets = locator["assets"]
     assert isinstance(assets, list)
@@ -139,6 +145,7 @@ async def fetch_source_assets(
                         deadline_seconds=deadline,
                         created_ownership=ownership_output,
                         defer_admission=True,
+                        destination_directory=directory,
                     )
                 finally:
                     retained.extend(ownership_output)
@@ -159,9 +166,14 @@ async def fetch_source_assets(
                 raise SourceLocatorError(
                     "downloaded source bytes failed exact admission"
                 ) from error
-        if len(created) != len(SOURCE_ASSETS) or any(
-            not ownership.matches_path() or not ownership.parent_matches_path()
-            for ownership in created.values()
+        if (
+            len(created) != len(SOURCE_ASSETS)
+            or directory.names() != SOURCE_ASSETS
+            or not directory.matches_path()
+            or any(
+                not ownership.matches_path() or not ownership.parent_matches_path()
+                for ownership in created.values()
+            )
         ):
             raise SourceLocatorError("source asset path changed before complete admission")
     except BaseException:
@@ -171,6 +183,7 @@ async def fetch_source_assets(
     finally:
         for ownership in retained:
             ownership.close()
+        directory.close()
     return locator
 
 

@@ -169,6 +169,41 @@ def test_owned_cleanup_never_overwrites_a_second_substitution(
         ownership.close()
 
 
+def test_admission_rechecks_parent_identity_after_atomic_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "downloads"
+    moved = tmp_path / "moved"
+    destination.mkdir()
+    ownership = DownloadOwnership.anonymous(destination / "asset")
+    ownership.write(b"owned")
+    ownership.sync()
+    real_match = DownloadOwnership.parent_matches_path
+    calls = 0
+
+    def replace_during_match(candidate: DownloadOwnership) -> bool:
+        nonlocal calls
+        matched = real_match(candidate)
+        if candidate is not ownership:
+            return matched
+        calls += 1
+        if calls == 1:
+            destination.rename(moved)
+            destination.mkdir()
+        return matched
+
+    monkeypatch.setattr(DownloadOwnership, "parent_matches_path", replace_during_match)
+    try:
+        with pytest.raises(download_admission.DownloadAdmissionError, match="parent"):
+            ownership.admit_exact(
+                expected_sha256=hashlib.sha256(b"owned").hexdigest(),
+                expected_size=5,
+            )
+        assert not (destination / "asset").exists()
+    finally:
+        ownership.close()
+
+
 @pytest.mark.asyncio
 async def test_verified_bundle_promotion_never_consumes_a_replaced_part_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -295,6 +330,80 @@ async def test_release_admission_rehashes_the_pinned_inode(
         await release_assets.download_release_assets(
             "owner/repo", "corpus-data-2026-09-01-r1", destination, release_id=17
         )
+
+
+def _replace_before_directory_open(
+    destination: Path, moved: Path, monkeypatch: pytest.MonkeyPatch
+) -> list[bool]:
+    real_open = download_admission.os.open
+    replaced = [False]
+
+    def racing_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        if not replaced[0] and Path(path) == destination and flags & os.O_DIRECTORY:
+            replaced[0] = True
+            destination.rename(moved)
+            destination.mkdir()
+            (destination / "foreign-marker").write_bytes(b"foreign")
+        return real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(download_admission.os, "open", racing_open)
+    return replaced
+
+
+@pytest.mark.asyncio
+async def test_source_pins_fresh_destination_before_any_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "source"
+    destination.mkdir()
+    moved = tmp_path / "source-moved"
+    replaced = _replace_before_directory_open(destination, moved, monkeypatch)
+    monkeypatch.setattr(source_locator.httpx, "AsyncClient", lambda **_kwargs: _Client())
+
+    with pytest.raises(source_locator.SourceLocatorError, match="fresh"):
+        await source_locator.fetch_source_assets(
+            _source_locator(),
+            allowed_repositories={"owner/source"},
+            destination=destination,
+            token="fixture-token",  # noqa: S106 - fixture only
+        )
+
+    assert replaced == [True]
+    assert (destination / "foreign-marker").read_bytes() == b"foreign"
+
+
+@pytest.mark.asyncio
+async def test_release_pins_fresh_destination_before_metadata_or_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    identities = tuple(
+        release_assets.AssetIdentity(
+            asset_id=index,
+            name=name,
+            size=5,
+            digest="sha256:" + hashlib.sha256(b"owned").hexdigest(),
+            url=f"https://api.github.com/repos/owner/repo/releases/assets/{index}",
+        )
+        for index, name in enumerate(release_assets.PUBLICATION_ASSET_NAMES, 1)
+    )
+
+    async def identity(*_args: object, **_kwargs: object) -> release_assets.ReleaseIdentity:
+        return release_assets.ReleaseIdentity(17, "corpus-data-2026-09-01-r1", "a" * 40, identities)
+
+    destination = tmp_path / "release"
+    destination.mkdir()
+    moved = tmp_path / "release-moved"
+    replaced = _replace_before_directory_open(destination, moved, monkeypatch)
+    monkeypatch.setattr(release_assets, "_release_assets", identity)
+    monkeypatch.setattr(release_assets.httpx, "AsyncClient", lambda **_kwargs: _Client())
+
+    with pytest.raises(release_assets.ReleaseAssetError, match="fresh"):
+        await release_assets.download_release_assets(
+            "owner/repo", "corpus-data-2026-09-01-r1", destination, release_id=17
+        )
+
+    assert replaced == [True]
+    assert (destination / "foreign-marker").read_bytes() == b"foreign"
 
 
 @pytest.mark.asyncio
