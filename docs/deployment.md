@@ -90,6 +90,19 @@ into the Postgres volume by the `genereview-corpus-restore` init sidecar:
   may write the corpus tables and nothing else. Reviewed in-repo migrations run as the
   owner; the untrusted artifact is loaded with the least rights that can load it.
 - **The serving application has no restore path at all** and never downloads anything.
+- Both the artifact and its digest fail closed. An absent seed file, and an absent,
+  malformed, or **placeholder** digest (64 zeroes, 64 `f`s, the empty file's digest) are
+  each refused. A placeholder is refused *by identity*, before any comparison: a checksum
+  that verifies nothing while presenting itself as verification is worse than none.
+
+### Embedding provider (production)
+
+Semantic ranking is only meaningful when the query and the corpus were embedded by the
+same model. Production refuses to start on the stub provider unless
+`GENEREVIEW_ALLOW_FAKE_EMBEDDINGS=true`; when a non-reference provider is active the dense
+path is disabled, `rerank_used` reports `lexical`, `_meta.dense_model_id` reports the stub,
+and `/health` reports `degraded`. See [data.md § Embedding provider](data.md#embedding-provider)
+for why the published image cannot currently run the real model.
 
 `GENEREVIEW_LINK_IMAGE` must be a digest-pinned image
 (`ghcr.io/berntpopp/genereviews-link@sha256:…`); the prod overlay fails closed if it is
@@ -112,8 +125,9 @@ can start safely, but it is not controller-deployable evidence. Only a future ve
 | **Total recommended** | **3 GB** |
 
 The production compose overlay caps the app service at 3 GB / 1.0 CPU. Leave
-`GENEREVIEW_EAGER_LOAD_BGE=false` (the default) for API-key-only or "lite" deployments;
-set it `true` only when semantic passage search is required.
+`GENEREVIEW_EMBEDDING_PROVIDER=fake` for API-key-only or "lite" deployments (which
+disables dense ranking outright rather than degrading it); set `bge` when semantic passage
+search is required. `GENEREVIEW_EAGER_LOAD_BGE` is the legacy spelling.
 
 For multi-worker deployments, set `RATE_LIMIT_STATE_FILE` so workers coordinate NCBI rate
 limiting through a shared state file.

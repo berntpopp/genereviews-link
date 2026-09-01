@@ -125,7 +125,11 @@ class Settings(BaseSettings):
     RESTORE_ROLE: str = "genereview_restore"
 
     # Corpus bootstrap modes
-    # BUNDLE_URL: set to a .tar.gz URL (or "latest") to restore from a release bundle.
+    # BUNDLE_URL: INERT since the no-egress restore sidecar landed (#97, 2026-07-13).
+    # The serving process has no restore path, so nothing reads this at request-serving
+    # time; a deployment that still sets BUNDLE_URL=latest (production does) is not
+    # downloading anything. Retained only because the release-watcher helpers in
+    # ingest/github_release.py still resolve release URLs. Tracked for removal in #142.
     BUNDLE_URL: str = ""
     # EXPECTED_BUNDLE_SHA256: independently-trusted, out-of-band authenticity
     # anchor for the release bundle. Set this from a source OTHER than the

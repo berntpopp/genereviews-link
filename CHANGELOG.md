@@ -2,6 +2,29 @@
 
 All notable changes to GeneReviews-Link are documented in this file.
 
+## [Unreleased]
+
+- Refused placeholder SHA-256 values as corpus bundle identities. Production ran with
+  `CORPUS_BUNDLE_SHA256` set to 64 zeroes, inherited from this repository's own compose
+  default: a syntactically valid digest that made an entirely unpinned deployment classify
+  as a valid "legacy" identity, so the restore sidecar exited 0 on every deploy while
+  verifying nothing. Placeholders are now refused by identity, the compose default is gone,
+  and a repo-wide test prevents any tracked file shipping one again.
+- Turned a missing corpus seed artifact into a restore error rather than a bare
+  `FileNotFoundError` traceback.
+- Failed closed on a stub embedding provider. `GENEREVIEW_EAGER_LOAD_BGE` reads as a
+  loading strategy but selects real-vs-stub embeddings, and being unset in production meant
+  query vectors were hashes rather than BGE embeddings. Fusing them into reciprocal-rank
+  fusion displaced correct lexical hits with unrelated passages while every response still
+  reported `dense_model_id: "BAAI/bge-small-en-v1.5"`. Production now refuses to start on
+  the stub without `GENEREVIEW_ALLOW_FAKE_EMBEDDINGS=true`, the dense path is disabled
+  whenever the live provider is not the corpus's model, `dense_model_id` reports what was
+  actually loaded, a query/corpus model mismatch is refused, and `/health` reports
+  `degraded`. Added `GENEREVIEW_EMBEDDING_PROVIDER` as the honest name for the choice.
+- Logged the installed package version instead of a hardcoded `3.0.0`.
+- Documented that `BUNDLE_URL` has been inert since the no-egress restore sidecar landed,
+  and that the published image cannot currently run the real embedding model.
+
 ## [5.1.6] - 2026-08-31
 
 - Bound every corpus bundle to the exact upstream listing path, archive digest and size, and all

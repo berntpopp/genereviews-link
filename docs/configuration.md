@@ -89,8 +89,17 @@ MCP_ALLOWED_ORIGINS='["https://genereviews-link.genefoundry.org"]'
 
 | Variable | Default | Notes |
 |---|---|---|
-| `GENEREVIEW_EAGER_LOAD_BGE` | `false` | Load the BGE-small-en-v1.5 embedding model at boot (**~130 MB RAM**). Enable **only** when semantic passage search is required; when `false`, a fake embedding provider is used so the server starts fast without Postgres/GPU resources. |
+| `GENEREVIEW_EMBEDDING_PROVIDER` | *(auto)* | `bge` (the model the corpus was embedded with) or `fake` (a deterministic stub). Auto ⇒ `bge` in production, otherwise `GENEREVIEW_EAGER_LOAD_BGE`. |
+| `GENEREVIEW_ALLOW_FAKE_EMBEDDINGS` | `false` | **Fail-closed guard.** Production refuses to start on the stub without this. |
+| `GENEREVIEW_EAGER_LOAD_BGE` | `false` | **Legacy.** Named as a loading strategy but selects real-vs-stub embeddings — which is how production ran on stub vectors unnoticed. Honoured outside production; `GENEREVIEW_EMBEDDING_PROVIDER` wins. |
 | `DEBUG_RANKING_ENABLED` | `false` | Expose the `/debug/ranking` diagnostic endpoint. |
+
+> [!WARNING]
+> The stub provider is not a lightweight approximation. Its vectors are uncorrelated with
+> the stored corpus vectors, so fusing them into `rerank=rrf` **displaces** correct lexical
+> hits with unrelated passages. When the live provider is not the corpus's model the dense
+> path is disabled, `rerank_used` reports `lexical`, `dense_model_id` reports the stub, and
+> `/health` reports `degraded`.
 
 ## Ingest (maintainer)
 
@@ -108,7 +117,7 @@ See [data.md](data.md) for what these mean and which combination to pick.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `BUNDLE_URL` | *(empty)* | `.tar.gz` release-asset URL, or `latest`. |
+| `BUNDLE_URL` | *(empty)* | **Inert.** The serving process has had no restore path since the no-egress sidecar landed; setting it downloads nothing. |
 | `EXPECTED_BUNDLE_SHA256` | *(empty)* | **Security control.** Out-of-band, independently-trusted authenticity anchor. Empty ⇒ promotion is refused unless anchored in-repo. |
 | `ALLOW_UNANCHORED_BUNDLE` | `false` | Knowingly accept transport-integrity-only bootstrap. |
 | `BUNDLE_BOOTSTRAP_DIR` | `/tmp/genereview-link` | Writable download/extraction scratch. |
@@ -124,7 +133,7 @@ app has no restore path and never downloads anything. See [deployment.md](deploy
 | Variable | Default | Notes |
 |---|---|---|
 | `CORPUS_SEED_PATH` | `/seed/corpus-bundle.tar.gz` | Read-only current legacy bundle, or `/seed` for an exact direct-asset release. |
-| `CORPUS_BUNDLE_SHA256` | *(empty)* | Reviewed legacy bundle digest; **empty fails closed** in legacy mode. |
+| `CORPUS_BUNDLE_SHA256` | *(empty)* | Reviewed legacy bundle digest; **empty fails closed** in legacy mode, and so does a placeholder (64 zeroes, 64 `f`s, or the empty file's digest). |
 | `CORPUS_DUMP_SHA256` | *(empty)* | Reviewed `corpus.dump` release-asset digest; required in direct mode. |
 | `CORPUS_MANIFEST_SHA256` | *(empty)* | Reviewed `manifest.json` release-asset digest; required in direct mode. |
 | `CORPUS_CHECKSUMS_SHA256` | *(empty)* | Reviewed `SHA256SUMS` release-asset digest; required in direct mode. |
