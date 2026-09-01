@@ -729,7 +729,7 @@ wheels = [
 
 [[package]]
 name = "genereviews-link"
-version = "5.1.7"
+version = "5.1.8"
 source = { editable = "." }
 dependencies = [
     { name = "apscheduler" },
