@@ -4,6 +4,20 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.1] - 2026-09-02
+
+- **`archive_content_identities` did not finish on the real archive.** It hashed members in
+  sorted name order over a `tarfile` opened as `r:gz`, and the GeneReviews archive's own
+  member order is not sorted order — so every backwards seek rewound the gzip stream and
+  re-inflated it from byte zero. Measured on the live 636 MB / 2925-member archive: 386 MB/s
+  of re-inflation for over an hour without finishing, and it is called up to three times per
+  build (snapshot fetch, snapshot verify, ingest). Inflating once into a seekable temporary
+  file makes the same reads O(1): the same two digests now take **2.5 seconds**. Every
+  bound, refusal and digest is unchanged, and a test pins the digests against the plainly
+  written sorted-order definition as well as the single-inflation property.
+- The decompression cap is now enforced *during* inflation rather than only on the
+  regular-member total, so a gzip bomb dies before it can fill the decompression target.
+
 ## [5.2.0] - 2026-09-02
 
 - **Made the corpus pipeline bootstrappable.** `ingest` required a prior manifest/seal
