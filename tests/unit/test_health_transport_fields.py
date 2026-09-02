@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from genereview_link.config import ServerConfig, settings
+from genereview_link.runtime_data_identity import release_identity_payload
 from genereview_link.server_manager import UnifiedServerManager
 
 
@@ -58,6 +59,11 @@ def test_health_exposes_data_as_of_for_a_fresh_restored_corpus() -> None:
     app = _app()
     app.state.corpus_version = "2026-08-28-r1"
     app.state.corpus_data_as_of = fixture_ingest_finished_at.isoformat()
+    # A corpus that is serving must also be able to say WHICH reviewed release it is, or
+    # /health reports `degraded` (see test_runtime_data_identity.py).
+    identity = {"release_tag": "corpus-data-2026-07-13-r1", "digest": f"sha256:{'a' * 64}"}
+    app.state.release_identity = release_identity_payload(identity, identity)
+    app.state.data_available = True
 
     data = TestClient(app, raise_server_exceptions=True).get("/health").json()
 

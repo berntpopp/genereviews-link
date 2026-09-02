@@ -94,7 +94,9 @@ def test_production_seed_contract_preserves_current_pin_and_supports_direct_asse
     assert config["data"]["digest"] == (
         "sha256:4486e499337e9f816a2aa0741f2a0e51ca38cda52f96fb57564cfc36f4b3c5bc"
     )
-    assert config["data_identity_contract"] == "unadopted"
+    # Adopted in 5.2.4: the deployment now publishes the GeneFoundry runtime data identity
+    # (v1) on /health, so the fleet controller can activate a new data release for it.
+    assert config["data_identity_contract"] == "runtime-v1"
     assert "SHA256SUMS" in docs and "legacy" in docs
 
 

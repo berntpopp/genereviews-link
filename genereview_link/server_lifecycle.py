@@ -8,6 +8,12 @@ from fastapi import FastAPI
 from genereview_link.api.client_manager import get_client_manager, shutdown_clients
 from genereview_link.config import settings
 from genereview_link.logging_config import get_logger
+from genereview_link.runtime_data_identity import (
+    RuntimeDataIdentityError,
+    configured_data_identity,
+    observed_data_identity,
+    release_identity_payload,
+)
 from genereview_link.services.service_manager import get_service_manager, shutdown_services
 
 logger = get_logger("server.manager")
@@ -151,6 +157,33 @@ async def _initialize_state(app: FastAPI) -> None:
                 "Failed to read active corpus version; _meta will omit it.",
                 error=str(exc),
             )
+
+    # --- Runtime data identity (cached for /health.release_identity) ---
+    # The fleet controller can only activate a NEW data release for a service that proves,
+    # at runtime, which reviewed release it is serving. `expected` is what this deployment
+    # is configured for; `actual` is re-derived from the restore's own record plus the rows
+    # actually present. Absence is reported, never guessed.
+    app.state.release_identity = release_identity_payload(None, None)
+    app.state.data_available = False
+    if app.state.pool is not None:
+        expected: dict[str, str] | None = None
+        actual: dict[str, str] | None = None
+        try:
+            expected = configured_data_identity(settings)
+        except RuntimeDataIdentityError as exc:
+            logger.warning("no configured data release identity", error=str(exc))
+        try:
+            actual = await observed_data_identity(app.state.pool)
+        except (RuntimeDataIdentityError, asyncpg.PostgresError) as exc:
+            logger.warning("no runtime data identity for the restored corpus", error=str(exc))
+        app.state.release_identity = release_identity_payload(expected, actual)
+        app.state.data_available = expected is not None and actual == expected
+        logger.info(
+            "runtime data identity resolved",
+            data_available=app.state.data_available,
+            expected=expected,
+            actual=actual,
+        )
 
     # --- Gene symbol index (cached for fuzzy alias suggestions) ---
     app.state.gene_index = None

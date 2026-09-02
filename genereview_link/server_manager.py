@@ -265,6 +265,7 @@ class UnifiedServerManager:
             from genereview_link.config import settings
             from genereview_link.corpus.freshness import corpus_health
             from genereview_link.retrieval.provider_policy import embedding_health
+            from genereview_link.runtime_data_identity import health_release_identity
 
             client_manager = await get_client_manager()
             health = await client_manager.health_check(test_connection=test_connection)
@@ -275,7 +276,13 @@ class UnifiedServerManager:
             # same failure class (#145): report data_as_of and go `degraded` past
             # CORPUS_MAX_AGE_DAYS instead of staying silently "healthy" forever.
             corpus = corpus_health(app.state, max_age_days=settings.CORPUS_MAX_AGE_DAYS)
-            healthy = embeddings["is_reference_model"] and not corpus["stale"]
+            # The GeneFoundry runtime data identity (v1): true only when the configured
+            # data release equals the one the restore materialised (runtime_data_identity).
+            # A corpus serving without a provable release is the same failure class as the
+            # corpus that sat frozen while /health stayed green (#145).
+            identity, data_available = health_release_identity(app.state)
+            unproven = corpus["version"] is not None and not data_available
+            healthy = embeddings["is_reference_model"] and not corpus["stale"] and not unproven
             return {
                 "status": "healthy" if healthy else "degraded",
                 "version": __version__,
@@ -283,6 +290,8 @@ class UnifiedServerManager:
                 "client_health": health,
                 "embeddings": embeddings,
                 "corpus": corpus,
+                "data_available": data_available,
+                "release_identity": identity,
             }
 
         @app.get("/metrics", tags=["Observability"], include_in_schema=False)

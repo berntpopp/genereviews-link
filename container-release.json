@@ -67,6 +67,7 @@
   "data": {
     "mode": "restored-database",
     "release_tag": "corpus-data-2026-07-13-r1",
+    "schema_compatibility": ["0007_embedding_run_identity"],
     "digest": "sha256:4486e499337e9f816a2aa0741f2a0e51ca38cda52f96fb57564cfc36f4b3c5bc",
     "image_allowlist": [
       "opt/venv/lib/python3.12/site-packages/genereview_link/corpus/__init__.py",
@@ -85,6 +86,7 @@
       "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0005_corpus_source_identity.sql",
       "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0006_computation_runs.sql",
       "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0007_release_readiness.sql",
+      "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/control/0008_runtime_data_identity.sql",
       "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0001_chapters.sql",
       "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0002_passages.sql",
       "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/0003_embeddings_bge384.sql",
@@ -95,7 +97,7 @@
       "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/__init__.py"
     ]
   },
-  "data_identity_contract": "unadopted",
+  "data_identity_contract": "runtime-v1",
   "definitions": {
     "contract": "data-bound"
   },

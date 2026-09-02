@@ -57,6 +57,14 @@ The operator's side is two facts, both of which must be true before the first st
 2. `CORPUS_BUNDLE_SHA256` is the digest published with that release (the same value as
    `container-release.json` → `.data.digest`).
 
+A third fact follows from them rather than being configured separately: after the restore
+(or, on a volume that already holds the corpus, after re-proving the staged artifact against
+the rows really present) the sidecar records which reviewed release is serving into
+`public.genereview_runtime_data_identity`, and `/health` republishes it as
+`release_identity`. That is the `runtime-v1` data identity contract the fleet controller
+needs before it may activate a new corpus release — see
+[deployment.md § Runtime data identity](deployment.md#runtime-data-identity-runtime-v1).
+
 Both fail closed. An absent artifact and an absent, malformed, or **placeholder** digest
 (64 zeroes, 64 `f`s, the empty file's digest) are all refused, because a checksum that
 verifies nothing while looking like verification is worse than no checksum.

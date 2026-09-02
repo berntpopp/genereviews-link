@@ -86,6 +86,10 @@ namespace token is `genereviews`. Static references are also served as MCP resou
 - **Refresh model:** the passage corpus is an immutable, digest-pinned data release,
   restored once into Postgres; the live-NCBI tools always hit NCBI and stamp their
   response version as `live:<timestamp>`. See [Data & corpus](docs/data.md).
+- **Runtime data identity:** `GET /health` proves which reviewed data release is actually
+  serving — `data_available` plus `release_identity.data_identity.{expected,actual}` — and
+  `python -m genereview_link.data_probe` observes the restored corpus read-only. See
+  [Runtime data identity](docs/deployment.md#runtime-data-identity-runtime-v1).
 - **Rate limits:** NCBI allows 3 req/sec without an API key and 10 req/sec with one;
   `NCBI_API_KEY` is optional but recommended. Scraping is throttled harder still. The
   client enforces this — do not bypass it.

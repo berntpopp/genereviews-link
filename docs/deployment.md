@@ -178,3 +178,63 @@ additionally exercises upstream connectivity. It also reports the active corpus'
 and `data_as_of`, going `degraded` once the corpus is older than `CORPUS_MAX_AGE_DAYS` — see
 [data.md § Corpus freshness](data.md#corpus-freshness) for the exact payload and why it
 exists (#145).
+
+### Runtime data identity (`runtime-v1`)
+
+`container-release.json` declares `"data_identity_contract": "runtime-v1"`, so `/health`
+also proves *which reviewed data release is actually serving* — the fact the fleet
+controller needs before it may activate a new corpus release for this service:
+
+```jsonc
+// GET /health  (the two contract fields; the rest of the payload is unchanged)
+{
+  "data_available": true,
+  "release_identity": {
+    "schema_version": 1,
+    "data_identity": {
+      "expected": {"release_tag": "corpus-data-2026-07-13-r1", "digest": "sha256:4486e4…"},
+      "actual":   {"release_tag": "corpus-data-2026-07-13-r1", "digest": "sha256:4486e4…"}
+    }
+  }
+}
+```
+
+- `expected` is what this deployment is **configured** for: `CORPUS_RELEASE_TAG` plus the
+  seed digest it must prove (`CORPUS_DUMP_SHA256` when set, otherwise
+  `CORPUS_BUNDLE_SHA256`) — the same pair as `container-release.json`
+  `.data.release_tag`/`.data.digest`. `CORPUS_RELEASE_TAG` defaults in
+  `docker/docker-compose.yml` to the pinned release, so an unchanged `.env.docker` renders
+  the reviewed identity rather than an empty one; the digest has no default, deliberately.
+- `actual` is what was **restored**. The no-egress init sidecar hashes the staged artifact,
+  requires the artifact manifest's `corpus_release_id`, `corpus_version` and
+  chapter/passage/embedding counts to equal the rows really present, and only then writes
+  `public.genereview_runtime_data_identity` (control migration `0008`). The server
+  re-derives those live facts at startup before republishing the row, so a corpus swapped
+  underneath a running deployment stops matching.
+- Unequal, or either side absent ⇒ `data_available: false`; a corpus that is serving while
+  unprovable also reports `status: "degraded"`.
+- The sidecar records the identity on **both** paths: a fresh restore, and an
+  already-restored volume — there it restores nothing, but still re-proves the staged
+  artifact and binds it to the live rows, so an existing deployment adopts the contract on
+  its next start without a re-restore.
+
+The controller also execs a deterministic read-only probe in the app container:
+
+```bash
+docker compose exec -T genereview-link python -m genereview_link.data_probe
+# {"data_schema_version":"0007_embedding_run_identity","record_count":40853,"query_result_sha256":"…"}
+```
+
+It runs in a `READ ONLY`, `REPEATABLE READ` transaction over `DATABASE_URL`, writes
+nothing, needs no egress, and prints exactly those three keys.
+`container-release.json` `.data.schema_compatibility` lists the `data_schema_version`
+values this build serves.
+
+Self-check the whole deployed contract before tagging, from a `genefoundry-router` checkout
+pinned at the same SHA as `.github/workflows/container-release.yml`:
+
+```bash
+uv run python scripts/container_release.py validate-config --config <this-repo>/container-release.json
+uv run python scripts/container_release.py validate-deployed-overlay \
+  --config <this-repo>/container-release.json --project-dir <this-repo>
+```

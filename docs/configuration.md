@@ -137,11 +137,11 @@ app has no restore path and never downloads anything. See [deployment.md](deploy
 | Variable | Default | Notes |
 |---|---|---|
 | `CORPUS_SEED_PATH` | `/seed/corpus-bundle.tar.gz` | Read-only current legacy bundle, or `/seed` for an exact direct-asset release. |
-| `CORPUS_BUNDLE_SHA256` | *(empty)* | Reviewed legacy bundle digest; **empty fails closed** in legacy mode, and so does a placeholder (64 zeroes, 64 `f`s, or the empty file's digest). |
-| `CORPUS_DUMP_SHA256` | *(empty)* | Reviewed `corpus.dump` release-asset digest; required in direct mode. |
+| `CORPUS_BUNDLE_SHA256` | *(empty)* | Reviewed legacy bundle digest; **empty fails closed** in legacy mode, and so does a placeholder (64 zeroes, 64 `f`s, or the empty file's digest). Since 5.2.4 the serving app reads it too, as the `expected` digest on `/health` when `CORPUS_DUMP_SHA256` is unset. |
+| `CORPUS_DUMP_SHA256` | *(empty)* | Reviewed `corpus.dump` release-asset digest; required in direct mode. Since 5.2.4 the serving app reads it too and prefers it over `CORPUS_BUNDLE_SHA256` as the `expected` digest on `/health`. |
 | `CORPUS_MANIFEST_SHA256` | *(empty)* | Reviewed `manifest.json` release-asset digest; required in direct mode. |
 | `CORPUS_CHECKSUMS_SHA256` | *(empty)* | Reviewed `SHA256SUMS` release-asset digest; required in direct mode. |
-| `CORPUS_RELEASE_TAG` | *(empty)* | Exact immutable `corpus-data-YYYY-MM-DD-rN` identity; required in direct mode and matched to readiness. |
+| `CORPUS_RELEASE_TAG` | *(compose default: the pinned `container-release.json` `.data.release_tag`)* | Exact immutable `corpus-data-YYYY-MM-DD-rN` identity. Required in direct mode and matched to readiness; **also read by the serving app** (since 5.2.4), which republishes it as `release_identity.data_identity.expected` on `/health`. `docker/docker-compose.yml` defaults it to the pinned release so an unchanged `.env.docker` renders the reviewed identity rather than an empty one. |
 | `CORPUS_RESTORE_DIR` | `/var/lib/genereview/restore` | Writable scratch for verified asset extraction/staging. |
 | `RESTORE_DATABASE_URL` | *(empty)* | Restore-only connection, as an unprivileged role that may write the corpus tables and nothing else. |
 | `RESTORE_ROLE` | `genereview_restore` | The `NOSUPERUSER` / `NOCREATEDB` / `NOCREATEROLE` role the init ensures before restoring. |
