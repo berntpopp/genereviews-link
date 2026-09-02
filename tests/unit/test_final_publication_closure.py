@@ -59,9 +59,27 @@ def test_production_seed_contract_preserves_current_pin_and_supports_direct_asse
     assert "CORPUS_SEED_PATH" in compose and "CORPUS_DUMP_SHA256" in compose
     assert "corpus-bundle.tar.gz)" in smoke and "corpus.dump)" in smoke
     assert config["data"]["release_tag"] == "corpus-data-2026-09-01-r1"
-    assert config["data"]["asset_name"] == "corpus.dump"
     assert config["data"]["digest"] == (
         "sha256:9e76402893b51ca6597ad434aef1feb71542a03c7566e43865081fbbff3fdca2"
+    )
+    # The fleet contract forbids unknown keys in `data`; which asset carries the digest
+    # and the direct release's control-file digests are this repository's own pin.
+    assert set(config["data"]) == {
+        "mode",
+        "release_tag",
+        "schema_compatibility",
+        "digest",
+        "image_allowlist",
+    }
+    seed = json.loads((ROOT / "corpus-release.json").read_bytes())
+    assert seed["release_tag"] == config["data"]["release_tag"]
+    assert seed["digest"] == config["data"]["digest"]
+    assert seed["asset_name"] == "corpus.dump"
+    assert seed["manifest_digest"] == (
+        "sha256:739a9e55636f2d4574fe5f714486b13ea1c8f7483d987f49f59f72170392585d"
+    )
+    assert seed["checksums_digest"] == (
+        "sha256:f22ff0eaaba581d5f4ead33faaa3b67b06472dfceaed261c6b6fe6b6c9b2975e"
     )
     # Adopted in 5.2.4: the deployment now publishes the GeneFoundry runtime data identity
     # (v1) on /health, so the fleet controller can activate a new data release for it.
@@ -124,20 +142,28 @@ def test_smoke_seed_preparation_stages_the_configured_release_assets(
         ("tokenizer.json", model_identity["tokenizer.json"][1]),
     ):
         (assets / name).write_bytes(content)
-    data = (
-        {
+    if mode == "legacy":
+        data = {
             "release_tag": "corpus-data-2026-08-30-r1",
             "digest": f"sha256:{hashlib.sha256(bundle).hexdigest()}",
         }
-        if mode == "legacy"
-        else {
+    else:
+        data = {
             "release_tag": "corpus-data-2026-08-30-r1",
-            "asset_name": "corpus.dump",
             "digest": f"sha256:{dump_digest}",
-            "manifest_digest": f"sha256:{manifest_digest}",
-            "checksums_digest": f"sha256:{hashlib.sha256(sums).hexdigest()}",
         }
-    )
+        (repository / "corpus-release.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "release_tag": "corpus-data-2026-08-30-r1",
+                    "asset_name": "corpus.dump",
+                    "digest": f"sha256:{dump_digest}",
+                    "manifest_digest": f"sha256:{manifest_digest}",
+                    "checksums_digest": f"sha256:{hashlib.sha256(sums).hexdigest()}",
+                }
+            )
+        )
     (repository / "container-release.json").write_text(json.dumps({"data": data}))
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()

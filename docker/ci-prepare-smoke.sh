@@ -20,9 +20,28 @@ set -euo pipefail
 repository="${GITHUB_REPOSITORY:-berntpopp/genereviews-link}"
 config="$(dirname "$0")/../container-release.json"
 
+# The fleet contract (the router's ReleaseConfig, extra keys forbidden) owns
+# container-release.json's `data` block: mode, release_tag, digest, schema
+# compatibility, image allowlist. Which release ASSET carries that digest, and the
+# digests of the two control files a direct (manifest-v3) release ships beside it,
+# are this repository's own concern and live in corpus-release.json. When that file
+# is present it must name the same release and the same digest as the contract pin.
+seed_config="$(dirname "$0")/../corpus-release.json"
+
 release_tag="$(jq -er '.data.release_tag' "$config")"
-asset_name="$(jq -er '.data.asset_name // "corpus-bundle.tar.gz"' "$config")"
 data_digest="$(jq -er '.data.digest' "$config")"
+asset_name="corpus-bundle.tar.gz"
+if [ -f "$seed_config" ]; then
+  asset_name="$(jq -er '.asset_name' "$seed_config")"
+  [ "$(jq -er '.release_tag' "$seed_config")" = "$release_tag" ] || {
+    echo "corpus-release.json release_tag differs from container-release.json data.release_tag" >&2
+    exit 1
+  }
+  [ "$(jq -er '.digest' "$seed_config")" = "$data_digest" ] || {
+    echo "corpus-release.json digest differs from container-release.json data.digest" >&2
+    exit 1
+  }
+fi
 expected_data="${data_digest#sha256:}"
 [[ "$expected_data" =~ ^[0-9a-f]{64}$ ]] || {
   echo "container-release.json data.digest is not a sha256 hex digest" >&2
@@ -47,13 +66,13 @@ case "$asset_name" in
     } >> "$GF_SMOKE_ENV_FILE"
     ;;
   corpus.dump)
-    manifest_digest="$(jq -er '.data.manifest_digest' "$config")"
-    checksums_digest="$(jq -er '.data.checksums_digest' "$config")"
+    manifest_digest="$(jq -er '.manifest_digest' "$seed_config")"
+    checksums_digest="$(jq -er '.checksums_digest' "$seed_config")"
     expected_manifest="${manifest_digest#sha256:}"
     expected_checksums="${checksums_digest#sha256:}"
     for expected in "$expected_manifest" "$expected_checksums"; do
       [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || {
-        echo "container-release.json direct asset digest is not a sha256 hex digest" >&2
+        echo "corpus-release.json direct asset digest is not a sha256 hex digest" >&2
         exit 1
       }
     done
@@ -87,7 +106,7 @@ case "$asset_name" in
     } >> "$GF_SMOKE_ENV_FILE"
     ;;
   *)
-    echo "container-release.json data.asset_name is not a supported restore asset" >&2
+    echo "corpus-release.json asset_name is not a supported restore asset" >&2
     exit 1
     ;;
 esac

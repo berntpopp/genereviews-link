@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "release_tag": "corpus-data-2026-09-01-r1",
+  "asset_name": "corpus.dump",
+  "digest": "sha256:9e76402893b51ca6597ad434aef1feb71542a03c7566e43865081fbbff3fdca2",
+  "manifest_digest": "sha256:739a9e55636f2d4574fe5f714486b13ea1c8f7483d987f49f59f72170392585d",
+  "checksums_digest": "sha256:f22ff0eaaba581d5f4ead33faaa3b67b06472dfceaed261c6b6fe6b6c9b2975e"
+}

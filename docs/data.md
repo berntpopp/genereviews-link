@@ -58,7 +58,7 @@ The operator's side is two facts, both of which must be true before the first st
    `SHA256SUMS`, beside the reviewed `model/` directory the same init materialises — and
 2. `CORPUS_DUMP_SHA256`, `CORPUS_MANIFEST_SHA256` and `CORPUS_CHECKSUMS_SHA256` are the
    digests published with that release (the same values as `container-release.json` →
-   `.data.digest`, `.data.manifest_digest`, `.data.checksums_digest`), with
+   `.data.digest` and `corpus-release.json` → `.manifest_digest`, `.checksums_digest`), with
    `CORPUS_RELEASE_TAG` naming it. (A legacy single-tarball release uses
    `CORPUS_SEED_PATH=/seed/corpus-bundle.tar.gz` and `CORPUS_BUNDLE_SHA256` instead.)
 
@@ -85,7 +85,7 @@ for asset in corpus.dump manifest.json SHA256SUMS; do
 done
 (cd "$tmp" && sha256sum -c SHA256SUMS)                     # verify BEFORE staging
 sha256sum "$tmp"/corpus.dump "$tmp"/manifest.json "$tmp"/SHA256SUMS   # must equal the
-#   .data.digest / .data.manifest_digest / .data.checksums_digest in container-release.json
+#   container-release.json .data.digest and corpus-release.json .manifest_digest / .checksums_digest
 sudo mv "$tmp"/corpus.dump "$tmp"/manifest.json "$tmp"/SHA256SUMS /srv/genefoundry/genereviews-seed/
 # The seed directory must then hold exactly these three files plus the model/ directory:
 # move any previous corpus-bundle.tar.gz OUT of it (the restore refuses extra entries).
@@ -389,13 +389,23 @@ nothing about it is a build step.
 ### Pinning a published corpus into the application
 
 A published corpus does nothing until an application release pins it. In
-`container-release.json`, the `data` block names the release and anchors all three asset
-digests; `docker/ci-prepare-smoke.sh` is the only place the stack touches the network and
+`container-release.json`, the `data` block names the release and its `corpus.dump`
+digest; `corpus-release.json` beside it names the asset and anchors the two control-file
+digests. `docker/ci-prepare-smoke.sh` is the only place the stack touches the network and
 it proves the bytes against those digests before they reach the restore sidecar:
 
 ```json
+// container-release.json — the fleet contract's `data` block (no other keys are admitted)
 "data": {
   "mode": "restored-database",
+  "release_tag": "corpus-data-2026-09-01-r1",
+  "digest": "sha256:<corpus.dump>",
+  "schema_compatibility": ["0007_embedding_run_identity"],
+  "image_allowlist": ["..."]
+}
+// corpus-release.json — this repository's own pin of WHICH asset carries that digest
+{
+  "schema_version": 1,
   "release_tag": "corpus-data-2026-09-01-r1",
   "asset_name": "corpus.dump",
   "digest": "sha256:<corpus.dump>",
@@ -403,6 +413,11 @@ it proves the bytes against those digests before they reach the restore sidecar:
   "checksums_digest": "sha256:<SHA256SUMS>"
 }
 ```
+
+The router's `ReleaseConfig` forbids keys it does not model, so the direct-release
+anchors cannot live inside `data` (genereviews-link v5.2.5 was refused by the fleet
+contract gate for exactly that); `docker/ci-prepare-smoke.sh` refuses a
+`corpus-release.json` whose `release_tag` or `digest` differs from the contract pin.
 
 `data.digest` and the final readiness artifact identity both mean the verified
 `corpus.dump` digest. A pin changes only after the immutable release exists; source
