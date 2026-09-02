@@ -4,6 +4,17 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.6] - 2026-09-02
+
+- **Fixed: the fleet contract gate refused 5.2.5.** The router's `ReleaseConfig`
+  forbids keys it does not model, so `asset_name`, `manifest_digest` and
+  `checksums_digest` cannot live in `container-release.json`'s `data` block (v5.2.5's
+  container release failed at `validate-deployed-overlay`). The `data` block is back
+  to the contract shape; which asset carries the digest and the two control-file
+  digests now live in `corpus-release.json`, this repository's own pin, which
+  `docker/ci-prepare-smoke.sh` reads and cross-checks against the contract pin.
+  No product change otherwise.
+
 ## [5.2.5] - 2026-09-02
 
 - **Data: pin the maintainer-prebuilt corpus `corpus-data-2026-09-01-r1`** (#155) in
