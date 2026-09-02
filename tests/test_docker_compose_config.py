@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -173,3 +174,43 @@ def test_npm_overlay_inherits_production_tmpfs_mode() -> None:
         and "mode=1777" in entry
         for entry in tmpfs
     )
+
+
+def test_container_release_json_declares_the_deployed_overlay() -> None:
+    """The fleet controller deploys this repo layered (base + prod + npm), not the npm
+    overlay standalone. The router's `validate-deployed-overlay` gate can only check what
+    is actually deployed if `container-release.json` says so explicitly; a drift here
+    silently re-validates a stack nobody runs.
+    """
+    declared = json.loads((REPO_ROOT / "container-release.json").read_text())
+    service = declared["service"]
+
+    assert service["deployed_compose_files"] == [
+        "docker/docker-compose.yml",
+        "docker/docker-compose.prod.yml",
+        "docker/docker-compose.npm.yml",
+    ]
+    assert service["deployed_seed_binds"] == ["/seed"]
+
+    sidecars = {sidecar["name"]: sidecar["image"] for sidecar in service["deployed_sidecars"]}
+    assert sidecars["postgres"] == (
+        "docker.io/pgvector/pgvector@"
+        "sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d"
+    )
+
+
+def test_deployed_overlay_every_service_declares_a_numeric_user() -> None:
+    """The fleet controller's runtime observer proves the effective uid from `/proc`, so it
+    accepts a declared `user` only when it is numeric non-root -- checked across all three
+    deployed files together, since the npm overlay alone does not set `restart`/`user` for
+    every service (it inherits them from the base file).
+    """
+    config = _compose_config(
+        "docker/docker-compose.yml",
+        "docker/docker-compose.prod.yml",
+        "docker/docker-compose.npm.yml",
+    )
+    numeric_user = re.compile(r"^[1-9][0-9]*:[1-9][0-9]*$")
+
+    for name, service in config["services"].items():
+        assert numeric_user.match(str(service.get("user"))), f"{name} has no numeric user"

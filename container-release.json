@@ -8,6 +8,18 @@
       "docker/docker-compose.yml",
       "docker/docker-compose.prod.yml"
     ],
+    "deployed_compose_files": [
+      "docker/docker-compose.yml",
+      "docker/docker-compose.prod.yml",
+      "docker/docker-compose.npm.yml"
+    ],
+    "deployed_seed_binds": ["/seed"],
+    "deployed_sidecars": [
+      {
+        "name": "postgres",
+        "image": "docker.io/pgvector/pgvector@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d"
+      }
+    ],
     "name": "genereview-link",
     "container_port": 8000,
     "health_path": "/health",

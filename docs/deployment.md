@@ -65,6 +65,22 @@ genereview-link serve --transport unified --host 0.0.0.0 --port 8000
 `docker/gunicorn_conf.py` remains available for custom Gunicorn deployments, but the
 bundled production compose files do **not** use it and do not honour `GUNICORN_WORKERS`.
 
+### Fleet deploy contract
+
+The fleet controller (`strato_v6_docker_npm`) deploys `docker/docker-compose.yml` +
+`docker/docker-compose.prod.yml` + `docker/docker-compose.npm.yml` layered, in that order.
+`container-release.json` (`service.deployed_compose_files`, `deployed_seed_binds`,
+`deployed_sidecars`) declares that exact set so the shared release workflow's
+`validate-deployed-overlay` gate checks the stack actually deployed rather than the npm
+overlay alone (see [AGENTS.md § Fleet Deploy Contract](../AGENTS.md#fleet-deploy-contract)
+for the numeric-`user` rule and release checklist). Self-check before tagging:
+
+```bash
+# from a genefoundry-router checkout pinned at the SHA in container-release.yml
+uv run python scripts/container_release.py validate-deployed-overlay \
+  --config <this-repo>/container-release.json --project-dir <this-repo>
+```
+
 ### Corpus restore (production)
 
 Production does **not** use any of the three corpus-loading modes in [data.md](data.md).
