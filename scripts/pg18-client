@@ -17,7 +17,11 @@ test -d "$mount_root" && test "${mount_root#/}" != "$mount_root" && test "$mount
   echo 'PG18_MOUNT_ROOT must be an existing absolute non-root directory' >&2
   exit 64
 }
-docker_arguments=(run --rm --network host --user "$(id -u):$(id -g)")
+# --interactive is required, not cosmetic: several call sites feed SQL to psql on
+# stdin via a heredoc. Without it `docker run` closes stdin, psql reads an empty
+# script, prints nothing and still exits 0 -- so a `test "$(psql ... <<SQL)" = 1`
+# guard silently compares against the empty string and fails with no diagnostic.
+docker_arguments=(run --rm --interactive --network host --user "$(id -u):$(id -g)")
 if test "${PGPASSWORD+x}" = x; then
   docker_arguments+=(--env PGPASSWORD)
 fi
