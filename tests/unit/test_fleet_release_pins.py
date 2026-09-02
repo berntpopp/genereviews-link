@@ -19,7 +19,7 @@ def test_release_dependencies_use_reviewed_immutable_pins() -> None:
         in (ROOT / ".github/workflows/ci.yml").read_text()
     )
     assert (
-        "_container-ci.yml@db47bd3357cebf33e6722615c4f0e7419a64857e"
+        "_container-ci.yml@31ea81cee5475fc3655c047c63a89739948f99a9"
         in (ROOT / ".github/workflows/container-ci.yml").read_text()
     )
     assert (
