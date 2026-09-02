@@ -11,6 +11,8 @@ from typing import Any
 
 import asyncpg
 
+from genereview_link.corpus.jsonb import JsonbColumnError, json_object
+
 _SERVER_VERSION = re.compile(r"^18[0-9]{4}$")
 
 
@@ -213,23 +215,26 @@ async def load_active_computation(connection: Any) -> dict[str, object]:
          where c.is_active and c.ingest_status = 'completed'
         """
     )
-    if (
-        row is None
-        or not isinstance(row["provenance"], dict)
-        or not isinstance(row["ingest_provenance"], dict)
-        or row["ingest_provenance"].get("source_capture") != row["source_capture"]
-    ):
+    if row is None:
+        raise ValueError("active corpus has no complete immutable computation-run chain")
+    try:
+        provenance = json_object(row["provenance"], label="embedding provenance")
+        ingest_provenance = json_object(row["ingest_provenance"], label="ingest provenance")
+        source_capture = json_object(row["source_capture"], label="source capture")
+    except JsonbColumnError as error:
+        raise ValueError("active corpus has no complete immutable computation-run chain") from error
+    if ingest_provenance.get("source_capture") != source_capture:
         raise ValueError("active corpus has no complete immutable computation-run chain")
     if row["run_id"] != computation_run_id(
         phase="embedding",
         corpus_version=str(row["version"]),
         expected_row_count=int(row["expected_row_count"]),
-        provenance=row["provenance"],
+        provenance=provenance,
     ) or row["ingest_run_id"] != computation_run_id(
         phase="ingest",
         corpus_version=str(row["version"]),
         expected_row_count=int(row["ingest_expected_row_count"]),
-        provenance=row["ingest_provenance"],
+        provenance=ingest_provenance,
     ):
         raise ValueError("active corpus computation run IDs are not content-addressed")
     mismatched = int(
@@ -251,12 +256,12 @@ async def load_active_computation(connection: Any) -> dict[str, object]:
         "run_id": str(row["run_id"]),
         "app_git_sha": str(row["app_git_sha"]),
         "expected_row_count": int(row["expected_row_count"]),
-        "provenance": row["provenance"],
+        "provenance": provenance,
         "ingest_run": {
             "run_id": str(row["ingest_run_id"]),
             "app_git_sha": str(row["ingest_app_git_sha"]),
             "expected_row_count": int(row["ingest_expected_row_count"]),
-            "provenance": row["ingest_provenance"],
+            "provenance": ingest_provenance,
         },
     }
 
