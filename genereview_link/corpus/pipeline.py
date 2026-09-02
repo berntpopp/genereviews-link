@@ -62,6 +62,25 @@ async def prepare_staging(pool: asyncpg.Pool) -> None:
     await apply_data_migrations(pool, schema="genereview_staging")
 
 
+def _database_side_data_identity(
+    side_data: Mapping[str, Mapping[str, str | int]],
+) -> dict[str, dict[str, str | int]]:
+    """Project capture side-data entries onto the stored identity shape.
+
+    A retained capture entry also carries the canonical upstream ``url``, because
+    the capture attests where the bytes came from. The corpus-version row and the
+    release manifest record digest and size only, and validate_source_identity
+    demands exactly those two keys -- so handing it a capture entry verbatim made
+    every real offline ingest die at stage 0 before writing a row.
+    """
+    projected: dict[str, dict[str, str | int]] = {}
+    for name, entry in side_data.items():
+        if not isinstance(entry, Mapping) or not {"sha256", "size_bytes"} <= set(entry):
+            raise ValueError(f"side_data {name} lacks its digest identity")
+        projected[name] = {"sha256": entry["sha256"], "size_bytes": entry["size_bytes"]}
+    return projected
+
+
 async def record_corpus_version_start(
     pool: asyncpg.Pool,
     *,
@@ -77,7 +96,7 @@ async def record_corpus_version_start(
             "listing_relpath": listing.relpath,
             "last_updated": listing.last_updated,
             "tarball": {"sha256": tarball_sha256, "size_bytes": size},
-            "side_data": side_data,
+            "side_data": _database_side_data_identity(side_data),
         },
         tarball_sha256=tarball_sha256,
         last_updated=listing.last_updated,

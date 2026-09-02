@@ -110,9 +110,30 @@ async def fetch_listing(
     return listing_from_bytes(body, nbk_id=nbk_id)
 
 
+def decodable_listing_rows(body: bytes) -> list[str]:
+    """Return the UTF-8-decodable rows of one retained litarch listing.
+
+    NCBI's global litarch index is not canonical UTF-8: a handful of rows for
+    unrelated titles (NTP technical reports, Spanish-language WHO documents)
+    carry latin-1 bytes. Refusing the whole listing over a row that cannot be the
+    GeneReviews row made every real capture unusable, so undecodable rows are
+    skipped instead. The GeneReviews row itself is ASCII; were it ever not, it
+    would be skipped too and the caller's "exactly one canonical NBK1116 row"
+    rule fails closed. Both the snapshot writer and the capture reader use this
+    one function, so they cannot disagree about which rows a listing contains.
+    """
+    rows: list[str] = []
+    for raw in body.split(b"\n"):
+        try:
+            rows.append(raw.removesuffix(b"\r").decode("utf-8"))
+        except UnicodeDecodeError:
+            continue
+    return rows
+
+
 def listing_from_bytes(body: bytes, *, nbk_id: str = "NBK1116") -> ArchiveListing:
     """Return the single ArchiveListing for *nbk_id* in one retained listing body."""
-    for line in body.decode("utf-8", "replace").splitlines():
+    for line in decodable_listing_rows(body):
         parsed = parse_file_list_row(line, nbk_filter=nbk_id)
         if parsed:
             return parsed
