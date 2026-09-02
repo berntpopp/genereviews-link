@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       disabled_notice:
-        description: "This workflow is disabled. Build locally with bundle publish-local, then run Verify corpus bundle."
+        description: "This workflow is disabled. Build locally, publish with gh release create, then run Verify corpus bundle."
         required: false
         default: "disabled"
         type: string
@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo "Corpus bundles are built locally on the maintainer RTX workstation."
-          echo "Use: uv run genereview-link bundle publish-local --release-id YYYY-MM-DD-rN"
-          echo "Then run .github/workflows/verify-corpus-bundle.yml against the release asset URL."
+          echo "Corpus bundles are built locally: the embedding pass is far too slow for a hosted runner."
+          echo "1. uv run genereview-link bundle publish-local --release-id YYYY-MM-DD-rN"
+          echo "2. gh release create corpus-data-YYYY-MM-DD-rN --target <build revision> \\"
+          echo "     corpus.dump manifest.json SHA256SUMS"
+          echo "3. gh workflow run verify-corpus-bundle.yml -f release_tag=corpus-data-YYYY-MM-DD-rN"

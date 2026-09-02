@@ -237,29 +237,30 @@ async def test_snapshot_refuses_without_a_terms_acknowledgement(
 
 
 @respx.mock
-async def test_genesis_snapshot_refuses_a_prior_pair(
+async def test_genesis_snapshot_refuses_a_prior_manifest(
     respx_mock: respx.Router, tmp_path: Path
 ) -> None:
     _mock_upstream(respx_mock)
 
-    with pytest.raises(SourceFetchError, match="must not be given a prior manifest pair"):
+    with pytest.raises(SourceFetchError, match="must not be given a prior manifest"):
         await _snapshot(tmp_path / "source", prior_manifest=tmp_path / "p")
 
 
 @respx.mock
-async def test_chained_snapshot_requires_both_prior_files(
+async def test_chained_snapshot_requires_the_prior_manifest(
     respx_mock: respx.Router, tmp_path: Path
 ) -> None:
     _mock_upstream(respx_mock)
 
-    with pytest.raises(SourceFetchError, match="requires both prior manifest files"):
-        await _snapshot(tmp_path / "source", genesis=False, prior_manifest=tmp_path / "p")
+    with pytest.raises(SourceFetchError, match="requires the prior release's manifest"):
+        await _snapshot(tmp_path / "source", genesis=False)
 
 
 @respx.mock
 async def test_chained_snapshot_derives_the_prior_from_retained_bytes(
     respx_mock: respx.Router, tmp_path: Path
 ) -> None:
+    """The chain link is the previous release's published `manifest.json`, alone."""
     _mock_upstream(respx_mock)
     content_identity = {
         "chapter_ids": ["NBK9999"],
@@ -279,47 +280,29 @@ async def test_chained_snapshot_derives_the_prior_from_retained_bytes(
     ).encode()
     prior_manifest = tmp_path / "prior-manifest.json"
     prior_manifest.write_bytes(manifest_bytes)
-    prior_seal = tmp_path / "prior-seal-manifest.json"
-    prior_seal.write_bytes(
-        (
-            json.dumps(
-                {
-                    "format": "genereviews-local-handoff-v1",
-                    "corpus_release_id": "2026-08-31-r1",
-                    "genesis": True,
-                    "prior": None,
-                    "files": [
-                        {
-                            "name": "manifest.json",
-                            "sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-                            "size": len(manifest_bytes),
-                            "mode": 0o400,
-                        }
-                    ],
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n"
-        ).encode()
-    )
     destination = tmp_path / "source"
 
-    result = await _snapshot(
-        destination,
-        genesis=False,
-        prior_manifest=prior_manifest,
-        prior_seal_manifest=prior_seal,
-    )
+    result = await _snapshot(destination, genesis=False, prior_manifest=prior_manifest)
 
     capture = json.loads(result.source_metadata.read_bytes())
     assert "genesis" not in capture
     assert capture["prior_artifact"]["corpus_release_id"] == "2026-08-31-r1"
     assert (
-        capture["prior_artifact"]["object_id"]
-        == hashlib.sha256(prior_seal.read_bytes()).hexdigest()
+        capture["prior_artifact"]["manifest_sha256"] == hashlib.sha256(manifest_bytes).hexdigest()
     )
+    assert capture["prior_artifact"]["chapter_digests"] == {"NBK9999": "a" * 64}
     assert (destination / "prior-manifest.json").read_bytes() == manifest_bytes
+    assert {path.name for path in destination.iterdir()} == {
+        "source-capture.json",
+        "file_list.csv",
+        "prior-manifest.json",
+        "gene_NBK1116.tar.gz",
+        "GRtitle_shortname_NBKid.txt",
+        "NBKid_shortname_genesymbol.txt",
+        "NBKid_shortname_OMIM.txt",
+        "snapshot-manifest.json",
+    }
+    # verify=True already round-tripped this chained capture through ingest's reader.
 
 
 @respx.mock

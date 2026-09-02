@@ -80,6 +80,35 @@ Useful focused commands:
   covered by unit tests.
 - All XML parsing must use `defusedxml`, never `xml.etree.ElementTree`.
 
+## Corpus Data Releases
+
+The passage corpus is **built on the maintainer's workstation, never in CI** -- the
+embedding pass is roughly twenty minutes on 32 cores, which no hosted runner will do
+sensibly -- and published as an ordinary immutable GitHub release. Three rules follow, and
+they are not negotiable:
+
+- **Never claim a build provenance that does not exist.** Every published `manifest.json`
+  carries `build_provenance: "maintainer-prebuilt"`, `bundle_verifier.py` refuses any
+  other value, and the release body must say the same thing in prose. There is no
+  `gh attestation verify` on corpus data and there must not be one added back: it would be
+  attesting a build that CI never performed.
+- **Rights are one committed file, reviewed by the repository owner.** `data/RIGHTS.json`
+  holds the licence, attribution, citation, terms URL, reviewer and `terms_reviewed_at`;
+  `genereview_link/corpus/rights_notice.py` validates its exact shape; the bundle builder
+  copies it verbatim into the manifest as `rights_notice` and the verifier re-checks the
+  match. To refresh the determination, edit that file in a reviewed pull request -- do not
+  reintroduce locator secrets, sealed handoff objects, or a second-signature scheme.
+- **A release is exactly three assets.** `corpus.dump`, `manifest.json`, `SHA256SUMS`,
+  tagged `corpus-data-<release id>`, targeting the revision in the manifest's
+  `app_git_sha`, non-draft and non-prerelease. `verify-corpus-bundle.yml` (one input,
+  `release_tag`) proves a *published* release from scratch: digests, manifest identity,
+  provenance, rights notice, then a real restore into PostgreSQL 18 and a re-derivation of
+  counts, content identity, computation chain and evaluation results.
+
+Publishing a corpus does nothing until an application release pins it in
+`container-release.json` (`data.release_tag` plus the three asset digests). See
+[`docs/data.md`](docs/data.md) for the end-to-end flow.
+
 ## Fleet Deploy Contract
 
 This service is deployed by an external fleet controller (`strato_v6_docker_npm`), which

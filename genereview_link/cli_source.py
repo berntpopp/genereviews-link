@@ -23,14 +23,13 @@ def ingest_cmd(
     side_data_dir: Annotated[Path | None, typer.Option("--side-data-dir")] = None,
     source_metadata: Annotated[Path | None, typer.Option("--source-metadata")] = None,
     prior_manifest: Annotated[Path | None, typer.Option("--prior-manifest")] = None,
-    prior_seal_manifest: Annotated[Path | None, typer.Option("--prior-seal-manifest")] = None,
     genesis: Annotated[
         bool,
         typer.Option(
             "--genesis",
             help=(
-                "First build of the chain: no prior manifest pair. The emitted "
-                "manifest/seal pair is marked as the genesis of the chain."
+                "First build of the chain: no prior manifest. The emitted "
+                "manifest is marked as the genesis of the chain."
             ),
         ),
     ] = False,
@@ -38,9 +37,9 @@ def ingest_cmd(
     """Run the full ingest pipeline against DATABASE_URL.
 
     Two mutually exclusive modes, both from a retained offline source set:
-    chained (``--prior-manifest`` + ``--prior-seal-manifest``, proven against the
-    previous release) and ``--genesis`` (no prior; only valid for the first build
-    of a chain). Omitting both is still refused.
+    chained (``--prior-manifest``, the ``manifest.json`` published by the
+    previous release, proven against it) and ``--genesis`` (no prior; only valid
+    for the first build of a chain). Omitting both is still refused.
     """
     import asyncio
 
@@ -59,7 +58,6 @@ def ingest_cmd(
                 side_data_dir=side_data_dir,
                 source_metadata=source_metadata,
                 prior_manifest=prior_manifest,
-                prior_seal_manifest=prior_seal_manifest,
                 genesis=genesis,
             )
             typer.echo(
@@ -90,10 +88,11 @@ def snapshot_cmd(
     ] = False,
     genesis: Annotated[
         bool,
-        typer.Option("--genesis", help="First build of the chain: assemble without a prior pair."),
+        typer.Option(
+            "--genesis", help="First build of the chain: assemble without a prior manifest."
+        ),
     ] = False,
     prior_manifest: Annotated[Path | None, typer.Option("--prior-manifest")] = None,
-    prior_seal_manifest: Annotated[Path | None, typer.Option("--prior-seal-manifest")] = None,
     refresh: Annotated[
         bool, typer.Option("--refresh", help="Re-download every file even if it still matches.")
     ] = False,
@@ -131,7 +130,6 @@ def snapshot_cmd(
                 genesis=genesis,
                 acknowledge_terms=acknowledge_terms,
                 prior_manifest=prior_manifest,
-                prior_seal_manifest=prior_seal_manifest,
                 rate_limiter=PoliteRateLimiter(interval),
                 api_key=api_key,
                 refresh=refresh,
@@ -150,10 +148,7 @@ def snapshot_cmd(
     chain = (
         "--genesis"
         if result.genesis
-        else (
-            f"--prior-manifest {result.destination}/prior-manifest.json "
-            f"--prior-seal-manifest {result.destination}/prior-seal-manifest.json"
-        )
+        else f"--prior-manifest {result.destination}/prior-manifest.json"
     )
     typer.echo(
         "next: genereview-link ingest "

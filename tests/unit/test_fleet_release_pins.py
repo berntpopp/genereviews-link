@@ -27,8 +27,12 @@ def test_release_dependencies_use_reviewed_immutable_pins() -> None:
         in (ROOT / ".github/workflows/container-release.yml").read_text()
     )
     assert (
-        "actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8"
-        in (ROOT / ".github/workflows/corpus-data-release.yml").read_text()
+        "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
+        in (ROOT / ".github/workflows/verify-corpus-bundle.yml").read_text()
+    )
+    assert (
+        "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8"
+        in (ROOT / ".github/workflows/verify-corpus-bundle.yml").read_text()
     )
 
 

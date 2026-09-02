@@ -12,10 +12,17 @@ as phase tags where a semver release has not yet been cut.
 
 ### Security
 
-- Data-only corpus release workflows now use bounded exact-asset retrieval, release attestation,
-  archive-TOC allowlisting, non-owner transactional restores, and exact restored-count/search checks.
-  Handoff revalidation is no-follow, owner/mode checked, and binds the affirmative rights record to
-  the sealed source, artifact, and release identity. No publication was performed by this source change.
+- Corpus publication no longer runs through a sealed handoff object, locator secrets, a tag
+  ruleset, a two-person rights record, or `gh attestation verify`. The corpus is built on the
+  maintainer's workstation and published as an immutable GitHub release of exactly
+  `corpus.dump`, `manifest.json` and `SHA256SUMS`. What still protects a consumer is unchanged
+  and now stands alone: the `SHA256SUMS`/manifest digest bindings, the closed-world manifest
+  check, the `container-release.json` digest anchors proven before any byte reaches the
+  no-egress restore sidecar, and a from-scratch restore-and-re-derive verification in CI.
+  The published manifest states `build_provenance: "maintainer-prebuilt"` and carries the
+  committed `data/RIGHTS.json` notice verbatim, so nothing claims a provenance it does not
+  have. Demanding a CI attestation for bytes CI never built was not a stronger guarantee —
+  it made a locally built corpus unpublishable while proving nothing about it.
 
 ---
 

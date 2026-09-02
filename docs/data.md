@@ -82,7 +82,11 @@ sudo mv /tmp/corpus-bundle.tar.gz /srv/genefoundry/genereviews-seed/
 ```
 
 `docker/ci-prepare-smoke.sh` performs exactly these steps for CI, and is the executable
-reference for the shape of the seed directory.
+reference for the shape of the seed directory. It also handles the current
+(manifest-v3) release shape, where the seed directory holds `corpus.dump`,
+`manifest.json` and `SHA256SUMS` instead of one tarball and `container-release.json`
+anchors all three digests — see
+[Pinning a published corpus into the application](#pinning-a-published-corpus-into-the-application).
 
 ### Rebuilding the corpus and publishing it as a release asset
 
@@ -238,7 +242,13 @@ An app assembled outside the normal server lifespan (unit tests, embedded use) r
 ## Building and publishing a corpus (maintainer)
 
 One flow, start to finish, on a workstation. Every step is explicit: acquisition never
-mutates a database, ingest never fetches, and publication is rights-gated and separate.
+mutates a database, ingest never fetches, and publication is a separate, deliberate act.
+
+**The corpus is built locally, not in CI.** The embedding pass takes roughly twenty minutes
+on 32 cores; a hosted runner cannot do it in a sensible time. So the bytes are produced on
+the maintainer's machine and published as an ordinary immutable GitHub release. The
+manifest says so in as many words -- `build_provenance: "maintainer-prebuilt"` -- and no
+part of this repository claims a CI build provenance or an attestation for corpus data.
 
 ```bash
 uv sync --group dev --extra cpu --frozen
@@ -257,19 +267,17 @@ genereview-link ingest --genesis \
   --source-metadata ~/genereviews-source/source-capture.json
 
 # 2b. Ingest, every subsequent build: chained to the previous release. Pass the previous
-#     release's manifest.json / seal-manifest.json to `snapshot` (without --genesis) and
-#     it derives and stages the prior-artifact identity for you.
+#     release's published manifest.json to `snapshot` (without --genesis) and it derives
+#     and stages the prior-artifact identity for you.
 genereview-link ingest \
   --archive ~/genereviews-source/gene_NBK1116.tar.gz \
   --side-data-dir ~/genereviews-source \
   --source-metadata ~/genereviews-source/source-capture.json \
-  --prior-manifest ~/genereviews-source/prior-manifest.json \
-  --prior-seal-manifest ~/genereviews-source/prior-seal-manifest.json
+  --prior-manifest ~/genereviews-source/prior-manifest.json
 
 make embed                                        # BGE backfill + HNSW index
 make bundle-validate                              # active corpus is publish-ready
 RELEASE_ID=<upstream-date>-r1 make bundle-publish-local
-make db-reset                                     # DROP and recreate the schemas (dev only)
 ```
 
 Migrations are split into **control** (corpus version, refresh log, active embedding) and
@@ -281,166 +289,118 @@ Migrations are split into **control** (corpus version, refresh log, active embed
 > `source-capture.json`). `verify_data_only_bundle` refuses a release ID whose date does
 > not match the source snapshot it claims to package.
 
-### Acquisition (`snapshot`) and the terms
+### Rights: one committed notice, one reviewer
 
-GeneReviews content is copyrighted — noncommercial research purposes only, retain the
-copyright notice and Usage Disclaimer, no further modifications. Acquisition is not
-redistribution, so `snapshot` is not behind the publication rights gate; it does require
-`--acknowledge-terms` before it writes a byte, and records that acknowledgement alongside
-the fetched files in `snapshot-manifest.json`. **Publication remains gated** by the dated
-owner determination `rights.py` checks (issue #27) — that is unchanged.
+GeneReviews content is copyrighted -- noncommercial research purposes only, retain the
+copyright notice and Usage Disclaimer, no further modifications. That determination is
+**committed and versioned** in [`data/RIGHTS.json`](../data/RIGHTS.json): the licence name
+and URL, the attribution, the citation, the terms URL, the reviewer (the repository owner)
+and the date the terms were last reviewed. It is validated by
+`genereview_link/corpus/rights_notice.py`, which checks presence and exact shape, requires
+the use restriction to say *research use only*, and refuses a review date in the future.
+
+The bundle builder copies the validated notice verbatim into `manifest.json` as
+`rights_notice`, so attribution and the use restriction travel with every published byte,
+and the verification workflow re-checks that the published block still matches the
+committed file. There is no secret, no locator, no second signature and no per-release
+sign-off ceremony: to refresh the determination, edit `data/RIGHTS.json` (and
+`terms_reviewed_at`) in a reviewed pull request.
+
+Acquisition is not redistribution, so `snapshot` is not gated on any of this; it does
+require `--acknowledge-terms` before it writes a byte, and records the committed notice
+alongside the fetched files in `snapshot-manifest.json`.
 
 Requests are paced with NCBI's published courtesy interval (`--min-interval`, default
 0.34 s, or 0.11 s when `NCBI_API_KEY` is set). The key does not authenticate the bulk FTP
-paths this command uses — it governs the E-utilities plane above — but the same politeness
+paths this command uses -- it governs the E-utilities plane above -- but the same politeness
 floor applies either way.
 
 ### The chain, and its genesis
 
 Each release's `source-capture.json` names the release it was built from, and that claim is
-proven byte-for-byte against the retained prior `manifest.json` / `seal-manifest.json` pair.
-The first build of a chain has nothing to point at, so it is marked explicitly:
-`--genesis` writes `genesis: true` / `prior_artifact: null` into the capture, and the
-resulting `seal-manifest.json` carries `genesis: true` / `prior: null`. A missing prior
-*without* `--genesis` is still refused — the genesis case is declared, never inferred.
+proven byte-for-byte against the retained prior `manifest.json`. The first build of a chain
+has nothing to point at, so it is marked explicitly: `--genesis` writes `genesis: true` /
+`prior_artifact: null` into the capture. A missing prior *without* `--genesis` is still
+refused -- the genesis case is declared, never inferred.
 
-### Packaging, sealing and publication
+### Packaging and publication
 
 `bundle publish-local` packages the already-ingested, already-embedded, validated database
-locally; it never uploads, creates a draft, or contacts a release service. `make bundle`
-does the same without the release-id ergonomics.
+locally; it never uploads, creates a draft, or contacts a release service. It validates,
+evaluates and exports the candidate while holding the corpus advisory lock and a
+repeatable-read exported snapshot, so the manifest binds the evaluation suite and results
+to the exact corpus source tuple, snapshot identifier and `corpus.dump` digest. `make
+bundle` does the same without the release-id ergonomics.
 
-Rights-gated publication is deliberately separate: it requires a complete dated affirmative
-redistribution record bound to an immutable sealed handoff object. Do not draft, upload, or
-publish without that record.
+The output directory contains exactly three files, and that is exactly what gets published:
 
-`bundle publish-local` is the ergonomic build-to-seal path: it validates, evaluates, and exports
-the candidate while holding the same corpus advisory lock and repeatable-read exported snapshot.
-The resulting manifest binds the evaluation suite/results to the exact corpus source tuple,
-snapshot identifier, and `corpus.dump` digest, so the directory is accepted by `seal-handoff`.
-Metrics copied from another run cannot replace this in-transaction evidence.
+| asset | what it is |
+| --- | --- |
+| `corpus.dump` | PostgreSQL custom-format, data-only |
+| `manifest.json` | the full identity of the build, including `build_provenance` and `rights_notice` |
+| `SHA256SUMS` | binds `corpus.dump` and `manifest.json` |
 
-The local output is exactly `corpus.dump`, canonical `manifest.json`, and `SHA256SUMS`; it contains
-data only, never schema, migrations, application code, environment files, or credentials. Verify
-and seal it with `genereview-link bundle seal-handoff --source <directory> --handoff-root <root> \
---publisher-tool <directory-containing-exactly-one-wheel>`.
-`publish-handoff` only re-verifies a literal object ID and a complete affirmative, dated rights
-record bound to that object, its source SHA-256, corpus-dump SHA-256, and release ID; it deliberately
-has no release-service client. The handoff root is owner-only (`0700`), and sealed objects/files are
-checked with no-follow file descriptors, exact digest/size/mode manifests, and immutable object IDs.
-The sealed publisher wheel name and digest are part of that object identity; the privileged workflow
-extracts only that bounded wheel without an index or dependency resolution. Its handoff verifier uses only
-the Python standard library. It is launched from a neutral directory under `python -I`, inserts only
-the sealed installation target, and proves the verifier module's `__file__` is below that target, so
-the source checkout and ambient site packages cannot shadow it in the credentialed job.
-A separately privileged automation may act only on that sealed handoff after the rights record exists.
+Publish them as a release whose tag is `corpus-data-<release id>` and whose target is the
+exact revision the bundle records in `app_git_sha`. Treat a published corpus release as
+immutable: never move the tag, never replace an asset. Every consumer pins the asset
+digests in `container-release.json`, so a mutation is a detectable break rather than a
+silent update -- which is exactly why replacing one is never the right move. Cut a new
+release id instead.
 
-The build job uploads one immutable, 90-day Actions artifact named from the sealed object ID. It
-contains the exact five attested subjects plus canonical `handoff-materialization.json`, which
-binds their names, sizes, SHA-256 digests, build revision, source repository/ref, and object ID.
-This unprivileged artifact is only a bridge for the owner: download those exact content bytes, verify
-their build-provenance attestations and materialization record, restore the generic
-`publisher-tool.whl` filename to the sealed wheel name recorded in that materialization and
-`seal-manifest.json`, then copy the five subjects to durable immutable release-asset storage and
-construct the numeric-asset handoff locator. Record the
-Actions artifact ID/digest and the resulting durable asset IDs/digests in the owner evidence. The
-privileged publisher never consumes a runner artifact or run ID as a handoff. Its protected
-sub-48-KiB handoff locator names exactly the sealed `corpus.dump`, `manifest.json`, `SHA256SUMS`,
-`seal-manifest.json`, and one publisher wheel by immutable numeric GitHub release-asset URL, size,
-and SHA-256, and binds the object ID and build revision. It reconstructs a fresh owner-only handoff,
-then the sealed wheel re-verifies its object identity before rights or release logic is reached.
+```bash
+cd genereview-corpus-data-2026-09-01-r1
+gh release create corpus-data-2026-09-01-r1 \
+  --target "$(jq -er .app_git_sha manifest.json)" \
+  --title corpus-data-2026-09-01-r1 \
+  --notes-file release-notes.md \
+  corpus.dump manifest.json SHA256SUMS
+```
 
-The protected publisher consumes a sub-48-KiB locator for exactly three immutable, numeric GitHub
-release assets: `rights-record.json`, `rights-evidence.json`, and `terms-snapshot.html`. Repository,
-host, byte-size, and SHA-256 allowlists are enforced before those durable bytes are accepted. The
-canonical rights record uses `bundle:` member URIs and binds both snapshots by SHA-256. The public
-release retains all three safe records, `seal-manifest.json`, and the sealed publisher wheel as
-`publisher-tool.whl`, in addition to the three data-only bundle files. This makes the public decision
-and publisher object reconstructable without publishing private keys, tokens, or unrelated reviewer
-material. A missing, non-affirmative, malformed, or mismatched record fails before any release or tag
-mutation.
+The release body must state the build provenance plainly -- that the corpus was built on
+the maintainer's workstation, the revision it was built at, and the date the terms were
+reviewed -- so nobody reading the release page infers a CI build that never happened.
 
-Local handoff roots and the final numeric release assets are durable owner-controlled storage outside
-both the repository and serving volumes. They are retained through program closure. The intermediate
-90-day workflow artifact makes the attested bytes retrievable after the build job, but its retention
-deadline is not final durable-publication evidence. Record only verified exact local or release-asset
-identities—do not infer or claim an object from an earlier log line.
+Then verify the published release from scratch, in CI:
 
-The no-input builder uses a separate sub-48-KiB protected locator to download the exact retained
-archive, source-capture metadata, prior release manifest and seal manifest, and three side-data
-files from immutable numeric release assets.
-Ingest never substitutes a live fetch for this publication path. The corpus manifest binds the
-canonical upstream URLs, exact raw listing response digest/size/capture time, archive digest/size and
-sorted member/expanded-content identities, exact sorted chapter IDs, and digest/size identity for
-each side-data file. These fields and compute-time runtime/model provenance are stored immutably with
-the active corpus rows; packaging refuses older database rows that lack the complete identity.
-The prior release ID, application revision, manifest digest, and full logical content tuple are
-verified from the retained prior manifest before staging is touched. Restore writes the immutable
-`public.genereview_release_readiness` marker only after migrations, exactly one data-only restore,
-counts, HNSW, source digest, and the reviewed semantic suite succeed; it binds the three logical
-volumes `genereview_pg_data`, `genereview_pg_run`, and `genereview_restore_state`.
+```bash
+gh workflow run verify-corpus-bundle.yml -f release_tag=corpus-data-2026-09-01-r1
+```
 
-The privileged workflow downloads only the exact eight public reconstruction assets through byte-
-and deadline-bounded allowlisted streams, verifies their API asset IDs/sizes/digests and attestation,
-and reads the PostgreSQL archive TOC before restore. Every `pg_dump`, `pg_restore`, and `psql` command
-runs from the digest-pinned PostgreSQL 18/pgvector image, matching the server major. Reviewed migrations
-run as the owner; archive data restores through the exact restricted `NOINHERIT` role in one transaction.
-The verifier recomputes source/content/provenance identities, exact migration file digests, counts,
-HNSW presence, representative queries, and the reviewed nonzero evaluation suite from the restored DB.
-Release publication inventories drafts as well as published releases and mutates only the exact numeric
-release ID after verifying its tag, source revision, asset IDs, sizes, digests, and closed lifecycle state.
-Before any draft or asset mutation, the owner-created annotated corpus tag must resolve to the exact
-build/object identity under an active tag ruleset that prohibits deletion and updates with no
-bypass actors. Promotion freezes that tag object plus the exact draft representation and ETag before
-semantic restore, rechecks the protected tag/ruleset and ETag immediately before the only PATCH, and
-uses the verified ETag as `If-Match`. Publication automatically dispatches the external verifier with the
-exact release ID/tag/target/assets tuple; closure requires its successful acceptance artifact.
+`verify-corpus-bundle.yml` downloads the three assets, checks them against `SHA256SUMS`,
+runs `verify_data_only_bundle`, requires `build_provenance: maintainer-prebuilt` and a
+`rights_notice` equal to the committed `data/RIGHTS.json`, requires the release to be
+non-draft and non-prerelease with exactly those three assets and a target commit equal to
+the manifest's `app_git_sha`, then restores the dump into a fresh PostgreSQL 18, rebuilds
+HNSW from reviewed code and re-derives the counts, the logical content identity, the
+computation chain and the evaluation results. It verifies an *already published* release;
+nothing about it is a build step.
 
-### Handing a sealed bundle to CI
+### Pinning a published corpus into the application
 
-Two workflows finish the job, and neither is a local step:
+A published corpus does nothing until an application release pins it. In
+`container-release.json`, the `data` block names the release and anchors all three asset
+digests; `docker/ci-prepare-smoke.sh` is the only place the stack touches the network and
+it proves the bytes against those digests before they reach the restore sidecar:
 
-| Workflow | Who dispatches it | What it does |
-|---|---|---|
-| `corpus-data-release.yml` (`-f object_id=<sealed sha256>`) | the maintainer, from `main` | the rights-gated **publisher**: reconstructs the sealed handoff from durable release assets, re-verifies rights, then creates the tag/release. Gated by the `data-release` environment (owner approval). |
-| `verify-corpus-bundle.yml` | `corpus-data-release.yml`, automatically | the independent **verifier** of an already drafted/published release: it downloads the eight public assets, restores the dump, and recomputes every identity. |
+```json
+"data": {
+  "mode": "restored-database",
+  "release_tag": "corpus-data-2026-09-01-r1",
+  "asset_name": "corpus.dump",
+  "digest": "sha256:<corpus.dump>",
+  "manifest_digest": "sha256:<manifest.json>",
+  "checksums_digest": "sha256:<SHA256SUMS>"
+}
+```
 
-`verify-corpus-bundle.yml` is **not** a pre-publication check of a local directory and is not
-normally dispatched by hand. Its eight inputs all describe a release that already exists:
-`release_tag`, `release_id` (the numeric GitHub release ID), `target_commit`, `assets_sha256`,
-`publication_nonce`, `verification_phase` (`prepublication` | `postpublication`), `release_etag`,
-and `dispatch_time`. It refuses to run off `refs/heads/main`, and its first act is a
-`If-None-Match` precondition that must return `304` — so a hand-typed dispatch with a stale
-ETag fails closed by design.
-
-Dispatching `corpus-data-release.yml` with an **empty** `object_id` selects the in-CI build
-job instead of the publisher. That path assembles its retained source set from a protected
-locator rather than from `snapshot`.
-
-> [!NOTE]
-> Both CI paths need owner-provisioned protected configuration that is not in this
-> repository: `GENEREVIEWS_SOURCE_LOCATOR` + `GENEREVIEWS_SOURCE_REPOSITORIES` (in-CI build
-> and verifier), `GENEREVIEWS_HANDOFF_LOCATOR` + `GENEREVIEWS_HANDOFF_REPOSITORIES`,
-> `GENEREVIEWS_RIGHTS_LOCATOR` + `GENEREVIEWS_RIGHTS_REPOSITORIES`, and
-> `GENEREVIEWS_TAG_RULESET_ID` (publisher). Without them the workflows fail closed, which
-> is the intended behaviour — but it also means a corpus can be *built* locally long
-> before it can be *published*.
+`data.digest` and the final readiness artifact identity both mean the verified
+`corpus.dump` digest. A pin changes only after the immutable release exists; source
+preparation never invents an unavailable asset.
 
 ### Historical: the pre-manifest-v3 release shape
 
 `corpus-data-2026-07-13-r1` and earlier ship a single `corpus-bundle.tar.gz` + `SHA256SUMS`
-with no `manifest.json` and no seal manifest; that shape predates the sealed-handoff scheme
-described above, cannot serve as a prior artifact for it, and is retained only because it is
-the currently pinned production corpus.
-
-The repository owner supplied an affirmative redistribution determination dated 2026-09-01;
-publication remains bound to that durable evidence, the exact source/artifact digests, and required
-University of Washington attribution. The current production pin remains the truthful legacy tar
-release until the authorized replacement is actually published and verified. The restore bridge
-also accepts the exact-eight release directly: its read-only seed directory contains exactly
-`corpus.dump`, `manifest.json`, and `SHA256SUMS`, and `container-release.json` sets `asset_name` to
-`corpus.dump` while anchoring all three asset digests. In that direct shape, `data.digest` and the
-final readiness artifact identity both mean the verified `corpus.dump` digest. A pin changes only
-after the immutable release exists; source preparation never invents an unavailable asset.
+with no `manifest.json`; that shape predates the scheme described above, cannot serve as a
+prior artifact for it, and is retained only because it was the pinned production corpus.
 
 `scripts/refresh_chapter_metadata_dates.py` refreshes chapter dates against NCBI.

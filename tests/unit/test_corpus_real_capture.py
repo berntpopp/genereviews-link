@@ -128,7 +128,6 @@ def test_a_capture_over_the_real_index_shape_loads(tmp_path: Path) -> None:
         archive=archive,
         side_data_dir=root,
         prior_manifest=None,
-        prior_seal_manifest=None,
     )
 
     assert loaded == capture
@@ -145,7 +144,6 @@ def test_a_listing_digest_mismatch_is_still_refused(tmp_path: Path) -> None:
             archive=archive,
             side_data_dir=root,
             prior_manifest=None,
-            prior_seal_manifest=None,
         )
 
 
@@ -163,7 +161,6 @@ def test_two_genereviews_rows_are_still_refused(tmp_path: Path) -> None:
             archive=archive,
             side_data_dir=root,
             prior_manifest=None,
-            prior_seal_manifest=None,
         )
 
 

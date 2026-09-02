@@ -278,28 +278,25 @@ def _require_offline_source_set(
     side_data_dir: Path | None,
     source_metadata: Path | None,
     prior_manifest: Path | None,
-    prior_seal_manifest: Path | None,
     genesis: bool,
 ) -> None:
     """Refuse any partially supplied offline source set, fail-closed in both modes.
 
     ``genesis`` is the *only* way to build without a prior artifact, and it is
-    explicit: a missing prior pair without it keeps raising today's error rather
-    than quietly ingesting from an empty chain.
+    explicit: a missing prior manifest without it keeps raising today's error
+    rather than quietly ingesting from an empty chain.
     """
     retained = (archive, side_data_dir, source_metadata)
-    prior = (prior_manifest, prior_seal_manifest)
     if genesis:
-        if any(value is not None for value in prior):
-            raise ValueError("genesis ingest must not be given a prior manifest pair")
+        if prior_manifest is not None:
+            raise ValueError("genesis ingest must not be given a prior manifest")
         if not all(value is not None for value in retained):
             raise ValueError("genesis ingest requires archive, side-data directory, and metadata")
         return
-    offline = retained + prior
+    offline = (*retained, prior_manifest)
     if not all(value is not None for value in offline):
         raise ValueError(
-            "offline ingest requires archive, side-data directory, metadata, prior manifest, "
-            "and prior seal manifest"
+            "offline ingest requires archive, side-data directory, metadata, and prior manifest"
             if any(value is not None for value in offline)
             else "mutating ingest requires the complete retained offline source set"
         )
@@ -312,7 +309,6 @@ async def run_full_ingest(
     side_data_dir: Path | None = None,
     source_metadata: Path | None = None,
     prior_manifest: Path | None = None,
-    prior_seal_manifest: Path | None = None,
     genesis: bool = False,
 ) -> IngestResult:
     """Serialize the entire shared staging lifecycle under a distinct session lock."""
@@ -321,7 +317,6 @@ async def run_full_ingest(
         side_data_dir=side_data_dir,
         source_metadata=source_metadata,
         prior_manifest=prior_manifest,
-        prior_seal_manifest=prior_seal_manifest,
         genesis=genesis,
     )
     async with pool.acquire() as lock_connection:
@@ -333,7 +328,6 @@ async def run_full_ingest(
                 side_data_dir=side_data_dir,
                 source_metadata=source_metadata,
                 prior_manifest=prior_manifest,
-                prior_seal_manifest=prior_seal_manifest,
                 genesis=genesis,
             )
         finally:
@@ -347,20 +341,16 @@ async def _run_full_ingest_locked(
     side_data_dir: Path | None = None,
     source_metadata: Path | None = None,
     prior_manifest: Path | None = None,
-    prior_seal_manifest: Path | None = None,
     genesis: bool = False,
 ) -> IngestResult:
     """End-to-end stages 0-9 (excluding embeddings, which run separately)."""
     retained = (archive, side_data_dir, source_metadata)
-    if genesis or any(
-        value is not None for value in (*retained, prior_manifest, prior_seal_manifest)
-    ):
+    if genesis or any(value is not None for value in (*retained, prior_manifest)):
         _require_offline_source_set(
             archive=archive,
             side_data_dir=side_data_dir,
             source_metadata=source_metadata,
             prior_manifest=prior_manifest,
-            prior_seal_manifest=prior_seal_manifest,
             genesis=genesis,
         )
         assert archive is not None and side_data_dir is not None and source_metadata is not None
@@ -369,14 +359,12 @@ async def _run_full_ingest_locked(
             side_data_dir=side_data_dir,
             source_metadata=source_metadata,
             prior_manifest=prior_manifest,
-            prior_seal_manifest=prior_seal_manifest,
         ) as admitted:
             capture = load_offline_capture(
                 admitted.source_metadata,
                 archive=admitted.archive,
                 side_data_dir=admitted.side_data_dir,
                 prior_manifest=admitted.prior_manifest,
-                prior_seal_manifest=admitted.prior_seal_manifest,
             )
             listing_data = capture["listing"]
             archive_data = capture["archive"]

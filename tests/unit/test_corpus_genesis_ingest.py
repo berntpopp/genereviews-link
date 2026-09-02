@@ -1,10 +1,15 @@
 """The genesis path: a first corpus build with no prior release to chain from.
 
 The chain has to start somewhere. Before `--genesis` existed, every mutating
-ingest demanded a prior manifest/seal pair built under the *current* scheme, so
-the first build under that scheme was unreachable by construction (#147). These
-tests pin both halves of the fix: genesis produces a provable capture without a
-prior, and the absence of a prior without `--genesis` is still refused.
+ingest demanded a prior manifest built under the *current* scheme, so the first
+build under that scheme was unreachable by construction (#147). These tests pin
+both halves of the fix: genesis produces a provable capture without a prior, and
+the absence of a prior without `--genesis` is still refused.
+
+The chained half has the same unreachability hazard, so it is pinned here too:
+a chained build must be provable from the previous release's published
+`manifest.json` and nothing else, because that is the only prior byte-stream a
+published release still carries.
 """
 
 from __future__ import annotations
@@ -113,7 +118,6 @@ def test_genesis_capture_loads_without_any_prior_pair(tmp_path: Path) -> None:
         archive=archive,
         side_data_dir=root,
         prior_manifest=None,
-        prior_seal_manifest=None,
     )
 
     assert loaded["genesis"] is True
@@ -133,22 +137,20 @@ def test_genesis_capture_refuses_a_prior_it_claims_not_to_have(tmp_path: Path) -
             archive=archive,
             side_data_dir=root,
             prior_manifest=stray,
-            prior_seal_manifest=stray,
         )
 
 
-def test_capture_without_genesis_still_requires_a_prior_pair(tmp_path: Path) -> None:
+def test_capture_without_genesis_still_requires_a_prior_manifest(tmp_path: Path) -> None:
     archive, root = _fixture_corpus(tmp_path)
     capture = _genesis_capture(archive, root)
     del capture["genesis"]
 
-    with pytest.raises(SourceCaptureError, match="requires a retained prior manifest pair"):
+    with pytest.raises(SourceCaptureError, match="requires a retained prior manifest"):
         load_offline_capture(
             _write_capture(root, capture),
             archive=archive,
             side_data_dir=root,
             prior_manifest=None,
-            prior_seal_manifest=None,
         )
 
 
@@ -163,11 +165,10 @@ def test_genesis_flag_must_be_a_literal_boolean(tmp_path: Path) -> None:
             archive=archive,
             side_data_dir=root,
             prior_manifest=None,
-            prior_seal_manifest=None,
         )
 
 
-def test_genesis_admission_copies_the_inventory_minus_the_prior_pair(tmp_path: Path) -> None:
+def test_genesis_admission_copies_the_inventory_minus_the_prior_manifest(tmp_path: Path) -> None:
     archive, root = _fixture_corpus(tmp_path)
     _write_capture(root, _genesis_capture(archive, root))
 
@@ -176,11 +177,9 @@ def test_genesis_admission_copies_the_inventory_minus_the_prior_pair(tmp_path: P
         side_data_dir=root,
         source_metadata=root / "source-capture.json",
         prior_manifest=None,
-        prior_seal_manifest=None,
     ) as admitted:
         names = {path.name for path in admitted.root.iterdir()}
         assert admitted.prior_manifest is None
-        assert admitted.prior_seal_manifest is None
 
     assert names == {
         "source-capture.json",
@@ -192,18 +191,46 @@ def test_genesis_admission_copies_the_inventory_minus_the_prior_pair(tmp_path: P
     }
 
 
-def test_admission_refuses_half_a_prior_pair(tmp_path: Path) -> None:
+def test_chained_admission_copies_the_prior_manifest_too(tmp_path: Path) -> None:
+    """The chained inventory is the genesis one plus exactly `prior-manifest.json`."""
+    archive, root = _fixture_corpus(tmp_path)
+    _write_capture(root, _genesis_capture(archive, root))
+    prior_manifest = root / "prior-manifest.json"
+    prior_manifest.write_bytes(b'{"manifest_version":"3"}\n')
+
+    with admit_offline_source(
+        archive=archive,
+        side_data_dir=root,
+        source_metadata=root / "source-capture.json",
+        prior_manifest=prior_manifest,
+    ) as admitted:
+        names = {path.name for path in admitted.root.iterdir()}
+        assert admitted.prior_manifest is not None
+        assert admitted.prior_manifest.read_bytes() == prior_manifest.read_bytes()
+
+    assert names == {
+        "source-capture.json",
+        "file_list.csv",
+        "prior-manifest.json",
+        "gene_NBK1116.tar.gz",
+        "GRtitle_shortname_NBKid.txt",
+        "NBKid_shortname_genesymbol.txt",
+        "NBKid_shortname_OMIM.txt",
+    }
+
+
+def test_admission_refuses_a_prior_manifest_that_is_not_there(tmp_path: Path) -> None:
+    """A named-but-absent prior is a hard refusal, never a silent genesis."""
     archive, root = _fixture_corpus(tmp_path)
     _write_capture(root, _genesis_capture(archive, root))
 
     with (
-        pytest.raises(SourceSnapshotError, match="requires both prior files"),
+        pytest.raises(SourceSnapshotError),
         admit_offline_source(
             archive=archive,
             side_data_dir=root,
             source_metadata=root / "source-capture.json",
             prior_manifest=root / "prior-manifest.json",
-            prior_seal_manifest=None,
         ),
     ):
         pass
@@ -216,7 +243,6 @@ def test_ingest_without_genesis_or_a_prior_keeps_todays_refusal() -> None:
             side_data_dir=None,
             source_metadata=None,
             prior_manifest=None,
-            prior_seal_manifest=None,
             genesis=False,
         )
 
@@ -228,19 +254,17 @@ def test_ingest_with_a_partial_offline_set_is_still_refused(tmp_path: Path) -> N
             side_data_dir=tmp_path,
             source_metadata=tmp_path / "m",
             prior_manifest=None,
-            prior_seal_manifest=None,
             genesis=False,
         )
 
 
-def test_genesis_ingest_refuses_a_prior_pair(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="must not be given a prior manifest pair"):
+def test_genesis_ingest_refuses_a_prior_manifest(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must not be given a prior manifest"):
         _require_offline_source_set(
             archive=tmp_path / "a",
             side_data_dir=tmp_path,
             source_metadata=tmp_path / "m",
             prior_manifest=tmp_path / "p",
-            prior_seal_manifest=tmp_path / "s",
             genesis=True,
         )
 
@@ -252,7 +276,6 @@ def test_genesis_ingest_still_requires_the_retained_source(tmp_path: Path) -> No
             side_data_dir=None,
             source_metadata=tmp_path / "m",
             prior_manifest=None,
-            prior_seal_manifest=None,
             genesis=True,
         )
 
@@ -278,7 +301,7 @@ def test_genesis_content_identity_records_a_null_prior(tmp_path: Path) -> None:
     delta = identity["delta_from_prior"]
     assert isinstance(delta, dict)
     assert delta["genesis"] is True
-    assert delta["object_id"] is None
+    assert delta["prior_manifest_sha256"] is None
     assert delta["prior_chapter_count"] is None
     assert delta["added"] == ["NBK9998", "NBK9999"]
     assert delta["removed"] == [] and delta["changed"] == []
@@ -300,32 +323,37 @@ def test_content_identity_still_needs_a_prior_when_not_genesis(tmp_path: Path) -
         )
 
 
-def _seal_bytes(release_id: str, manifest_bytes: bytes) -> bytes:
-    return (
-        json.dumps(
-            {
-                "format": "genereviews-local-handoff-v1",
-                "corpus_release_id": release_id,
-                "genesis": True,
-                "prior": None,
-                "files": [
-                    {
-                        "name": "manifest.json",
-                        "sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-                        "size": len(manifest_bytes),
-                        "mode": 0o400,
-                    }
-                ],
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        + "\n"
+def _prior_release_manifest(root: Path, identity: dict[str, object]) -> Path:
+    """Exactly what a published release carries: `manifest.json`, nothing beside it."""
+    manifest_bytes = json.dumps(
+        {
+            "manifest_version": "3",
+            "corpus_release_id": "2026-08-31-r1",
+            "app_git_sha": "1" * 40,
+            "content_identity": identity,
+        },
+        sort_keys=True,
     ).encode()
+    prior_manifest = root / "prior-manifest.json"
+    prior_manifest.write_bytes(manifest_bytes)
+    return prior_manifest
+
+
+def _chained_capture(root: Path, capture: dict[str, object], prior_manifest: Path) -> dict:
+    chained = dict(capture)
+    chained.pop("genesis", None)
+    chained["prior_artifact"] = prior_artifact_from(prior_manifest)
+    return chained
 
 
 def test_a_chained_capture_verifies_against_a_genesis_release(tmp_path: Path) -> None:
-    """The point of genesis: the *second* build must chain off the first."""
+    """The point of genesis: the *second* build must chain off the first.
+
+    And it must do so from the previous release's published `manifest.json`
+    alone -- that is the only prior byte-stream a release still publishes, so
+    demanding anything beside it would make the chained path unreachable exactly
+    the way the genesis path once was (#147, #149).
+    """
     archive, root = _fixture_corpus(tmp_path)
     genesis_capture = _genesis_capture(archive, root)
     chapters, passages = _rows(["NBK9998", "NBK9999"])
@@ -335,34 +363,102 @@ def test_a_chained_capture_verifies_against_a_genesis_release(tmp_path: Path) ->
         side_mapping_ids={"NBK9998", "NBK9999"},
         source_capture=genesis_capture,
     )
-    manifest_bytes = json.dumps(
-        {
-            "manifest_version": "3",
-            "corpus_release_id": "2026-08-31-r1",
-            "app_git_sha": "1" * 40,
-            "content_identity": genesis_identity,
-        },
-        sort_keys=True,
-    ).encode()
-    prior_manifest = root / "prior-manifest.json"
-    prior_manifest.write_bytes(manifest_bytes)
-    prior_seal = root / "prior-seal-manifest.json"
-    prior_seal.write_bytes(_seal_bytes("2026-08-31-r1", manifest_bytes))
-
-    chained = dict(genesis_capture)
-    del chained["genesis"]
-    chained["prior_artifact"] = prior_artifact_from(prior_manifest, prior_seal)
+    prior_manifest = _prior_release_manifest(root, genesis_identity)
+    chained = _chained_capture(root, genesis_capture, prior_manifest)
 
     loaded = load_offline_capture(
         _write_capture(root, chained),
         archive=archive,
         side_data_dir=root,
         prior_manifest=prior_manifest,
-        prior_seal_manifest=prior_seal,
     )
 
     prior = loaded["prior_artifact"]
     assert isinstance(prior, dict)
+    assert set(prior) == {
+        "manifest_sha256",
+        "corpus_release_id",
+        "app_git_sha",
+        "chapter_ids",
+        "chapter_count",
+        "chapter_digests",
+        "chapters_sha256",
+        "passages_sha256",
+    }
     assert prior["corpus_release_id"] == "2026-08-31-r1"
     assert prior["chapter_count"] == 2
-    assert prior["object_id"] == hashlib.sha256(prior_seal.read_bytes()).hexdigest()
+    assert prior["manifest_sha256"] == hashlib.sha256(prior_manifest.read_bytes()).hexdigest()
+
+
+def test_a_chained_capture_is_bound_to_the_exact_prior_manifest_bytes(tmp_path: Path) -> None:
+    """`manifest_sha256` is the whole binding now, so it has to actually bind."""
+    archive, root = _fixture_corpus(tmp_path)
+    genesis_capture = _genesis_capture(archive, root)
+    chapters, passages = _rows(["NBK9998", "NBK9999"])
+    genesis_identity = compute_content_identity(
+        chapters=chapters,
+        passages=passages,
+        side_mapping_ids={"NBK9998", "NBK9999"},
+        source_capture=genesis_capture,
+    )
+    prior_manifest = _prior_release_manifest(root, genesis_identity)
+    chained = _chained_capture(root, genesis_capture, prior_manifest)
+    prior_manifest.write_bytes(prior_manifest.read_bytes() + b" ")
+
+    with pytest.raises(SourceCaptureError, match="digest does not match retained bytes"):
+        load_offline_capture(
+            _write_capture(root, chained),
+            archive=archive,
+            side_data_dir=root,
+            prior_manifest=prior_manifest,
+        )
+
+
+def test_a_chained_capture_cannot_overclaim_the_priors_logical_identity(tmp_path: Path) -> None:
+    """Every logical field is re-read from the prior manifest, not taken on trust."""
+    archive, root = _fixture_corpus(tmp_path)
+    genesis_capture = _genesis_capture(archive, root)
+    chapters, passages = _rows(["NBK9998", "NBK9999"])
+    genesis_identity = compute_content_identity(
+        chapters=chapters,
+        passages=passages,
+        side_mapping_ids={"NBK9998", "NBK9999"},
+        source_capture=genesis_capture,
+    )
+    prior_manifest = _prior_release_manifest(root, genesis_identity)
+    chained = _chained_capture(root, genesis_capture, prior_manifest)
+    prior = chained["prior_artifact"]
+    assert isinstance(prior, dict)
+    prior["chapters_sha256"] = "d" * 64
+
+    with pytest.raises(SourceCaptureError, match="does not prove the claimed logical identity"):
+        load_offline_capture(
+            _write_capture(root, chained),
+            archive=archive,
+            side_data_dir=root,
+            prior_manifest=prior_manifest,
+        )
+
+
+def test_a_chained_capture_still_refuses_a_genesis_shaped_prior_claim(tmp_path: Path) -> None:
+    """Genesis and chained stay mutually exclusive from both directions."""
+    archive, root = _fixture_corpus(tmp_path)
+    genesis_capture = _genesis_capture(archive, root)
+    chapters, passages = _rows(["NBK9998", "NBK9999"])
+    genesis_identity = compute_content_identity(
+        chapters=chapters,
+        passages=passages,
+        side_mapping_ids={"NBK9998", "NBK9999"},
+        source_capture=genesis_capture,
+    )
+    prior_manifest = _prior_release_manifest(root, genesis_identity)
+    still_genesis = dict(genesis_capture)
+    still_genesis["prior_artifact"] = prior_artifact_from(prior_manifest)
+
+    with pytest.raises(SourceCaptureError, match="must not name or carry a prior artifact"):
+        load_offline_capture(
+            _write_capture(root, still_genesis),
+            archive=archive,
+            side_data_dir=root,
+            prior_manifest=prior_manifest,
+        )

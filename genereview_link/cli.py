@@ -328,43 +328,6 @@ def bundle_publish_local(
     typer.echo(f"local bundle prepared: {built}")
 
 
-@bundle_app.command("seal-handoff")
-def bundle_seal_handoff(
-    source: Annotated[Path, typer.Option("--source")],
-    handoff_root: Annotated[Path, typer.Option("--handoff-root")],
-    publisher_tool: Annotated[Path, typer.Option("--publisher-tool")],
-) -> None:
-    """Seal an exact local data-only bundle; this command never publishes it."""
-    from genereview_link.corpus.handoff import HandoffError, seal_handoff, verify_data_only_bundle
-
-    try:
-        verify_data_only_bundle(source)
-        sealed = seal_handoff(source, handoff_root, publisher_tool=publisher_tool)
-    except HandoffError as error:
-        typer.echo(f"handoff refused: {error}", err=True)
-        raise typer.Exit(1) from error
-    typer.echo(sealed.object_id)
-
-
-@bundle_app.command("publish-handoff")
-def bundle_publish_handoff(
-    handoff_root: Annotated[Path, typer.Option("--handoff-root")],
-    object_id: Annotated[str, typer.Option("--object-id")],
-    rights_record: Annotated[Path, typer.Option("--rights-record")],
-) -> None:
-    """Run the privileged rights gate for a sealed handoff before publication."""
-    from genereview_link.corpus.handoff import HandoffError, prepare_publish_handoff
-
-    try:
-        sealed = prepare_publish_handoff(handoff_root, object_id, rights_record)
-    except HandoffError as error:
-        typer.echo(f"publish handoff refused: {error}", err=True)
-        raise typer.Exit(1) from error
-    typer.echo(
-        f"rights-bound handoff ready for an external privileged publisher: {sealed.object_id}"
-    )
-
-
 model_app = typer.Typer(name="model", help="Reviewed embedding model artifact operations.")
 app.add_typer(model_app)
 

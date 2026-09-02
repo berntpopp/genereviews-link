@@ -8,14 +8,20 @@ from pathlib import Path
 import pytest
 
 import genereview_link.corpus.pipeline as pipeline
+from genereview_link.corpus.source_assets import SOURCE_ASSETS
 from genereview_link.corpus.source_identity import SIDEDATA_FILES
-from genereview_link.corpus.source_locator import SOURCE_ASSETS
 
 
 @pytest.mark.asyncio
-async def test_offline_ingest_admits_all_eight_sources_before_validation(
+async def test_offline_ingest_admits_the_whole_retained_source_set_before_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Every retained source file is copied into one private root before it is parsed.
+
+    A chained capture is exactly seven files now that the prior *seal* manifest is gone;
+    the property under test is unchanged -- no parser and no ingest stage may ever read
+    an ambient pathname the caller can still swap out from under it.
+    """
     source = tmp_path / "source"
     source.mkdir()
     contents = {name: f"owned {name}\n".encode() for name in SOURCE_ASSETS}
@@ -25,17 +31,14 @@ async def test_offline_ingest_admits_all_eight_sources_before_validation(
     archive = source / "gene_NBK1116.tar.gz"
     metadata = source / "source-capture.json"
     prior = source / "prior-manifest.json"
-    prior_seal = source / "prior-seal-manifest.json"
 
     def validate(admitted_metadata: Path, **kwargs: object) -> dict[str, object]:
         admitted_archive = kwargs["archive"]
         admitted_side = kwargs["side_data_dir"]
         admitted_prior = kwargs["prior_manifest"]
-        admitted_prior_seal = kwargs["prior_seal_manifest"]
         assert isinstance(admitted_archive, Path)
         assert isinstance(admitted_side, Path)
         assert isinstance(admitted_prior, Path)
-        assert isinstance(admitted_prior_seal, Path)
         admitted_root = admitted_metadata.parent
         assert admitted_root != source
         assert admitted_side == admitted_root
@@ -45,7 +48,6 @@ async def test_offline_ingest_admits_all_eight_sources_before_validation(
             "source-capture.json": admitted_metadata,
             "file_list.csv": admitted_metadata.with_name("file_list.csv"),
             "prior-manifest.json": admitted_prior,
-            "prior-seal-manifest.json": admitted_prior_seal,
             "gene_NBK1116.tar.gz": admitted_archive,
             **{name: admitted_side / name for name in SIDEDATA_FILES},
         }
@@ -72,7 +74,7 @@ async def test_offline_ingest_admits_all_eight_sources_before_validation(
         assert admitted_archive.read_bytes() == contents["gene_NBK1116.tar.gz"]
         assert all((admitted_side / name).read_bytes() == contents[name] for name in SIDEDATA_FILES)
         assert capture["admitted"] is True
-        return "admitted-eight"
+        return "admitted-seven"
 
     monkeypatch.setattr(pipeline, "load_offline_capture", validate)
     monkeypatch.setattr(pipeline, "_ingest_files", ingest)
@@ -83,7 +85,6 @@ async def test_offline_ingest_admits_all_eight_sources_before_validation(
         side_data_dir=source,
         source_metadata=metadata,
         prior_manifest=prior,
-        prior_seal_manifest=prior_seal,
     )
 
-    assert result == "admitted-eight"
+    assert result == "admitted-seven"
