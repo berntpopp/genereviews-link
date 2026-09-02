@@ -4,6 +4,21 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.5] - 2026-09-02
+
+- **Data: pin the maintainer-prebuilt corpus `corpus-data-2026-09-01-r1`** (#155) in
+  `container-release.json` as a direct release — `asset_name: corpus.dump`, with the
+  `corpus.dump` (`sha256:9e76402893b5…`), `manifest.json` and `SHA256SUMS` digests anchored —
+  and make it the `CORPUS_RELEASE_TAG` default. The seed directory now holds the three
+  release assets instead of `corpus-bundle.tar.gz`; `.env.docker.example` and the docs show
+  the direct-shape staging.
+- **Fixed: a direct corpus seed refused the model beside it.** `extract_direct_seed`
+  required `/seed` to hold *exactly* the three release assets, but production binds one
+  host directory at `/seed` and the ONNX model the same init materialises lives in
+  `/seed/model` (`MODEL_SEED_PATH`), so every direct cutover would have failed closed at
+  restore. The reviewed `model/` sibling is now tolerated when it is a real directory;
+  any other extra entry, or a `model` that is a file or symlink, is still refused.
+
 - **Fixed: the PG18 client wrapper swallowed every heredoc.** `scripts/pg18-client` runs
   the pinned PostgreSQL 18 client in `docker run` without `--interactive`, so stdin was
   closed and `psql <<'SQL'` read an empty script, printed nothing and exited 0. Every

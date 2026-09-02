@@ -15,6 +15,12 @@ from genereview_link.strict_json import StrictJsonError, load_strict_json
 _MAX_DUMP_BYTES = 4 * 1024**3
 _MAX_CONTROL_BYTES = 1024**2
 _MEMBERS = frozenset({"corpus.dump", "manifest.json", "SHA256SUMS"})
+#: The one reviewed sibling a direct seed may sit beside: production binds a single
+#: host directory read-only at `/seed`, and the ONNX model the init materialises lives
+#: in `/seed/model` (`MODEL_SEED_PATH`). It must be a real directory -- never a file or
+#: a symlink -- and it is never read here; anything else beside the three assets is
+#: refused exactly as before.
+_MODEL_SIBLING = "model"
 
 
 class DirectSeedError(RuntimeError):
@@ -133,10 +139,18 @@ def extract_direct_seed(
     staged: dict[str, Path] = {}
     created: list[tuple[Path, tuple[int, int]]] = []
     try:
-        if set(os.listdir(seed_fd)) != _MEMBERS:
+        entries = set(os.listdir(seed_fd))
+        if entries - {_MODEL_SIBLING} != _MEMBERS:
             raise DirectSeedError(
                 "direct corpus seed must contain exactly corpus.dump, manifest.json, SHA256SUMS"
+                f" (plus, optionally, the reviewed {_MODEL_SIBLING}/ seed directory)"
             )
+        if _MODEL_SIBLING in entries:
+            sibling = os.stat(_MODEL_SIBLING, dir_fd=seed_fd, follow_symlinks=False)
+            if not stat.S_ISDIR(sibling.st_mode):
+                raise DirectSeedError(
+                    f"direct corpus seed entry {_MODEL_SIBLING} must be a real directory"
+                )
         destination.mkdir(parents=True, exist_ok=True)
         for name in _MEMBERS:
             target = destination / name

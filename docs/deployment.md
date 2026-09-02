@@ -91,11 +91,13 @@ into the Postgres volume by the `genereview-corpus-restore` init sidecar:
   itself. Point `CORPUS_SEED_DIR` at a host directory already holding the exact artifact
   shape named in [`container-release.json`](../container-release.json), mounted read-only
   at `/seed`.
-- The current immutable pin is the legacy `corpus-bundle.tar.gz` release and uses
-  `CORPUS_BUNDLE_SHA256`. After the owner-authorized exact-eight release is published and
-  verified, the pin selects `asset_name: corpus.dump`; the seed then contains exactly
-  `corpus.dump`, `manifest.json`, and `SHA256SUMS`, and the three corresponding digest
-  variables are required. No source-only change may point production at unpublished assets.
+- The current immutable pin is the direct release `corpus-data-2026-09-01-r1`
+  (`asset_name: corpus.dump`): the seed contains exactly `corpus.dump`, `manifest.json`
+  and `SHA256SUMS` — beside the reviewed `model/` directory the same init materialises —
+  and `CORPUS_DUMP_SHA256`, `CORPUS_MANIFEST_SHA256` and `CORPUS_CHECKSUMS_SHA256` are
+  required, with `CORPUS_SEED_PATH=/seed`. A legacy single-tarball pin
+  (`corpus-data-2026-07-13-r1` and earlier) uses `CORPUS_BUNDLE_SHA256` instead. No
+  source-only change may point production at unpublished assets.
 - Both shapes verify every byte before restore. Only a manifest-v3 direct release may write the
   readiness record, which identifies the verified inner `corpus.dump` and the configured release
   tag, manifest digest, and checksums digest. Every later start must match that complete direct tuple;

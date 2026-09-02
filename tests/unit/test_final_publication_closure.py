@@ -58,9 +58,10 @@ def test_production_seed_contract_preserves_current_pin_and_supports_direct_asse
 
     assert "CORPUS_SEED_PATH" in compose and "CORPUS_DUMP_SHA256" in compose
     assert "corpus-bundle.tar.gz)" in smoke and "corpus.dump)" in smoke
-    assert config["data"]["release_tag"] == "corpus-data-2026-07-13-r1"
+    assert config["data"]["release_tag"] == "corpus-data-2026-09-01-r1"
+    assert config["data"]["asset_name"] == "corpus.dump"
     assert config["data"]["digest"] == (
-        "sha256:4486e499337e9f816a2aa0741f2a0e51ca38cda52f96fb57564cfc36f4b3c5bc"
+        "sha256:9e76402893b51ca6597ad434aef1feb71542a03c7566e43865081fbbff3fdca2"
     )
     # Adopted in 5.2.4: the deployment now publishes the GeneFoundry runtime data identity
     # (v1) on /health, so the fleet controller can activate a new data release for it.

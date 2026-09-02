@@ -53,9 +53,14 @@ it. See [deployment.md § Corpus restore](deployment.md#corpus-restore-productio
 
 The operator's side is two facts, both of which must be true before the first start:
 
-1. the reviewed release asset is staged in `CORPUS_SEED_DIR` on the host, and
-2. `CORPUS_BUNDLE_SHA256` is the digest published with that release (the same value as
-   `container-release.json` → `.data.digest`).
+1. the reviewed release assets are staged in `CORPUS_SEED_DIR` on the host — for the
+   current direct (manifest-v3) pin, exactly `corpus.dump`, `manifest.json` and
+   `SHA256SUMS`, beside the reviewed `model/` directory the same init materialises — and
+2. `CORPUS_DUMP_SHA256`, `CORPUS_MANIFEST_SHA256` and `CORPUS_CHECKSUMS_SHA256` are the
+   digests published with that release (the same values as `container-release.json` →
+   `.data.digest`, `.data.manifest_digest`, `.data.checksums_digest`), with
+   `CORPUS_RELEASE_TAG` naming it. (A legacy single-tarball release uses
+   `CORPUS_SEED_PATH=/seed/corpus-bundle.tar.gz` and `CORPUS_BUNDLE_SHA256` instead.)
 
 A third fact follows from them rather than being configured separately: after the restore
 (or, on a volume that already holds the corpus, after re-proving the staged artifact against
@@ -70,22 +75,28 @@ Both fail closed. An absent artifact and an absent, malformed, or **placeholder*
 verifies nothing while looking like verification is worse than no checksum.
 
 ```bash
-# On the server, once per corpus release:
-tag=corpus-data-2026-07-13-r1
-digest=4486e499337e9f816a2aa0741f2a0e51ca38cda52f96fb57564cfc36f4b3c5bc
+# On the server, once per corpus release (direct, manifest-v3 shape):
+tag=corpus-data-2026-09-01-r1
+base="https://github.com/berntpopp/genereviews-link/releases/download/$tag"
 sudo install -d -m 0755 /srv/genefoundry/genereviews-seed
-curl -fsSL --proto '=https' -o /tmp/corpus-bundle.tar.gz \
-  "https://github.com/berntpopp/genereviews-link/releases/download/$tag/corpus-bundle.tar.gz"
-echo "$digest  /tmp/corpus-bundle.tar.gz" | sha256sum -c -   # verify BEFORE staging
-sudo mv /tmp/corpus-bundle.tar.gz /srv/genefoundry/genereviews-seed/
-# then set CORPUS_BUNDLE_SHA256=$digest in .env.docker
+tmp=$(mktemp -d)
+for asset in corpus.dump manifest.json SHA256SUMS; do
+  curl -fsSL --proto '=https' -o "$tmp/$asset" "$base/$asset"
+done
+(cd "$tmp" && sha256sum -c SHA256SUMS)                     # verify BEFORE staging
+sha256sum "$tmp"/corpus.dump "$tmp"/manifest.json "$tmp"/SHA256SUMS   # must equal the
+#   .data.digest / .data.manifest_digest / .data.checksums_digest in container-release.json
+sudo mv "$tmp"/corpus.dump "$tmp"/manifest.json "$tmp"/SHA256SUMS /srv/genefoundry/genereviews-seed/
+# The seed directory must then hold exactly these three files plus the model/ directory:
+# move any previous corpus-bundle.tar.gz OUT of it (the restore refuses extra entries).
+# Then set CORPUS_SEED_PATH=/seed, CORPUS_RELEASE_TAG=$tag and the three CORPUS_*_SHA256
+# values in .env.docker.
 ```
 
 `docker/ci-prepare-smoke.sh` performs exactly these steps for CI, and is the executable
-reference for the shape of the seed directory. It also handles the current
-(manifest-v3) release shape, where the seed directory holds `corpus.dump`,
-`manifest.json` and `SHA256SUMS` instead of one tarball and `container-release.json`
-anchors all three digests — see
+reference for the shape of the seed directory. It also still handles the legacy
+single-tarball shape (`corpus-data-2026-07-13-r1` and earlier: one `corpus-bundle.tar.gz`
+at `CORPUS_SEED_PATH`, anchored by `CORPUS_BUNDLE_SHA256`) — see
 [Pinning a published corpus into the application](#pinning-a-published-corpus-into-the-application).
 
 ### Rebuilding the corpus and publishing it as a release asset

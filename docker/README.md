@@ -28,8 +28,9 @@ production and NPM overlays:
 ```bash
 cp .env.docker.example .env.docker
 # Edit .env.docker: set POSTGRES_PASSWORD, CORS_ORIGINS, NCBI_API_KEY, and NPM_NETWORK_NAME.
-# Stage the reviewed corpus release asset in CORPUS_SEED_DIR and set CORPUS_BUNDLE_SHA256
-# to its published digest; both fail closed. See docs/data.md.
+# Stage the reviewed corpus release assets (corpus.dump, manifest.json, SHA256SUMS) in
+# CORPUS_SEED_DIR and set CORPUS_RELEASE_TAG plus the three CORPUS_*_SHA256 digests to the
+# published values; all fail closed. See docs/data.md.
 docker compose \
   --env-file .env.docker \
   -f docker/docker-compose.yml \
@@ -61,8 +62,9 @@ production Docker/NPM deployments. Notable:
 - `NCBI_API_KEY` — strongly recommended for the higher NCBI rate limit.
 - `GENEREVIEW_LINK_PORT` — default 8000.
 - `NPM_NETWORK_NAME` — external Docker network used by Nginx Proxy Manager.
-- `CORPUS_SEED_DIR` / `CORPUS_BUNDLE_SHA256` — the staged corpus release asset and its
-  published digest. Both fail closed.
+- `CORPUS_SEED_DIR` / `CORPUS_RELEASE_TAG` / `CORPUS_DUMP_SHA256` / `CORPUS_MANIFEST_SHA256` /
+  `CORPUS_CHECKSUMS_SHA256` — the staged direct corpus release assets and their published
+  digests (a legacy tarball pin uses `CORPUS_BUNDLE_SHA256` instead). All fail closed.
 - `GENEREVIEW_EMBEDDING_PROVIDER` — `bge` or `fake`. Production refuses the stub unless
   `GENEREVIEW_ALLOW_FAKE_EMBEDDINGS=true`.
 - `BUNDLE_URL` — **inert**; the serving process has no restore path. Kept only for the
@@ -75,7 +77,11 @@ from an artifact already staged on the host. The serving container downloads not
 
 ```bash
 CORPUS_SEED_DIR=/srv/genefoundry/genereviews-seed
-CORPUS_BUNDLE_SHA256=<the digest published with the corpus release>
+CORPUS_SEED_PATH=/seed
+CORPUS_RELEASE_TAG=<the corpus release tag pinned in container-release.json>
+CORPUS_DUMP_SHA256=<.data.digest>
+CORPUS_MANIFEST_SHA256=<.data.manifest_digest>
+CORPUS_CHECKSUMS_SHA256=<.data.checksums_digest>
 ```
 
 Docker never runs ingest/backfill: a corpus is built by a maintainer and restored by the
