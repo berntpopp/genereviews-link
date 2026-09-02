@@ -98,6 +98,23 @@ baked-in uid/gid (`docker/Dockerfile`: `groupadd --gid 999 app` / `useradd --uid
 - **Guard/projection test:** `tests/test_docker_compose_config.py` renders
   `docker/docker-compose.npm.yml` and asserts its overlay behavior (network wiring, tmpfs
   inheritance, etc.); extend it, don't duplicate it, when the overlay changes.
+  `test_container_release_json_declares_the_deployed_overlay` and
+  `test_deployed_overlay_every_service_declares_a_numeric_user` in the same file guard the
+  two facts below.
+- **The release gate validates the deployed overlay, not just the release compose files.**
+  `container-release.json` (`service.deployed_compose_files`) declares the exact three-file
+  set the fleet controller renders (`docker/docker-compose.yml` + `.prod.yml` + `.npm.yml`,
+  in that order) — `deployed_seed_binds: ["/seed"]` and `deployed_sidecars` (postgres, with
+  its exact pinned image) alongside it — so the shared `_container-release.yml` workflow's
+  `validate-deployed-overlay` step (pinned in `.github/workflows/container-release.yml`)
+  checks the real deployed stack instead of silently passing an overlay nobody runs alone.
+  Self-check locally before tagging (from a `strato_v6_docker_npm` checkout):
+  ```bash
+  uv run python scripts/container_release.py validate-deployed-overlay \
+    --config <this-repo>/container-release.json --project-dir <this-repo>
+  ```
+  (run from the `genefoundry-router` checkout pinned at the same SHA as
+  `container-release.yml`). Expect `"verdict":"pass"`.
 - **Release checklist**, enforced by this repo's own tests (see
   `tests/unit/test_version_single_source.py::test_citation_matches_current_changelog_release`):
   1. Bump `version` in `pyproject.toml`.
