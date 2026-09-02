@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 import math
 import tarfile
 from pathlib import Path
@@ -12,9 +11,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-import genereview_link.corpus.handoff_locator as handoff_locator
-import genereview_link.corpus.rights_locator as rights_locator
-import genereview_link.corpus.source_locator as source_locator
 from genereview_link.corpus.evaluation import EvaluationRejectedError, assert_evaluation_accepted
 from genereview_link.db.direct_seed import DirectSeedError, extract_direct_seed
 from genereview_link.db.restore import ArchivePolicyError, extract_bundle
@@ -86,6 +82,17 @@ def test_legacy_manifest_maps_infinity_to_domain_parse_error(tmp_path: Path) -> 
         )
 
 
+def test_published_rights_notice_rejects_nonfinite_and_duplicate_json(tmp_path: Path) -> None:
+    """The rights notice is metadata a downloader parses, so it gets the same policy."""
+    from genereview_link.corpus.rights_notice import RightsNoticeError, load_rights_notice
+
+    for raw in (b'{"schema_version":NaN}', b'{"schema_version":1,"schema_version":2}'):
+        notice = tmp_path / "RIGHTS.json"
+        notice.write_bytes(raw)
+        with pytest.raises(RightsNoticeError, match="not valid JSON"):
+            load_rights_notice(notice)
+
+
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
 @pytest.mark.parametrize("field", ["mrr_at_10", "section_precision_at_5"])
 def test_evaluation_rejects_every_nonfinite_floor_metric(field: str, value: float) -> None:
@@ -97,143 +104,3 @@ def test_evaluation_rejects_every_nonfinite_floor_metric(field: str, value: floa
     metrics[field] = value
     with pytest.raises(EvaluationRejectedError):
         assert_evaluation_accepted(metrics, expected_queries=5, covered_queries=5)
-
-
-def _asset_locator(format_name: str, names: list[str], repository: str) -> bytes:
-    return json.dumps(
-        {
-            "format": format_name,
-            "assets": [
-                {
-                    "name": name,
-                    "url": f"https://api.github.com/repos/{repository}/releases/assets/{index}",
-                    "sha256": hashlib.sha256(b"owned").hexdigest(),
-                    "size_bytes": len(b"owned"),
-                }
-                for index, name in enumerate(names, 1)
-            ],
-        }
-    ).encode()
-
-
-class _SwapResponse:
-    def __init__(self, target: Path) -> None:
-        self.target = target
-        self.calls = 0
-
-    def __enter__(self) -> _SwapResponse:
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        return None
-
-    def read(self, _size: int) -> bytes:
-        self.calls += 1
-        if self.calls == 1:
-            return b"owned"
-        self.target.unlink()
-        self.target.write_bytes(b"foreign")
-        raise OSError("forced failure after substitution")
-
-
-class _SwapOpener:
-    def __init__(self, target: Path) -> None:
-        self.target = target
-
-    def open(self, *_args: object, **_kwargs: object) -> _SwapResponse:
-        return _SwapResponse(self.target)
-
-
-def test_rights_cleanup_does_not_delete_substituted_same_name_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    destination = tmp_path / "rights"
-    destination.mkdir()
-    target = destination / "rights-record.json"
-    raw = _asset_locator(
-        "genereviews-rights-locator-v1",
-        ["rights-record.json", "rights-evidence.json", "terms-snapshot.html"],
-        "owner/rights",
-    )
-    monkeypatch.setattr(rights_locator, "build_opener", lambda *_args: _SwapOpener(target))
-    token = "".join(("fixture", "-token"))
-
-    with pytest.raises(rights_locator.RightsLocatorError):
-        rights_locator.fetch_rights_assets(
-            raw,
-            allowed_repositories={"owner/rights"},
-            destination=destination,
-            token=token,
-        )
-    assert target.read_bytes() == b"foreign"
-
-
-def test_handoff_cleanup_does_not_delete_substituted_same_name_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    object_id = "1" * 64
-    destination = tmp_path / "handoff"
-    destination.mkdir(mode=0o700)
-    names = [
-        "corpus.dump",
-        "manifest.json",
-        "SHA256SUMS",
-        "seal-manifest.json",
-        "genereviews_link-5.1.6-py3-none-any.whl",
-    ]
-    locator = json.loads(_asset_locator("genereviews-handoff-locator-v1", names, "owner/seals"))
-    locator.update({"object_id": object_id, "build_revision": "2" * 40})
-    target = destination / object_id / "corpus.dump"
-    monkeypatch.setattr(handoff_locator, "build_opener", lambda *_args: _SwapOpener(target))
-    token = "".join(("fixture", "-token"))
-
-    with pytest.raises(handoff_locator.HandoffLocatorError):
-        handoff_locator.fetch_handoff(
-            json.dumps(locator).encode(),
-            allowed_repositories={"owner/seals"},
-            destination_root=destination,
-            token=token,
-            expected_object_id=object_id,
-        )
-    assert target.read_bytes() == b"foreign"
-
-
-@pytest.mark.asyncio
-async def test_source_cleanup_does_not_delete_substituted_same_name_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    destination = tmp_path / "source"
-    destination.mkdir()
-    names = sorted(source_locator.SOURCE_ASSETS)
-    raw = _asset_locator("genereviews-source-locator-v1", names, "owner/source")
-    first = destination / names[0]
-
-    class _Client:
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    async def swapped_stream(_client: object, _url: str, target: Path, **kwargs: object) -> str:
-        target.write_bytes(b"owned")
-        identity = kwargs.get("created_identity")
-        if isinstance(identity, list):
-            info = target.stat(follow_symlinks=False)
-            identity.append((info.st_dev, info.st_ino))
-        target.unlink()
-        target.write_bytes(b"foreign")
-        return hashlib.sha256(b"owned").hexdigest()
-
-    monkeypatch.setattr(source_locator.httpx, "AsyncClient", lambda **_kwargs: _Client())
-    monkeypatch.setattr(source_locator, "stream_to_file", swapped_stream)
-    token = "".join(("fixture", "-token"))
-
-    with pytest.raises(source_locator.SourceLocatorError):
-        await source_locator.fetch_source_assets(
-            raw,
-            allowed_repositories={"owner/source"},
-            destination=destination,
-            token=token,
-        )
-    assert first.read_bytes() == b"foreign"

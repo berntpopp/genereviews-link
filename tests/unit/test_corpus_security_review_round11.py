@@ -1,28 +1,19 @@
-"""Regressions for production readiness and privileged bootstrap review findings."""
+"""Regressions for transactional release readiness and the bundle metadata parser.
+
+The privileged inline bootstrap this round also covered lived in the deleted
+publisher workflow; the strict-JSON policy it enforced is now asserted directly
+against the loader every consumer of a published bundle actually calls.
+"""
 
 from __future__ import annotations
 
-import hashlib
 import inspect
-import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 import genereview_link.corpus.readiness as readiness
-import genereview_link.corpus.release_assets as release_assets
-from genereview_link.corpus.handoff import HandoffError, _load_json
-from genereview_link.corpus.release_assets import (
-    AssetIdentity,
-    ReleaseAssetError,
-    ReleaseIdentity,
-)
-
-ROOT = Path(__file__).resolve().parents[2]
+from genereview_link.corpus.bundle_integrity import BundleIntegrityError, _load_json
 
 
 def test_transactional_readiness_requires_exact_content_and_computation_identity() -> None:
@@ -113,88 +104,6 @@ async def test_readiness_rejects_runtime_identity_before_insert(
     assert not any("insert into public.genereview_release_readiness" in item for item in statements)
 
 
-def _inline_bootstrap() -> str:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/corpus-data-release.yml").read_text())
-    step = next(
-        item
-        for item in workflow["jobs"]["publish"]["steps"]
-        if item.get("name") == "Fetch durable digest-addressed sealed handoff"
-    )
-    script = step["run"]
-    return script.split("python3 -I - <<'PY'\n", 1)[1].split("\nPY", 1)[0]
-
-
-def _locator_raw(
-    *, duplicate: bool = False, value: str = '"genereviews-handoff-locator-v1"'
-) -> str:
-    names = [
-        "corpus.dump",
-        "manifest.json",
-        "SHA256SUMS",
-        "seal-manifest.json",
-        "genereviews_link-5.1.6-py3-none-any.whl",
-    ]
-    assets = [
-        {
-            "name": name,
-            "url": f"https://api.github.com/repos/owner/seals/releases/assets/{index}",
-            "sha256": hashlib.sha256(b"owned").hexdigest(),
-            "size_bytes": len(b"owned"),
-        }
-        for index, name in enumerate(names, 1)
-    ]
-    tail = json.dumps(
-        {
-            "object_id": "1" * 64,
-            "build_revision": "2" * 40,
-            "assets": assets,
-        },
-        separators=(",", ":"),
-    )[1:]
-    duplicate_field = ',"format":"shadow"' if duplicate else ""
-    return f'{{"format":{value}{duplicate_field},{tail}'
-
-
-def _run_inline(
-    tmp_path: Path, raw: str, *, source: str | None = None
-) -> subprocess.CompletedProcess[str]:
-    destination = tmp_path / "handoff"
-    destination.mkdir(mode=0o700, exist_ok=True)
-    return subprocess.run(  # noqa: S603 - reviewed inline workflow is the test subject
-        [sys.executable, "-I", "-c", source or _inline_bootstrap()],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={
-            **os.environ,
-            "HANDOFF_OBJECT": str(destination),
-            "GENEREVIEWS_HANDOFF_LOCATOR": raw,
-            "GENEREVIEWS_HANDOFF_REPOSITORIES": "owner/seals",
-            "OBJECT_ID": "1" * 64,
-            "GITHUB_SHA": "2" * 40,
-            "GH_TOKEN": "",
-        },
-    )
-
-
-@pytest.mark.parametrize(
-    "raw",
-    [
-        _locator_raw(duplicate=True),
-        _locator_raw(value="NaN"),
-        "[" * 10_000 + "]" * 10_000 + "\n",
-    ],
-    ids=("duplicate", "nonfinite", "deep"),
-)
-def test_actual_privileged_inline_bootstrap_uses_strict_bounded_json(
-    tmp_path: Path, raw: str
-) -> None:
-    result = _run_inline(tmp_path, raw)
-    assert result.returncode != 0
-    assert "handoff locator is not strict bounded JSON" in result.stderr
-    assert "RecursionError" not in result.stderr
-
-
 def test_exact_bundle_json_loader_rejects_duplicate_nonfinite_and_deep_json(
     tmp_path: Path,
 ) -> None:
@@ -203,75 +112,5 @@ def test_exact_bundle_json_loader_rejects_duplicate_nonfinite_and_deep_json(
     ):
         path = tmp_path / f"manifest-{index}.json"
         path.write_bytes(raw)
-        with pytest.raises(HandoffError, match="invalid JSON"):
+        with pytest.raises(BundleIntegrityError, match="invalid JSON"):
             _load_json(path)
-
-
-def test_privileged_inline_cleanup_preserves_substituted_file(tmp_path: Path) -> None:
-    source = _inline_bootstrap()
-    replacement = """
-class _Response:
-    calls = 0
-    def __enter__(self): return self
-    def __exit__(self, *args): return None
-    def read(self, size):
-        del size
-        self.calls += 1
-        if self.calls == 1: return b"owned"
-        target = Path(os.environ["HANDOFF_OBJECT"]) / "corpus.dump"
-        target.write_bytes(b"foreign")
-        raise OSError("forced substitution")
-class _Opener:
-    def open(self, *args, **kwargs): return _Response()
-opener = _Opener()
-""".strip()
-    source = source.replace("opener = build_opener(TrustedRedirects())", replacement)
-    destination = tmp_path / "handoff"
-    result = _run_inline(tmp_path, _locator_raw(), source=source)
-
-    assert result.returncode != 0
-    assert (destination / "corpus.dump").read_bytes() == b"foreign"
-
-
-@pytest.mark.asyncio
-async def test_release_asset_cleanup_preserves_close_to_stat_substitution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    names = release_assets.PUBLICATION_ASSET_NAMES
-    identities = tuple(
-        AssetIdentity(
-            asset_id=index,
-            name=name,
-            size=len(b"owned"),
-            digest="sha256:" + hashlib.sha256(b"owned").hexdigest(),
-            url=f"https://api.github.com/repos/owner/repo/releases/assets/{index}",
-        )
-        for index, name in enumerate(names, 1)
-    )
-
-    async def identity(*_args: object, **_kwargs: object) -> ReleaseIdentity:
-        return ReleaseIdentity(17, "corpus-data-2026-08-30-r1", "a" * 40, identities)
-
-    async def swapped_stream(_client: object, _url: str, target: Path, **kwargs: object) -> str:
-        target.write_bytes(b"owned")
-        output = kwargs.get("created_identity")
-        if isinstance(output, list):
-            info = target.stat(follow_symlinks=False)
-            output.append((info.st_dev, info.st_ino))
-        target.unlink()
-        target.write_bytes(b"foreign")
-        return hashlib.sha256(b"owned").hexdigest()
-
-    monkeypatch.setattr(release_assets, "_release_assets", identity)
-    monkeypatch.setattr(release_assets, "stream_to_file", swapped_stream)
-    destination = tmp_path / "release"
-    destination.mkdir()
-
-    with pytest.raises(ReleaseAssetError):
-        await release_assets.download_release_assets(
-            "owner/repo",
-            "corpus-data-2026-08-30-r1",
-            destination,
-            release_id=17,
-        )
-    assert (destination / names[0]).read_bytes() == b"foreign"

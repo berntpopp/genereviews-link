@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "dataset": "GeneReviews research corpus",
+  "license": {
+    "name": "GeneReviews Copyright Notice and Usage Disclaimer",
+    "spdx_id": "LicenseRef-GeneReviews-Research-Use-Only",
+    "url": "https://www.ncbi.nlm.nih.gov/books/NBK138602/"
+  },
+  "attribution": "GeneReviews\u00ae content \u00a91993-2026 University of Washington, Seattle; source https://www.genereviews.org.",
+  "citation": "Adam MP, Feldman J, Mirzaa GM, et al., editors. GeneReviews\u00ae [Internet]. Seattle (WA): University of Washington, Seattle; 1993-2026.",
+  "source_url": "https://www.ncbi.nlm.nih.gov/books/NBK1116/",
+  "terms_url": "https://www.ncbi.nlm.nih.gov/books/NBK138602/",
+  "terms_reviewed_at": "2026-09-01",
+  "reviewer": "Bernt Popp (repository owner)",
+  "use_restriction": "Research use only: noncommercial research purposes only; redistributed here as an immutable, unmodified research corpus; comply with the GeneReviews copyright notice and Usage Disclaimer."
+}

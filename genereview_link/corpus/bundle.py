@@ -90,12 +90,13 @@ class BundleManifest:
     computation: dict[str, object] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     created_by: str = "manual"
-    license: dict[str, object] = field(
-        default_factory=lambda: {
-            "copyright": "(c) 1993-2026 University of Washington",
-            "terms_url": "https://www.ncbi.nlm.nih.gov/books/NBK138602/",
-        }
-    )
+    # How these bytes came to exist. Corpus builds run on the maintainer's workstation
+    # (the embedding pass is far too slow for a hosted runner), so this is the only
+    # honest value: nothing here was produced or attested by CI.
+    build_provenance: str = "maintainer-prebuilt"
+    # The committed, reviewed redistribution notice (data/RIGHTS.json), copied verbatim
+    # so attribution and the research-use-only restriction travel with every byte.
+    rights_notice: dict[str, object] = field(default_factory=dict)
     checksums: dict[str, str] = field(default_factory=dict)
 
 

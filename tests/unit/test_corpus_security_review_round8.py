@@ -2,47 +2,26 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import hashlib
 import io
 import json
 import tarfile
-import textwrap
 from pathlib import Path
 
 import pytest
 
-import genereview_link.corpus.handoff_locator as handoff_locator
 import genereview_link.corpus.pipeline as corpus_pipeline
-import genereview_link.corpus.rights_locator as rights_locator
 from genereview_link import download_guard
 from genereview_link.corpus.readiness import ReadinessError, build_readiness_payload
-from genereview_link.corpus.rights import (
-    RIGHTS_APPROVAL_KIND,
-    RIGHTS_AUTHORITY,
-    RIGHTS_FIELDS,
-    RIGHTS_PERMITTED_ASSET_USE,
-    RIGHTS_TERMS_SOURCE_URI,
+from genereview_link.corpus.source_assets import (
+    GENESIS_SOURCE_ASSETS,
+    PRIOR_ASSETS,
+    SOURCE_ASSETS,
 )
-from genereview_link.corpus.source_locator import SOURCE_ASSETS
 from genereview_link.db.restore import ArchivePolicyError, extract_bundle, seed_identity_mode
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def _literal_string_sets(source: str) -> set[frozenset[str]]:
-    body = textwrap.dedent(source.split("<<'PY'\n", 1)[1])
-    python = body.rsplit("\nPY", 1)[0]
-    return {
-        frozenset(element.value for element in node.elts)
-        for node in ast.walk(ast.parse(python))
-        if isinstance(node, ast.Set)
-        and all(
-            isinstance(element, ast.Constant) and isinstance(element.value, str)
-            for element in node.elts
-        )
-    }
 
 
 def _readiness_manifest() -> dict[str, object]:
@@ -74,82 +53,18 @@ def test_legacy_restore_is_explicitly_compatible_but_never_controller_ready() ->
         seed_identity_mode("a" * 64, "b" * 64, "", "")
 
 
-def test_privileged_publisher_verifies_build_attestations_before_wheel_or_rights() -> None:
-    workflow = (ROOT / ".github/workflows/corpus-data-release.yml").read_text()
-    publish = workflow.split("  publish:", 1)[1]
-    attest = publish.index("gh attestation verify")
-    extract = publish.index("zipfile.ZipFile")
-    rights = publish.index("GENEREVIEWS_RIGHTS_LOCATOR")
+def test_source_asset_set_includes_exact_retained_listing_bytes() -> None:
+    """One capture is exactly seven retained files; a genesis build is those minus one.
 
-    assert attest < extract and attest < rights
-    assert "Attest exact sealed publication inputs" not in publish
-    build = workflow.split("  build:", 1)[1].split("  publish:", 1)[0]
-    for name in (
-        "corpus.dump",
-        "manifest.json",
-        "SHA256SUMS",
-        "seal-manifest.json",
-        "publisher-tool.whl",
-    ):
-        assert name in build.split("Attest the exact evaluated build output", 1)[1]
-
-
-def test_workflows_bind_rights_to_seal_and_never_follow_unchecked_handoff_redirects() -> None:
-    publisher = (ROOT / ".github/workflows/corpus-data-release.yml").read_text()
-    verifier = (ROOT / ".github/workflows/verify-corpus-bundle.yml").read_text()
-    fetch = publisher.split("name: Fetch durable digest-addressed sealed handoff", 1)[1].split(
-        "- name:", 1
-    )[0]
-
-    assert "curl" not in fetch or "--location" not in fetch
-    assert frozenset(
-        {
-            "github.com",
-            "release-assets.githubusercontent.com",
-            "objects.githubusercontent.com",
-            "github-releases.githubusercontent.com",
-        }
-    ) in _literal_string_sets(fetch)
-    assert "sealed_values" in verifier
-    assert "artifact_sha256" in verifier and "source_sha256" in verifier
-
-
-def test_source_locator_includes_exact_retained_listing_bytes() -> None:
+    The prior *seal* manifest is gone with the sealed-handoff scheme: the previous
+    release's ``manifest.json`` is the only artifact a chained capture proves itself
+    against, so the chained inventory is the genesis one plus exactly that file.
+    """
     assert "file_list.csv" in SOURCE_ASSETS
-    assert len(SOURCE_ASSETS) == 8
-
-
-def test_rights_contract_is_explicit_owner_determination_not_upstream_approval() -> None:
-    rights = (ROOT / "genereview_link/corpus/rights.py").read_text()
-
-    assert {"approval_kind", "upstream_approval", "terms_source_uri"} <= RIGHTS_FIELDS
-    assert RIGHTS_AUTHORITY == "Bernt Popp / repository owner"
-    assert RIGHTS_APPROVAL_KIND == "repository-owner redistribution determination"
-    assert "upstream_approval" in rights and " is not False" in rights
-    assert RIGHTS_PERMITTED_ASSET_USE == (
-        "immutable GeneReviews research corpus artifact for noncommercial research purposes "
-        "only; no further modifications"
-    )
-    assert RIGHTS_TERMS_SOURCE_URI == "https://www.genereviews.org/"
-
-
-def test_existing_draft_tag_state_is_checked_before_missing_asset_upload() -> None:
-    transaction = (ROOT / "genereview_link/corpus/release_transaction.py").read_text()
-    workflow = (ROOT / ".github/workflows/corpus-data-release.yml").read_text()
-    gate = workflow.split("name: Four-state immutable publication gate", 1)[1]
-
-    assert "verify_existing_tag_state" in transaction
-    assert "verify_existing_tag_state" in gate
-    assert gate.index("verify_existing_tag_state") < gate.index("data-binary")
-
-
-def test_release_selection_uses_exhaustive_release_and_ref_union() -> None:
-    workflow = (ROOT / ".github/workflows/corpus-data-release.yml").read_text()
-    build = workflow.split("  build:", 1)[1].split("  publish:", 1)[0]
-
-    assert "release_selection import" in build
-    assert "release-tags.txt" in build and "tag-refs.json" in build
-    assert "matching-refs/tags/corpus-data-" in build
+    assert len(SOURCE_ASSETS) == 7
+    assert set(PRIOR_ASSETS) == {"prior-manifest.json"}
+    assert GENESIS_SOURCE_ASSETS == SOURCE_ASSETS - PRIOR_ASSETS
+    assert len(GENESIS_SOURCE_ASSETS) == 6
 
 
 def test_ingest_uses_a_distinct_session_lock_for_the_whole_staging_lifecycle() -> None:
@@ -196,7 +111,7 @@ async def test_concurrent_ingests_cannot_interleave_the_shared_staging_lifecycle
         return object()
 
     monkeypatch.setattr(corpus_pipeline, "_run_full_ingest_locked", bounded_ingest)
-    paths = [tmp_path / str(index) for index in range(5)]
+    paths = [tmp_path / str(index) for index in range(4)]
     await asyncio.gather(
         corpus_pipeline.run_full_ingest(
             Pool(),  # type: ignore[arg-type]
@@ -204,7 +119,6 @@ async def test_concurrent_ingests_cannot_interleave_the_shared_staging_lifecycle
             side_data_dir=paths[1],
             source_metadata=paths[2],
             prior_manifest=paths[3],
-            prior_seal_manifest=paths[4],
         ),
         corpus_pipeline.run_full_ingest(
             Pool(),  # type: ignore[arg-type]
@@ -212,7 +126,6 @@ async def test_concurrent_ingests_cannot_interleave_the_shared_staging_lifecycle
             side_data_dir=paths[1],
             source_metadata=paths[2],
             prior_manifest=paths[3],
-            prior_seal_manifest=paths[4],
         ),
     )
     assert peak == 1
@@ -326,104 +239,6 @@ def test_prefixed_legacy_digest_is_normalized_consistently(tmp_path: Path) -> No
     )
 
 
-def test_sync_locators_enforce_monotonic_end_to_end_deadlines() -> None:
-    for path in (
-        ROOT / "genereview_link/corpus/handoff_locator.py",
-        ROOT / "genereview_link/corpus/rights_locator.py",
-    ):
-        source = path.read_text()
-        assert "monotonic" in source
-        assert "deadline" in source
-
-
-class _Response:
-    def __enter__(self) -> _Response:
-        return self
-
-    def __exit__(self, *_args: object) -> None:
-        return None
-
-    def read(self, _size: int) -> bytes:
-        return b"x"
-
-
-class _Opener:
-    def open(self, *_args: object, **_kwargs: object) -> _Response:
-        return _Response()
-
-
-def test_rights_locator_deadline_is_total_and_removes_partial(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    assets = [
-        {
-            "name": name,
-            "url": f"https://api.github.com/repos/owner/repo/releases/assets/{index}",
-            "sha256": hashlib.sha256(b"x").hexdigest(),
-            "size_bytes": 1,
-        }
-        for index, name in enumerate(sorted(rights_locator.RIGHTS_ASSET_NAMES), 1)
-    ]
-    destination = tmp_path / "rights"
-    destination.mkdir()
-    ticks = iter((0.0, rights_locator.RIGHTS_TRANSFER_DEADLINE_SECONDS + 1))
-    monkeypatch.setattr(rights_locator, "monotonic", lambda: next(ticks))
-    monkeypatch.setattr(rights_locator, "build_opener", lambda *_args: _Opener())
-
-    with pytest.raises(rights_locator.RightsLocatorError, match="monotonic deadline"):
-        rights_locator.fetch_rights_assets(
-            json.dumps({"format": "genereviews-rights-locator-v1", "assets": assets}).encode(),
-            allowed_repositories={"owner/repo"},
-            destination=destination,
-            token="token",  # noqa: S106 - non-secret test fixture
-        )
-    assert not any(destination.iterdir())
-
-
-def test_handoff_locator_deadline_is_total_and_removes_partial_object(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    names = [
-        "SHA256SUMS",
-        "corpus.dump",
-        "genereview_link-5.1.6-py3-none-any.whl",
-        "manifest.json",
-        "seal-manifest.json",
-    ]
-    assets = [
-        {
-            "name": name,
-            "url": f"https://api.github.com/repos/owner/repo/releases/assets/{index}",
-            "sha256": hashlib.sha256(b"x").hexdigest(),
-            "size_bytes": 1,
-        }
-        for index, name in enumerate(names, 1)
-    ]
-    destination = tmp_path / "handoff"
-    destination.mkdir(mode=0o700)
-    ticks = iter((0.0, handoff_locator.HANDOFF_TRANSFER_DEADLINE_SECONDS + 1))
-    monkeypatch.setattr(handoff_locator, "monotonic", lambda: next(ticks))
-    monkeypatch.setattr(handoff_locator, "build_opener", lambda *_args: _Opener())
-    object_id = "a" * 64
-    locator = {
-        "format": "genereviews-handoff-locator-v1",
-        "object_id": object_id,
-        "build_revision": "b" * 40,
-        "assets": assets,
-    }
-
-    with pytest.raises(handoff_locator.HandoffLocatorError, match="monotonic deadline"):
-        handoff_locator.fetch_handoff(
-            json.dumps(locator).encode(),
-            allowed_repositories={"owner/repo"},
-            destination_root=destination,
-            token="token",  # noqa: S106 - non-secret test fixture
-            expected_object_id=object_id,
-            expected_build_revision="b" * 40,
-        )
-    assert not any(destination.iterdir())
-
-
 def test_ingest_provenance_uses_the_exact_reviewed_runtime_contract() -> None:
     verifier = (ROOT / "genereview_link/corpus/bundle_verifier.py").read_text()
     assert 'startswith("pgvector/pgvector' not in verifier
@@ -431,18 +246,45 @@ def test_ingest_provenance_uses_the_exact_reviewed_runtime_contract() -> None:
     assert "ingest_provenance" in verifier and "validate_computation_provenance" in verifier
 
 
-def test_release_download_cleanup_catches_cancellation() -> None:
-    source = (ROOT / "genereview_link/corpus/release_assets.py").read_text()
-    download = source.split("async def download_release_assets", 1)[1]
-    assert "except BaseException" in download
+def test_docs_describe_the_maintainer_prebuilt_release_scheme_truthfully() -> None:
+    """The documented scheme must be the one the code actually implements.
+
+    Corpus bundles are built on the maintainer's workstation and published with
+    ``gh release create``; the redistribution basis is the committed
+    ``data/RIGHTS.json``. None of the machinery the docs used to describe -- the sealed
+    handoff object, its locator secrets, the CI build attestation -- exists any more, so
+    the docs must not still promise it.
+    """
+    data = (ROOT / "docs/data.md").read_text()
+    agents = (ROOT / "AGENTS.md").read_text()
+    readme = (ROOT / "README.md").read_text()
+
+    for present in (
+        "maintainer-prebuilt",
+        "data/RIGHTS.json",
+        "gh release create",
+        "build_provenance",
+        "rights_notice",
+        "verify-corpus-bundle.yml",
+    ):
+        assert present in data, f"docs/data.md must document {present}"
+    for absent in (
+        "seal-handoff",
+        "GENEREVIEWS_HANDOFF_LOCATOR",
+        "gh attestation verify",
+        "seal-manifest",
+        "responsible_reviewer",
+    ):
+        assert absent not in data, f"docs/data.md still describes removed machinery: {absent}"
+
+    assert 'build_provenance: "maintainer-prebuilt"' in agents
+    assert "data/RIGHTS.json" in agents and "verify-corpus-bundle.yml" in agents
+    assert "maintainer-prebuilt" in readme and "data/RIGHTS.json" in readme
 
 
-def test_docs_describe_source_only_work_and_truthful_unadopted_runtime_contract() -> None:
-    changelog = (ROOT / "docs/CHANGELOG.md").read_text()
+def test_deployment_docs_still_describe_the_adopted_runtime_data_contract() -> None:
     deployment = (ROOT / "docs/deployment.md").read_text()
 
-    assert "No corpus publication is enabled" not in changelog
-    assert "No publication was performed" in changelog
     assert "definitions.contract" in deployment
     assert "data_identity_contract" in deployment
     assert "unadopted" in deployment

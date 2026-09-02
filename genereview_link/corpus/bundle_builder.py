@@ -36,6 +36,7 @@ def build_bundle(
         build_evaluation_evidence,
         evaluate_connection,
     )
+    from genereview_link.corpus.rights_notice import load_rights_notice
     from genereview_link.db.locks import CORPUS_WRITE_LOCK_KEY
     from genereview_link.db.pool import create_pool
 
@@ -167,6 +168,7 @@ def build_bundle(
                     source_capture=facts.source_capture,
                     content_identity=facts.content_identity,
                     created_by="ci" if os.getenv("GITHUB_ACTIONS") == "true" else "cli",
+                    rights_notice=dict(load_rights_notice().block),
                     validation=validation_manifest,
                     evaluation=evaluation,
                     computation=facts.computation,

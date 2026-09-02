@@ -155,9 +155,18 @@ class TestBundleCommands:
         assert result.exit_code != 0
         assert "No such option" in result.output
 
-    def test_handoff_commands_accept_only_local_object_inputs(self) -> None:
-        seal_flags = self._bundle_subcommand_flags("seal-handoff")
-        publish_flags = self._bundle_subcommand_flags("publish-handoff")
+    def test_bundle_surface_is_exactly_the_local_build_commands(self) -> None:
+        """The CLI can build and validate a bundle locally; it cannot publish one.
 
-        assert seal_flags == {"--source", "--handoff-root", "--publisher-tool"}
-        assert publish_flags == {"--handoff-root", "--object-id", "--rights-record"}
+        Publication is now an ordinary ``gh release create`` of three files performed by
+        the maintainer, so the sealed-handoff commands (``seal-handoff`` and
+        ``publish-handoff``) are gone rather than merely unused -- there is no object to
+        seal and no privileged rights gate for them to run.
+        """
+        bundle_group = get_command(app).commands["bundle"]  # type: ignore[attr-defined]
+
+        assert set(bundle_group.commands) == {  # type: ignore[attr-defined]
+            "validate",
+            "build",
+            "publish-local",
+        }

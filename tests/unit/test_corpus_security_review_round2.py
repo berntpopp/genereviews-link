@@ -13,7 +13,6 @@ from pathlib import Path
 import pytest
 
 from genereview_link.corpus import computation_provenance, evaluation
-from genereview_link.corpus.dispatch_identity import DispatchIdentityError, verify_acceptance
 from genereview_link.corpus.evaluation import (
     EVALUATION_SUITE,
     EvaluationRejectedError,
@@ -177,7 +176,9 @@ def _capture_metadata(archive: Path, side_dir: Path) -> dict[str, object]:
         },
         "chapter_ids": ["NBK1", "NBK2"],
         "prior_artifact": {
-            "object_id": "d" * 64,
+            "manifest_sha256": "d" * 64,
+            "corpus_release_id": "2026-08-01-r1",
+            "app_git_sha": "1" * 40,
             "chapter_ids": ["NBK1"],
             "chapter_count": 1,
             "chapter_digests": {"NBK1": "e" * 64},
@@ -195,7 +196,12 @@ def _write_side_data(side_dir: Path) -> None:
     (side_dir / "NBKid_shortname_OMIM.txt").write_text("NBK1\tone\t100001\nNBK2\ttwo\t100002\n")
 
 
-def _write_prior_manifest(tmp_path: Path, capture: dict[str, object]) -> tuple[Path, Path]:
+def _write_prior_manifest(tmp_path: Path, capture: dict[str, object]) -> Path:
+    """Retain the previous release's ``manifest.json`` and bind the claim to its bytes.
+
+    That manifest is the only thing a chained capture proves itself against now: the
+    sealed handoff object it used to be co-signed by does not exist any more.
+    """
     prior = capture["prior_artifact"]
     assert isinstance(prior, dict)
     manifest = tmp_path / "prior-manifest.json"
@@ -203,8 +209,8 @@ def _write_prior_manifest(tmp_path: Path, capture: dict[str, object]) -> tuple[P
         json.dumps(
             {
                 "manifest_version": "3",
-                "corpus_release_id": "2026-08-01-r1",
-                "app_git_sha": "1" * 40,
+                "corpus_release_id": prior["corpus_release_id"],
+                "app_git_sha": prior["app_git_sha"],
                 "content_identity": {
                     key: prior[key]
                     for key in (
@@ -220,30 +226,7 @@ def _write_prior_manifest(tmp_path: Path, capture: dict[str, object]) -> tuple[P
         )
     )
     prior["manifest_sha256"] = hashlib.sha256(manifest.read_bytes()).hexdigest()
-    prior["corpus_release_id"] = "2026-08-01-r1"
-    prior["app_git_sha"] = "1" * 40
-    seal = tmp_path / "prior-seal-manifest.json"
-    seal.write_text(
-        json.dumps(
-            {
-                "format": "genereviews-local-handoff-v1",
-                "corpus_release_id": prior["corpus_release_id"],
-                "files": [
-                    {
-                        "name": "manifest.json",
-                        "sha256": prior["manifest_sha256"],
-                        "size": manifest.stat().st_size,
-                        "mode": 0o400,
-                    }
-                ],
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        + "\n"
-    )
-    prior["object_id"] = hashlib.sha256(seal.read_bytes()).hexdigest()
-    return manifest, seal
+    return manifest
 
 
 @pytest.mark.parametrize(
@@ -265,11 +248,9 @@ def test_offline_capture_maps_strict_metadata_json_errors(tmp_path: Path, raw: b
             archive=tmp_path / "archive",
             side_data_dir=tmp_path,
             prior_manifest=tmp_path / "prior-manifest",
-            prior_seal_manifest=tmp_path / "prior-seal",
         )
 
 
-@pytest.mark.parametrize("target", ("manifest", "seal"))
 @pytest.mark.parametrize(
     "raw",
     (
@@ -279,9 +260,7 @@ def test_offline_capture_maps_strict_metadata_json_errors(tmp_path: Path, raw: b
     ),
     ids=("duplicate", "nonfinite", "deep"),
 )
-def test_offline_capture_maps_strict_prior_json_errors(
-    tmp_path: Path, target: str, raw: bytes
-) -> None:
+def test_offline_capture_maps_strict_prior_json_errors(tmp_path: Path, raw: bytes) -> None:
     archive = tmp_path / "gene_NBK1116.tar.gz"
     member = tmp_path / "NBK1.nxml"
     member.write_text("<article>retained</article>")
@@ -291,27 +270,20 @@ def test_offline_capture_maps_strict_prior_json_errors(
     side_dir.mkdir()
     _write_side_data(side_dir)
     capture = _capture_metadata(archive, side_dir)
-    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture)
+    prior_manifest = _write_prior_manifest(tmp_path, capture)
     prior = capture["prior_artifact"]
     assert isinstance(prior, dict)
-    if target == "manifest":
-        prior_manifest.write_bytes(raw)
-        prior["manifest_sha256"] = hashlib.sha256(raw).hexdigest()
-        expected = "prior manifest is not valid JSON"
-    else:
-        prior_seal.write_bytes(raw)
-        prior["object_id"] = hashlib.sha256(raw).hexdigest()
-        expected = "prior seal manifest is not valid JSON"
+    prior_manifest.write_bytes(raw)
+    prior["manifest_sha256"] = hashlib.sha256(raw).hexdigest()
     metadata = tmp_path / "source-capture.json"
     metadata.write_text(json.dumps(capture))
 
-    with pytest.raises(SourceCaptureError, match=expected):
+    with pytest.raises(SourceCaptureError, match="prior manifest is not valid JSON"):
         load_offline_capture(
             metadata,
             archive=archive,
             side_data_dir=side_dir,
             prior_manifest=prior_manifest,
-            prior_seal_manifest=prior_seal,
         )
 
 
@@ -326,7 +298,7 @@ def test_offline_capture_binds_exact_retained_files_and_is_not_deleted(tmp_path:
     _write_side_data(side_dir)
     metadata = tmp_path / "source-capture.json"
     capture_metadata = _capture_metadata(archive, side_dir)
-    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture_metadata)
+    prior_manifest = _write_prior_manifest(tmp_path, capture_metadata)
     metadata.write_text(json.dumps(capture_metadata))
 
     capture = load_offline_capture(
@@ -334,7 +306,6 @@ def test_offline_capture_binds_exact_retained_files_and_is_not_deleted(tmp_path:
         archive=archive,
         side_data_dir=side_dir,
         prior_manifest=prior_manifest,
-        prior_seal_manifest=prior_seal,
     )
 
     assert capture["chapter_ids"] == ["NBK1", "NBK2"]
@@ -347,7 +318,6 @@ def test_offline_capture_binds_exact_retained_files_and_is_not_deleted(tmp_path:
             archive=archive,
             side_data_dir=side_dir,
             prior_manifest=prior_manifest,
-            prior_seal_manifest=prior_seal,
         )
 
 
@@ -361,7 +331,7 @@ def test_offline_capture_rejects_fabricated_prior_tuple(tmp_path: Path) -> None:
     side_dir.mkdir()
     _write_side_data(side_dir)
     capture = _capture_metadata(archive, side_dir)
-    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture)
+    prior_manifest = _write_prior_manifest(tmp_path, capture)
     prior = capture["prior_artifact"]
     assert isinstance(prior, dict)
     prior["chapters_sha256"] = "9" * 64
@@ -374,7 +344,6 @@ def test_offline_capture_rejects_fabricated_prior_tuple(tmp_path: Path) -> None:
             archive=archive,
             side_data_dir=side_dir,
             prior_manifest=prior_manifest,
-            prior_seal_manifest=prior_seal,
         )
 
     prior["chapters_sha256"] = "f" * 64
@@ -387,18 +356,16 @@ def test_offline_capture_rejects_fabricated_prior_tuple(tmp_path: Path) -> None:
             archive=archive,
             side_data_dir=side_dir,
             prior_manifest=unsafe_prior,
-            prior_seal_manifest=prior_seal,
         )
 
-    prior["object_id"] = "0" * 64
+    prior["manifest_sha256"] = "0" * 64
     metadata.write_text(json.dumps(capture))
-    with pytest.raises(SourceCaptureError, match="object ID"):
+    with pytest.raises(SourceCaptureError, match="digest does not match retained bytes"):
         load_offline_capture(
             metadata,
             archive=archive,
             side_data_dir=side_dir,
             prior_manifest=prior_manifest,
-            prior_seal_manifest=prior_seal,
         )
 
 
@@ -414,7 +381,7 @@ def test_offline_capture_rejects_chapter_ids_not_derived_from_retained_mapping(
     side_dir.mkdir()
     _write_side_data(side_dir)
     capture = _capture_metadata(archive, side_dir)
-    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture)
+    prior_manifest = _write_prior_manifest(tmp_path, capture)
     capture["chapter_ids"] = ["NBK1", "NBK3"]
     metadata = tmp_path / "source-capture.json"
     metadata.write_text(json.dumps(capture))
@@ -425,7 +392,6 @@ def test_offline_capture_rejects_chapter_ids_not_derived_from_retained_mapping(
             archive=archive,
             side_data_dir=side_dir,
             prior_manifest=prior_manifest,
-            prior_seal_manifest=prior_seal,
         )
 
 
@@ -455,7 +421,7 @@ def test_offline_capture_rejects_noncanonical_upstream_urls(tmp_path: Path) -> N
     side_dir.mkdir()
     _write_side_data(side_dir)
     capture = _capture_metadata(archive, side_dir)
-    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture)
+    prior_manifest = _write_prior_manifest(tmp_path, capture)
     capture["listing"]["url"] = "https://attacker.example/file_list.csv"  # type: ignore[index]
     metadata = tmp_path / "source-capture.json"
     metadata.write_text(json.dumps(capture))
@@ -466,7 +432,6 @@ def test_offline_capture_rejects_noncanonical_upstream_urls(tmp_path: Path) -> N
             archive=archive,
             side_data_dir=side_dir,
             prior_manifest=prior_manifest,
-            prior_seal_manifest=prior_seal,
         )
 
 
@@ -480,7 +445,7 @@ def test_offline_capture_derives_listing_fields_from_exact_retained_csv(tmp_path
     side_dir.mkdir()
     _write_side_data(side_dir)
     capture = _capture_metadata(archive, side_dir)
-    prior_manifest, prior_seal = _write_prior_manifest(tmp_path, capture)
+    prior_manifest = _write_prior_manifest(tmp_path, capture)
     listing = capture["listing"]
     assert isinstance(listing, dict)
     listing["last_updated"] = "2026-09-01 02:41:04"
@@ -493,7 +458,6 @@ def test_offline_capture_derives_listing_fields_from_exact_retained_csv(tmp_path
             archive=archive,
             side_data_dir=side_dir,
             prior_manifest=prior_manifest,
-            prior_seal_manifest=prior_seal,
         )
 
 
@@ -579,30 +543,6 @@ def test_release_selection_treats_every_remote_release_or_tag_as_occupied() -> N
     assert select_release_id("2026-08-31", without_exact) == ("2026-08-31-r2", False)
 
 
-def test_dispatch_acceptance_rejects_stale_or_wrong_run() -> None:
-    expected = {
-        "release_id": 17,
-        "target_commit": "a" * 40,
-        "nonce": "b" * 64,
-        "dispatch_time": "2026-09-01T12:00:00Z",
-    }
-    accepted = {
-        **expected,
-        "run_id": 99,
-        "run_started_at": "2026-09-01T12:00:01Z",
-        "head_sha": "a" * 40,
-        "source_ref": "refs/tags/corpus-data-2026-08-31-r1",
-        "status": "passed",
-    }
-    verify_acceptance(accepted, expected=expected)
-    stale = {**accepted, "run_started_at": "2026-09-01T11:59:59Z"}
-    with pytest.raises(DispatchIdentityError, match="predates"):
-        verify_acceptance(stale, expected=expected)
-    wrong = {**accepted, "head_sha": "c" * 40}
-    with pytest.raises(DispatchIdentityError, match="head SHA"):
-        verify_acceptance(wrong, expected=expected)
-
-
 def test_model_identity_binds_model_tokenizer_and_config_files() -> None:
     assert "model.safetensors" in BGE_MODEL_FILES
     assert "tokenizer.json" in BGE_MODEL_FILES
@@ -615,7 +555,7 @@ def test_content_identity_is_logical_and_reports_all_prior_chapter_deltas() -> N
         "chapter_ids": ["NBK1", "NBK2"],
         "archive": {"members_sha256": "a" * 64, "expanded_sha256": "b" * 64},
         "prior_artifact": {
-            "object_id": "c" * 64,
+            "manifest_sha256": "c" * 64,
             "chapter_ids": ["NBK1", "NBK3"],
             "chapter_count": 2,
             "chapter_digests": {"NBK1": "d" * 64, "NBK3": "e" * 64},
@@ -640,6 +580,7 @@ def test_content_identity_is_logical_and_reports_all_prior_chapter_deltas() -> N
     )
 
     assert identity["chapter_ids"] == ["NBK1", "NBK2"]
+    assert identity["delta_from_prior"]["prior_manifest_sha256"] == "c" * 64
     assert identity["delta_from_prior"]["added"] == ["NBK2"]
     assert identity["delta_from_prior"]["removed"] == ["NBK3"]
     assert identity["delta_from_prior"]["changed"] == ["NBK1"]

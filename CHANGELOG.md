@@ -4,6 +4,53 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+- **Corpus publication is now a plain, honest GitHub release.** The corpus is built on the
+  maintainer's workstation — the embedding pass is roughly twenty minutes on 32 cores, far
+  beyond what a hosted runner will do — and is published with `gh release create` as an
+  immutable release carrying exactly `corpus.dump`, `manifest.json` and `SHA256SUMS`.
+  Removed the entire sealed-handoff scheme that stood in front of it: the sealed object and
+  its publisher-tool wheel, the three sub-48-KiB "locator" secrets and their allow-listed
+  companion repositories, the tag ruleset gate, the release-transaction/promotion state
+  machine, the dispatch-identity acceptance receipt, and the `gh attestation verify`
+  requirement. That last one was not merely ceremony: it demanded a CI build provenance for
+  bytes CI had never built, which made a locally built corpus **structurally unpublishable**.
+  Deleted `corpus/{handoff,handoff_io,handoff_chain,handoff_locator,rights,rights_locator,
+  source_locator,release_promotion,publisher_gate,release_transaction,release_assets,
+  dispatch_identity}.py`, the `publisher_verifier` package, the `bundle seal-handoff` and
+  `bundle publish-handoff` CLI commands, and `.github/workflows/corpus-data-release.yml`.
+- **`manifest.json` states its own provenance.** New required field
+  `build_provenance: "maintainer-prebuilt"`; `bundle_verifier` refuses any other value, so
+  no published corpus can imply a CI build that did not happen. The release body says the
+  same in prose.
+- **Rights: one committed notice, one reviewer.** Replaced the per-release two-person
+  rights record — a signed determination with a terms snapshot, an evidence file, a
+  `responsible_reviewer` required to differ from the `rights_authority`, and a locator
+  secret to fetch all three — with a committed, versioned notice at `data/RIGHTS.json`
+  (licence, attribution, citation, source and terms URLs, reviewer, `terms_reviewed_at`,
+  and a use restriction that must say *research use only*). New
+  `corpus/rights_notice.py` validates it for exact shape and refuses a future review date;
+  the bundle builder copies it verbatim into the manifest as `rights_notice` and the
+  verifier requires the published block to match the committed file. The manifest's old
+  two-field `license` block is gone — `rights_notice` is a strict superset of it.
+- **`verify-corpus-bundle.yml` takes one input.** `release_tag`, instead of the eight
+  publisher-supplied identity inputs it needed to be driven by the deleted publication
+  workflow. It downloads the published assets, checks them against `SHA256SUMS`, runs
+  `verify_data_only_bundle`, requires the honest provenance and the committed rights
+  notice, requires a non-draft/non-prerelease release with exactly those three assets and a
+  target commit equal to the manifest's `app_git_sha`, and then does the part that was
+  always the valuable part: restores into a fresh PostgreSQL 18, rebuilds HNSW from
+  reviewed code, and re-derives the counts, logical content identity, computation chain and
+  evaluation results.
+- **The chained build works again.** A chained ingest proved its prior artifact against the
+  previous release's `manifest.json` *and* `seal-manifest.json`. No seal manifest is
+  published any more, so that path would have been unreachable by construction — the same
+  class of bug as the genesis gap. A chained build now proves the prior artifact against
+  the published `prior-manifest.json` alone.
+- Kept unchanged: the release-id date must equal the upstream source snapshot date, the
+  `SHA256SUMS`/manifest digest bindings, the closed-world manifest field check, and the
+  `container-release.json` digest anchors that `docker/ci-prepare-smoke.sh` proves before
+  any byte reaches the restore sidecar.
+
 ## [5.2.4] - 2026-09-02
 
 - **Adopted the GeneFoundry runtime data identity (`runtime-v1`).** Until now

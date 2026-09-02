@@ -1,48 +1,27 @@
 name: Verify data-only corpus bundle
 
-run-name: Verify corpus release ${{ inputs.release_id }} (${{ inputs.publication_nonce }})
+run-name: Verify corpus release ${{ inputs.release_tag }}
+
+# Corpus bundles are built on the maintainer's workstation -- the embedding pass is far
+# too slow for a hosted runner -- and published as an ordinary immutable GitHub release
+# carrying exactly corpus.dump, manifest.json and SHA256SUMS. There is no build
+# attestation to check and this workflow never claims one. What it does instead is prove
+# the published bytes from scratch: it downloads the release assets, checks them against
+# SHA256SUMS and against the manifest, checks that the manifest carries the honest
+# build_provenance and the committed data/RIGHTS.json notice, then restores the dump into
+# a fresh PostgreSQL 18 and re-derives the counts, the logical content identity, the
+# computation chain and the evaluation results from reviewed code.
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Immutable release tag containing the exact data-only assets
-        required: true
-        type: string
-      release_id:
-        description: Exact numeric GitHub release database ID
-        required: true
-        type: string
-      target_commit:
-        description: Exact trusted release target commit
-        required: true
-        type: string
-      assets_sha256:
-        description: SHA-256 of canonical API asset ID/size/digest identity
-        required: true
-        type: string
-      publication_nonce:
-        description: Unique binding for the publisher waiting on this exact run
-        required: true
-        type: string
-      verification_phase:
-        description: prepublication draft or immutable postpublication verification
-        required: true
-        type: choice
-        options: [prepublication, postpublication]
-      release_etag:
-        description: Exact ETag of the release representation dispatched for verification
-        required: true
-        type: string
-      dispatch_time:
-        description: Exact UTC time captured immediately before dispatch
+        description: Published immutable corpus release tag (corpus-data-YYYY-MM-DD-rN)
         required: true
         type: string
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
 
 concurrency:
   group: verify-corpus-bundle
@@ -69,26 +48,15 @@ jobs:
     env:
       DATABASE_URL: postgresql://genereview:ci@localhost:5432/genereview
       RESTORE_DATABASE_URL: postgresql://genereview_restore:restore@localhost:5432/genereview
-      EXPECTED_RELEASE_ID: ${{ inputs.release_id }}
       EXPECTED_RELEASE_TAG: ${{ inputs.release_tag }}
-      EXPECTED_TARGET_COMMIT: ${{ inputs.target_commit }}
-      EXPECTED_ASSETS_SHA256: ${{ inputs.assets_sha256 }}
-      EXPECTED_NONCE: ${{ inputs.publication_nonce }}
-      EXPECTED_PHASE: ${{ inputs.verification_phase }}
-      EXPECTED_RELEASE_ETAG: ${{ inputs.release_etag }}
-      EXPECTED_DISPATCH_TIME: ${{ inputs.dispatch_time }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Require exact target checkout and PG18 client tools
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Require a well-formed tag and PG18 client tools
         run: |
           set -euo pipefail
-          test "$GITHUB_SHA" = "$EXPECTED_TARGET_COMMIT"
-          grep -Eq '^[0-9a-f]{64}$' <<<"$EXPECTED_NONCE"
-          grep -Eq '^20[0-9]{2}-[0-9]{2}-[0-9]{2}T' <<<"$EXPECTED_DISPATCH_TIME"
-          test "$EXPECTED_PHASE" = prepublication || test "$EXPECTED_PHASE" = postpublication
-          printf 'VERIFIER_STARTED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          grep -Eq '^corpus-data-20[0-9]{2}-[0-9]{2}-[0-9]{2}-r[1-9][0-9]*$' <<<"$EXPECTED_RELEASE_TAG"
           client_bin="$RUNNER_TEMP/pg18-bin"
           mkdir -m 0700 -- "$client_bin"
           for tool in pg_dump pg_restore psql; do
@@ -126,110 +94,53 @@ jobs:
           print(BGE_MODEL_REVISION, torch.__version__, sentence_transformers.__version__, transformers.__version__)
           PY
           printf 'HF_HUB_OFFLINE=1\nTRANSFORMERS_OFFLINE=1\n' >> "$GITHUB_ENV"
-      - name: Bounded fresh-directory download_guard, archive-policy, and attestation verification
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          GENEREVIEWS_SOURCE_LOCATOR: ${{ secrets.GENEREVIEWS_SOURCE_LOCATOR }}
-          GENEREVIEWS_SOURCE_REPOSITORIES: ${{ vars.GENEREVIEWS_SOURCE_REPOSITORIES }}
+      - name: Download the published release assets and prove them against SHA256SUMS
         run: |
           set -euo pipefail
-          umask 077
-          verify_dir="$(mktemp -d "$RUNNER_TEMP/verify.XXXXXX")"
-          precondition="$RUNNER_TEMP/dispatched-release.status"
-          timeout 60s curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' \
-            --proto '=https' --header "Authorization: Bearer $GH_TOKEN" \
-            --header "If-None-Match: $EXPECTED_RELEASE_ETAG" \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/$EXPECTED_RELEASE_ID" \
-            >"$precondition"
-          test "$(cat "$precondition")" = 304
-          release_identity="$RUNNER_TEMP/release-identity.json"
-          draft_flag=()
-          if test "$EXPECTED_PHASE" = prepublication; then draft_flag=(--allow-draft); fi
-          uv run python -m genereview_link.corpus.release_assets \
-            --repo "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" --dest "$verify_dir" \
-            --release-id "$EXPECTED_RELEASE_ID" "${draft_flag[@]}" \
-            --identity-out "$release_identity"
-          uv run python - "$verify_dir/corpus.dump" <<'PY'
-          from pathlib import Path
-          from genereview_link.db.restore import assert_data_only_archive, read_archive_entries
-          assert_data_only_archive(read_archive_entries(Path(__import__('sys').argv[1])))
-          PY
-          bundle_dir="$RUNNER_TEMP/data-only-bundle"
-          mkdir -- "$bundle_dir"
-          for name in corpus.dump manifest.json SHA256SUMS; do ln "$verify_dir/$name" "$bundle_dir/$name"; done
-          uv run python - "$bundle_dir" <<'PY'
-          from pathlib import Path
-          from genereview_link.corpus.handoff import verify_data_only_bundle
-          verify_data_only_bundle(Path(__import__('sys').argv[1]))
-          PY
-          source_revision="$(jq -er '.app_git_sha | select(test("^[0-9a-f]{40,64}$"))' "$verify_dir/manifest.json")"
-          test "$source_revision" = "$EXPECTED_TARGET_COMMIT"
-          test "$(jq -er .release_id "$release_identity")" = "$EXPECTED_RELEASE_ID"
-          test "$(jq -er .target_commit "$release_identity")" = "$source_revision"
-          assets_sha256="$(jq -c '[.assets[] | {id:.asset_id,name,size,digest}] | sort_by(.name)' "$release_identity" | sha256sum | cut -d' ' -f1)"
-          test "$assets_sha256" = "$EXPECTED_ASSETS_SHA256"
-          test "$(sha256sum "$verify_dir/publisher-tool.whl" | cut -d' ' -f1)" = \
-            "$(jq -er '.publisher_tool.sha256 | select(test("^[0-9a-f]{64}$"))' "$verify_dir/seal-manifest.json")"
-          uv run python - "$verify_dir" <<'PY'
-          import hashlib, json, sys
-          from pathlib import Path
-          from genereview_link.corpus.rights import verify_rights_record
-          root = Path(sys.argv[1])
-          object_id = hashlib.sha256(root.joinpath("seal-manifest.json").read_bytes()).hexdigest()
-          seal = json.loads(root.joinpath("seal-manifest.json").read_bytes())
-          with root.joinpath("corpus.dump").open("rb") as stream:
-              artifact_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
-          sealed_values = {
-              "source_sha256": seal["source_sha256"],
-              "artifact_sha256": artifact_sha256,
-              "corpus_release_id": seal["corpus_release_id"],
-          }
-          verify_rights_record(root / "rights-record.json", object_id, sealed_values=sealed_values)
-          record = json.loads(root.joinpath("rights-record.json").read_bytes())
-          for name, field in (
-              ("rights-evidence.json", "evidence_sha256"),
-              ("terms-snapshot.html", "terms_sha256"),
-          ):
-              if hashlib.sha256(root.joinpath(name).read_bytes()).hexdigest() != record[field]:
-                  raise SystemExit(f"public {name} does not match the affirmative rights record")
-          PY
-          test -n "$GENEREVIEWS_SOURCE_LOCATOR"
-          test "$(printf %s "$GENEREVIEWS_SOURCE_LOCATOR" | wc -c)" -le 49152
-          retained_source="$RUNNER_TEMP/retained-source"
-          mkdir -m 0700 -- "$retained_source"
-          RETAINED_SOURCE="$retained_source" VERIFY_DIR="$verify_dir" uv run python - <<'PY'
-          import asyncio, json, os
-          from pathlib import Path
-          from genereview_link.corpus.source_capture import load_offline_capture
-          from genereview_link.corpus.source_locator import fetch_source_assets
-          destination = Path(os.environ["RETAINED_SOURCE"])
-          asyncio.run(fetch_source_assets(
-              os.environ["GENEREVIEWS_SOURCE_LOCATOR"].encode(),
-              allowed_repositories={value for value in os.environ["GENEREVIEWS_SOURCE_REPOSITORIES"].split(",") if value},
-              destination=destination,
-              token=os.environ["GH_TOKEN"],
-          ))
-          capture = load_offline_capture(
-              destination / "source-capture.json",
-              archive=destination / "gene_NBK1116.tar.gz",
-              side_data_dir=destination,
-              prior_manifest=destination / "prior-manifest.json",
-              prior_seal_manifest=destination / "prior-seal-manifest.json",
-          )
-          manifest = json.loads((Path(os.environ["VERIFY_DIR"]) / "manifest.json").read_bytes())
-          if capture != manifest["source_capture"]:
-              raise SystemExit("retained source bytes do not match the released capture")
-          PY
-          for subject in "$verify_dir/corpus.dump" "$verify_dir/manifest.json" \
-            "$verify_dir/SHA256SUMS" "$verify_dir/seal-manifest.json" \
-            "$verify_dir/publisher-tool.whl"; do
-            gh attestation verify "$subject" --repo "$GITHUB_REPOSITORY" \
-              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/corpus-data-release.yml" \
-              --source-ref refs/heads/main --source-digest "$source_revision"
-          done
+          verify_dir="$RUNNER_TEMP/corpus-release"
+          mkdir -m 0700 -- "$verify_dir"
+          gh release download "$EXPECTED_RELEASE_TAG" --repo "$GH_REPO" --dir "$verify_dir" \
+            --pattern corpus.dump --pattern manifest.json --pattern SHA256SUMS
+          test "$(ls -A "$verify_dir" | sort | tr '\n' ' ')" = "SHA256SUMS corpus.dump manifest.json "
+          (cd "$verify_dir" && sha256sum -c SHA256SUMS)
+          gh release view "$EXPECTED_RELEASE_TAG" --repo "$GH_REPO" \
+            --json tagName,isDraft,isPrerelease,targetCommitish,publishedAt,assets \
+            > "$RUNNER_TEMP/release-identity.json"
+          jq -e '.isDraft == false and .isPrerelease == false' "$RUNNER_TEMP/release-identity.json" >/dev/null
+          jq -e '[.assets[].name] | sort == ["SHA256SUMS","corpus.dump","manifest.json"]' \
+            "$RUNNER_TEMP/release-identity.json" >/dev/null
           printf 'VERIFY_DIR=%s\n' "$verify_dir" >> "$GITHUB_ENV"
-          printf 'RELEASE_IDENTITY=%s\n' "$release_identity" >> "$GITHUB_ENV"
+          printf 'RELEASE_IDENTITY=%s\n' "$RUNNER_TEMP/release-identity.json" >> "$GITHUB_ENV"
+      - name: Verify manifest identity, build provenance, and the committed rights notice
+        run: |
+          set -euo pipefail
+          uv run python - "$VERIFY_DIR" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          from genereview_link.corpus.bundle_integrity import verify_data_only_bundle
+
+          manifest = verify_data_only_bundle(Path(sys.argv[1]))
+          tag = os.environ["EXPECTED_RELEASE_TAG"]
+          release_id = manifest["corpus_release_id"]
+          if tag != f"corpus-data-{release_id}":
+              raise SystemExit(f"release tag {tag} does not name manifest release {release_id}")
+          # The release id date is the upstream snapshot date; nothing else may claim it.
+          snapshot_date = str(manifest["tarball_last_updated"])[:10]
+          if not str(release_id).startswith(snapshot_date):
+              raise SystemExit(
+                  f"release id {release_id} does not carry the source snapshot date {snapshot_date}"
+              )
+          print(
+              "verified",
+              release_id,
+              manifest["build_provenance"],
+              manifest["rights_notice"]["terms_reviewed_at"],
+          )
+          PY
+          # The release must point at the revision the bundle records as its builder.
+          test "$(jq -er .targetCommitish "$RELEASE_IDENTITY")" = "$(jq -er .app_git_sha "$VERIFY_DIR/manifest.json")"
       - name: Apply reviewed migrations before restoring data
         run: uv run genereview-link db migrate
       - name: Create exact restricted restore role
@@ -279,8 +190,6 @@ jobs:
                   print(f"MIGRATION_{namespace}_{version.replace(':', '_')}=1")
           PY
           )"
-          EXPECTED_APP_SHA="$(jq -er '.app_git_sha' "$VERIFY_DIR/manifest.json")"
-          test "$(jq -er .target_commit "$RELEASE_IDENTITY")" = "$EXPECTED_APP_SHA"
           uv run python - "$VERIFY_DIR/manifest.json" <<'PY'
           import json, sys
           from genereview_link.corpus.bundle import _reviewed_migration_digests
@@ -425,27 +334,19 @@ jobs:
           PY
           test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
             "select count(*) from public.genereview_release_readiness where is_active and ready and readiness_marker='verified-v1' and readiness->>'restore_mode'='data-only' and (readiness->>'restore_count')::int=1")" = 1
-          printf '{"release_id":%s,"tag":%s,"target_commit":%s,"assets_sha256":%s,"nonce":%s,"dispatch_time":%s,"run_id":%s,"run_started_at":%s,"head_sha":%s,"source_ref":%s,"phase":%s,"release_etag":%s,"status":"passed"}\n' \
-            "$EXPECTED_RELEASE_ID" \
-            "$(jq -Rn --arg value "$EXPECTED_RELEASE_TAG" '$value')" \
-            "$(jq -Rn --arg value "$EXPECTED_TARGET_COMMIT" '$value')" \
-            "$(jq -Rn --arg value "$EXPECTED_ASSETS_SHA256" '$value')" \
-            "$(jq -Rn --arg value "$EXPECTED_NONCE" '$value')" \
-            "$(jq -Rn --arg value "$EXPECTED_DISPATCH_TIME" '$value')" \
-            "$GITHUB_RUN_ID" \
-            "$(jq -Rn --arg value "$VERIFIER_STARTED_AT" '$value')" \
-            "$(jq -Rn --arg value "$GITHUB_SHA" '$value')" \
-            "$(jq -Rn --arg value "$GITHUB_REF" '$value')" \
-            "$(jq -Rn --arg value "$EXPECTED_PHASE" '$value')" \
-            "$(jq -Rn --arg value "$EXPECTED_RELEASE_ETAG" '$value')" \
-            > "$RUNNER_TEMP/publication-verification.json"
-      - name: Upload exact post-publication acceptance evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: corpus-publication-verification-${{ inputs.release_id }}
-          path: ${{ runner.temp }}/publication-verification.json
-          if-no-files-found: error
-      - name: Attest durable publication acceptance receipt
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: ${{ runner.temp }}/publication-verification.json
+      - name: Summarise the verified publication
+        run: |
+          set -euo pipefail
+          {
+            echo "### Corpus release \`$EXPECTED_RELEASE_TAG\` verified"
+            echo
+            echo "| fact | value |"
+            echo "| --- | --- |"
+            echo "| build provenance | \`$(jq -er .build_provenance "$VERIFY_DIR/manifest.json")\` |"
+            echo "| built at revision | \`$(jq -er .app_git_sha "$VERIFY_DIR/manifest.json")\` |"
+            echo "| terms reviewed | $(jq -er .rights_notice.terms_reviewed_at "$VERIFY_DIR/manifest.json") |"
+            echo "| reviewer | $(jq -er .rights_notice.reviewer "$VERIFY_DIR/manifest.json") |"
+            echo "| corpus.dump | \`sha256:$(jq -er '.checksums["corpus.dump"]' "$VERIFY_DIR/manifest.json")\` |"
+            echo "| manifest.json | \`sha256:$(sha256sum "$VERIFY_DIR/manifest.json" | cut -d' ' -f1)\` |"
+            echo "| SHA256SUMS | \`sha256:$(sha256sum "$VERIFY_DIR/SHA256SUMS" | cut -d' ' -f1)\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

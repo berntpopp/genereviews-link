@@ -109,7 +109,9 @@ def compute_content_identity(
         },
         "delta_from_prior": {
             "genesis": genesis,
-            "object_id": prior.get("object_id") if isinstance(prior, Mapping) else None,
+            "prior_manifest_sha256": (
+                prior.get("manifest_sha256") if isinstance(prior, Mapping) else None
+            ),
             "prior_chapter_count": (
                 prior.get("chapter_count") if isinstance(prior, Mapping) else None
             ),

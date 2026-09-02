@@ -7,15 +7,17 @@ import math
 import re
 from pathlib import Path
 
-from genereview_link.corpus.computation_validation import validate_computation_provenance
-from genereview_link.corpus.handoff import (
-    HandoffError,
+from genereview_link.corpus.bundle_integrity import (
+    BundleIntegrityError,
     _canonical_json,
     _load_json,
     _sha256,
     _verify_source,
 )
+from genereview_link.corpus.computation_validation import validate_computation_provenance
 from genereview_link.corpus.pg_client import PG18_IMAGE
+
+MAINTAINER_PREBUILT = "maintainer-prebuilt"
 
 
 def _computation_run_id(
@@ -34,46 +36,50 @@ def _computation_run_id(
 
 
 def verify_data_only_bundle_impl(
-    bundle: Path, *, allow_extra: bool = False, directory_fd: int | None = None
+    bundle: Path, *, directory_fd: int | None = None
 ) -> dict[str, object]:
-    """Validate a fresh local bundle before restore or sealing."""
-    _verify_source(bundle, allow_extra=allow_extra, directory_fd=directory_fd)
+    """Validate a locally built bundle before restore or publication."""
+    _verify_source(bundle, directory_fd=directory_fd)
     metadata = _load_json(bundle / "manifest.json", parent_fd=directory_fd)
     from genereview_link.corpus.bundle import BundleManifest
 
     expected = BundleManifest()
     stable = set(expected.__dataclass_fields__) - {"created_at", "checksums"}
     if set(metadata) != stable | {"checksums"}:
-        raise HandoffError("manifest.json has missing, extra, or volatile fields")
+        raise BundleIntegrityError("manifest.json has missing, extra, or volatile fields")
     for name in stable:
         if type(metadata[name]) is not type(getattr(expected, name)):
-            raise HandoffError(f"manifest.json field has invalid type: {name}")
+            raise BundleIntegrityError(f"manifest.json field has invalid type: {name}")
     if (
         metadata["manifest_version"] != "3"
         or metadata["bundle_format"] != "postgresql-custom-data-only"
     ):
-        raise HandoffError("manifest.json is not a v3 data-only bundle")
+        raise BundleIntegrityError("manifest.json is not a v3 data-only bundle")
+    _verify_build_provenance(metadata)
+    _verify_rights_notice(metadata)
     app_git_sha = metadata.get("app_git_sha")
     if not (
         isinstance(app_git_sha, str)
         and len(app_git_sha) in {40, 64}
         and all(char in "0123456789abcdef" for char in app_git_sha)
     ):
-        raise HandoffError("manifest.json application Git revision is incomplete")
+        raise BundleIntegrityError("manifest.json application Git revision is incomplete")
     app_version = metadata.get("app_version")
     if not (
         isinstance(app_version, str)
         and app_version
         and metadata.get("genereview_link_version") == app_version
     ):
-        raise HandoffError("manifest.json application version identity is incomplete")
+        raise BundleIntegrityError("manifest.json application version identity is incomplete")
     source_sha256 = metadata.get("tarball_source_sha256")
     if not (
         isinstance(source_sha256, str)
         and len(source_sha256) == 64
         and all(char in "0123456789abcdef" for char in source_sha256)
     ):
-        raise HandoffError("manifest.json tarball_source_sha256 must be a lowercase SHA-256")
+        raise BundleIntegrityError(
+            "manifest.json tarball_source_sha256 must be a lowercase SHA-256"
+        )
     embedding = metadata.get("embedding")
     if not isinstance(embedding, dict) or set(embedding) != {
         "model_name",
@@ -83,7 +89,7 @@ def verify_data_only_bundle_impl(
         "count",
         "expected_count",
     }:
-        raise HandoffError("manifest.json embedding identity is incomplete")
+        raise BundleIntegrityError("manifest.json embedding identity is incomplete")
     if any(
         type(embedding[name]) is not expected_type
         for name, expected_type in {
@@ -95,12 +101,12 @@ def verify_data_only_bundle_impl(
             "expected_count": int,
         }.items()
     ):
-        raise HandoffError("manifest.json embedding identity has invalid types")
+        raise BundleIntegrityError("manifest.json embedding identity has invalid types")
     if (
         embedding["count"] != metadata["passage_count"]
         or embedding["expected_count"] != metadata["passage_count"]
     ):
-        raise HandoffError("manifest.json embedding count does not match passage_count")
+        raise BundleIntegrityError("manifest.json embedding count does not match passage_count")
     hnsw = metadata.get("hnsw")
     if not (
         isinstance(hnsw, dict)
@@ -108,7 +114,7 @@ def verify_data_only_bundle_impl(
         and hnsw.get("index_name") == "genereview_embeddings_bge384_hnsw_cosine"
         and hnsw.get("exists") is True
     ):
-        raise HandoffError("manifest.json lacks the validated HNSW identity")
+        raise BundleIntegrityError("manifest.json lacks the validated HNSW identity")
     migrations = metadata.get("schema_migrations")
     if not (
         isinstance(migrations, dict)
@@ -121,7 +127,7 @@ def verify_data_only_bundle_impl(
             for values in migrations.values()
         )
     ):
-        raise HandoffError("manifest.json schema migration identity is incomplete")
+        raise BundleIntegrityError("manifest.json schema migration identity is incomplete")
     from genereview_link.corpus.schema_identity import (
         EXPECTED_CONTROL_MIGRATIONS,
         EXPECTED_DATA_MIGRATIONS,
@@ -131,27 +137,31 @@ def verify_data_only_bundle_impl(
         set(migrations["control"]) != EXPECTED_CONTROL_MIGRATIONS
         or set(migrations["data"]) != EXPECTED_DATA_MIGRATIONS
     ):
-        raise HandoffError("manifest.json schema migrations do not match reviewed migrations")
+        raise BundleIntegrityError(
+            "manifest.json schema migrations do not match reviewed migrations"
+        )
     migration_digests = metadata.get("migration_file_sha256")
     from genereview_link.corpus.bundle import _reviewed_migration_digests
 
     expected_migration_digests = _reviewed_migration_digests()
     if migration_digests != expected_migration_digests:
-        raise HandoffError("manifest.json migration file digests do not match reviewed SQL")
+        raise BundleIntegrityError("manifest.json migration file digests do not match reviewed SQL")
     postgres = metadata.get("postgres")
     if not (
         isinstance(postgres, dict)
         and set(postgres) == {"major_version", "pgvector_version"}
         and all(isinstance(postgres[name], str) and postgres[name] for name in postgres)
     ):
-        raise HandoffError("manifest.json PostgreSQL identity is incomplete")
+        raise BundleIntegrityError("manifest.json PostgreSQL identity is incomplete")
     if postgres != {"major_version": "18", "pgvector_version": "0.8.2"}:
-        raise HandoffError("manifest.json PostgreSQL identity does not match reviewed runtime")
+        raise BundleIntegrityError(
+            "manifest.json PostgreSQL identity does not match reviewed runtime"
+        )
     from genereview_link.corpus.source_identity import validate_source_identity
 
     source_capture = metadata.get("source_capture")
     if not isinstance(source_capture, dict):
-        raise HandoffError("manifest.json retained source/content identity is incomplete")
+        raise BundleIntegrityError("manifest.json retained source/content identity is incomplete")
     try:
         validate_source_identity(
             metadata.get("source"),
@@ -159,10 +169,12 @@ def verify_data_only_bundle_impl(
             last_updated=str(metadata.get("tarball_last_updated")),
         )
     except ValueError as error:
-        raise HandoffError("manifest.json upstream source identity is incomplete") from error
+        raise BundleIntegrityError(
+            "manifest.json upstream source identity is incomplete"
+        ) from error
     validation = metadata.get("validation")
     if not isinstance(validation, dict) or validation.get("status") != "passed":
-        raise HandoffError("manifest.json lacks a passing candidate validation")
+        raise BundleIntegrityError("manifest.json lacks a passing candidate validation")
     evaluation = metadata.get("evaluation")
     if not isinstance(evaluation, dict) or set(evaluation) != {
         "status",
@@ -175,7 +187,7 @@ def verify_data_only_bundle_impl(
         "results",
         "result_sha256",
     }:
-        raise HandoffError("manifest.json lacks exact evaluation evidence")
+        raise BundleIntegrityError("manifest.json lacks exact evaluation evidence")
     if (
         evaluation["status"] != "passed"
         or evaluation["suite"] != "tests/eval/genereviews_queries.jsonl"
@@ -208,7 +220,7 @@ def verify_data_only_bundle_impl(
             for name in ("mrr_at_10", "section_precision_at_5")
         )
     ):
-        raise HandoffError("manifest.json evaluation evidence is invalid")
+        raise BundleIntegrityError("manifest.json evaluation evidence is invalid")
     from genereview_link.corpus.evaluation_contract import (
         EVALUATION_SUITE_SHA256,
         EVALUATION_TOLERANCE,
@@ -252,12 +264,14 @@ def verify_data_only_bundle_impl(
             for query in per_query
         )
     ):
-        raise HandoffError("manifest.json evaluation did not meet the reviewed suite contract")
+        raise BundleIntegrityError(
+            "manifest.json evaluation did not meet the reviewed suite contract"
+        )
     if (
         hashlib.sha256(_canonical_json(evaluation["results"])).hexdigest()
         != evaluation["result_sha256"]
     ):
-        raise HandoffError("manifest.json evaluation result digest mismatch")
+        raise BundleIntegrityError("manifest.json evaluation result digest mismatch")
     computation_identity = metadata.get("computation")
     expected_corpus_identity = {
         "corpus_version": metadata["corpus_version"],
@@ -271,10 +285,12 @@ def verify_data_only_bundle_impl(
         "content_identity": metadata["content_identity"],
     }
     if evaluation["corpus_identity"] != expected_corpus_identity:
-        raise HandoffError("manifest.json evaluation is not bound to the bundled corpus identity")
+        raise BundleIntegrityError(
+            "manifest.json evaluation is not bound to the bundled corpus identity"
+        )
     dump_digest, _ = _sha256(bundle / "corpus.dump", parent_fd=directory_fd)
     if evaluation["dump_sha256"] != dump_digest:
-        raise HandoffError("manifest.json evaluation is not bound to corpus.dump")
+        raise BundleIntegrityError("manifest.json evaluation is not bound to corpus.dump")
     computation = metadata.get("computation")
     from genereview_link.retrieval.model_identity import (
         BGE_MODEL_FILES,
@@ -289,7 +305,7 @@ def verify_data_only_bundle_impl(
         "provenance",
         "ingest_run",
     }:
-        raise HandoffError("manifest.json computation provenance is incomplete")
+        raise BundleIntegrityError("manifest.json computation provenance is incomplete")
     provenance = computation.get("provenance")
     if (
         not re.fullmatch(r"[0-9a-f]{64}", str(computation["run_id"]))
@@ -322,7 +338,7 @@ def verify_data_only_bundle_impl(
             "table": "genereview_embeddings_bge384",
         }
     ):
-        raise HandoffError("manifest.json model computation identity is invalid")
+        raise BundleIntegrityError("manifest.json model computation identity is invalid")
     ingest_run = computation["ingest_run"]
     if (
         not isinstance(ingest_run, dict)
@@ -349,7 +365,7 @@ def verify_data_only_bundle_impl(
         or ingest_run["provenance"].get("source", {}).get("app_git_sha")
         != ingest_run["app_git_sha"]
     ):
-        raise HandoffError("manifest.json ingest computation identity is invalid")
+        raise BundleIntegrityError("manifest.json ingest computation identity is invalid")
     ingest_provenance = ingest_run["provenance"]
     assert isinstance(ingest_provenance, dict)
     if computation["run_id"] != _computation_run_id(
@@ -363,7 +379,7 @@ def verify_data_only_bundle_impl(
         expected_row_count=int(ingest_run["expected_row_count"]),
         provenance=ingest_provenance,
     ):
-        raise HandoffError("manifest.json computation run ID is not content-addressed")
+        raise BundleIntegrityError("manifest.json computation run ID is not content-addressed")
     source_provenance = provenance["source"]
     environment = provenance["environment"]
     database = provenance["database"]
@@ -433,7 +449,7 @@ def verify_data_only_bundle_impl(
         or type(determinism.get("batch_size")) is not int
         or determinism["batch_size"] <= 0
     ):
-        raise HandoffError("manifest.json runtime computation provenance is invalid")
+        raise BundleIntegrityError("manifest.json runtime computation provenance is invalid")
     try:
         validate_computation_provenance(provenance, app_git_sha=str(app_git_sha))
         validate_computation_provenance(
@@ -442,7 +458,9 @@ def verify_data_only_bundle_impl(
             source_capture=source_capture,
         )
     except ValueError as error:
-        raise HandoffError("manifest.json runtime computation provenance is invalid") from error
+        raise BundleIntegrityError(
+            "manifest.json runtime computation provenance is invalid"
+        ) from error
     for field in (
         "uv_lock_sha256",
         "environment",
@@ -452,7 +470,7 @@ def verify_data_only_bundle_impl(
         "embedding",
     ):
         if ingest_provenance[field] != provenance[field]:
-            raise HandoffError("ingest and embedding runtime provenance do not match")
+            raise BundleIntegrityError("ingest and embedding runtime provenance do not match")
     content_identity = metadata.get("content_identity")
     if (
         source_capture.get("format") != "genereviews-offline-source-v1"
@@ -468,13 +486,13 @@ def verify_data_only_bundle_impl(
             else None,
         }
     ):
-        raise HandoffError("manifest.json retained source/content identity is incomplete")
+        raise BundleIntegrityError("manifest.json retained source/content identity is incomplete")
     from genereview_link.corpus.source_identity import validate_release_id
 
     try:
         validate_release_id(str(metadata["corpus_release_id"]))
     except ValueError as error:
-        raise HandoffError("manifest.json corpus_release_id is invalid") from error
+        raise BundleIntegrityError("manifest.json corpus_release_id is invalid") from error
     updated = metadata.get("tarball_last_updated")
     release_id = str(metadata["corpus_release_id"])
     if (
@@ -483,15 +501,52 @@ def verify_data_only_bundle_impl(
         or release_id[:10] != updated[:10]
         or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", updated[:10])
     ):
-        raise HandoffError(
+        raise BundleIntegrityError(
             "manifest.json corpus_release_id date must match upstream last_updated date"
         )
     checksums = metadata["checksums"]
     if not isinstance(checksums, dict) or set(checksums) != {"corpus.dump"}:
-        raise HandoffError("manifest.json checksums must cover exactly corpus.dump")
+        raise BundleIntegrityError("manifest.json checksums must cover exactly corpus.dump")
     if checksums["corpus.dump"] != dump_digest:
-        raise HandoffError("manifest checksum mismatch for corpus.dump")
+        raise BundleIntegrityError("manifest checksum mismatch for corpus.dump")
     return metadata
 
 
-__all__ = ["verify_data_only_bundle_impl"]
+def _verify_build_provenance(metadata: dict[str, object]) -> None:
+    """The only honest provenance claim this scheme can make.
+
+    The corpus is built on the maintainer's workstation because the embedding pass is
+    far too slow for a hosted runner. Nothing here is signed or attested by CI, and the
+    published manifest must say so in as many words rather than leaving a reader to
+    assume a build provenance that does not exist.
+    """
+    if metadata.get("build_provenance") != MAINTAINER_PREBUILT:
+        raise BundleIntegrityError(
+            "manifest.json must declare build_provenance " + MAINTAINER_PREBUILT
+        )
+
+
+def _verify_rights_notice(metadata: dict[str, object]) -> None:
+    """The published notice must be the committed one, validated the same way."""
+    from genereview_link.corpus.rights_notice import (
+        RightsNoticeError,
+        load_rights_notice,
+        validate_rights_notice,
+    )
+
+    published = metadata.get("rights_notice")
+    try:
+        notice = validate_rights_notice(published)
+    except RightsNoticeError as error:
+        raise BundleIntegrityError(f"manifest.json rights notice is invalid: {error}") from error
+    try:
+        committed = load_rights_notice()
+    except RightsNoticeError as error:  # pragma: no cover - checkout without data/RIGHTS.json
+        raise BundleIntegrityError(f"committed rights notice is unusable: {error}") from error
+    if notice.digest != committed.digest:
+        raise BundleIntegrityError(
+            "manifest.json rights notice does not match the committed data/RIGHTS.json"
+        )
+
+
+__all__ = ["MAINTAINER_PREBUILT", "verify_data_only_bundle_impl"]

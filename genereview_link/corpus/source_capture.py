@@ -261,15 +261,15 @@ def _load_bounded_json(path: Path, *, label: str, limit: int) -> object:
         raise SourceCaptureError(f"{label} is not valid JSON") from error
 
 
-def _validate_prior_artifact(
-    prior: object,
-    *,
-    prior_manifest: Path,
-    prior_seal_manifest: Path,
-) -> None:
-    """Prove one retained prior manifest/seal pair against the claimed logical identity."""
+def _validate_prior_artifact(prior: object, *, prior_manifest: Path) -> None:
+    """Prove one retained prior manifest against the claimed logical identity.
+
+    The prior release publishes exactly three assets, of which ``manifest.json``
+    is the only one this claim can be re-derived from, so ``manifest_sha256`` is
+    the sole binding between the claim and the retained bytes; every other field
+    is then read back out of those same bytes and compared field for field.
+    """
     if not isinstance(prior, Mapping) or set(prior) != {
-        "object_id",
         "manifest_sha256",
         "corpus_release_id",
         "app_git_sha",
@@ -283,8 +283,7 @@ def _validate_prior_artifact(
     prior_ids = prior.get("chapter_ids")
     prior_digests = prior.get("chapter_digests")
     if (
-        not SHA256.fullmatch(str(prior.get("object_id", "")))
-        or not SHA256.fullmatch(str(prior.get("manifest_sha256", "")))
+        not SHA256.fullmatch(str(prior.get("manifest_sha256", "")))
         or not re.fullmatch(
             r"20\d{2}-\d{2}-\d{2}-r[1-9]\d*", str(prior.get("corpus_release_id", ""))
         )
@@ -305,38 +304,10 @@ def _validate_prior_artifact(
     )
     if hashlib.sha256(prior_bytes).hexdigest() != prior["manifest_sha256"]:
         raise SourceCaptureError("prior manifest digest does not match retained bytes")
-    prior_seal_bytes = _read_regular_bounded(
-        prior_seal_manifest, label="prior seal manifest", limit=4 * 1024 * 1024
-    )
-    if hashlib.sha256(prior_seal_bytes).hexdigest() != prior["object_id"]:
-        raise SourceCaptureError("prior object ID does not match retained seal manifest")
     try:
         prior_record = load_strict_json(prior_bytes, max_bytes=4 * 1024 * 1024)
     except StrictJsonError as error:
         raise SourceCaptureError("prior manifest is not valid JSON") from error
-    try:
-        prior_seal = load_strict_json(prior_seal_bytes, max_bytes=4 * 1024 * 1024)
-    except StrictJsonError as error:
-        raise SourceCaptureError("prior seal manifest is not valid JSON") from error
-    seal_files = prior_seal.get("files") if isinstance(prior_seal, dict) else None
-    manifest_entries = (
-        [
-            entry
-            for entry in seal_files
-            if isinstance(entry, dict) and entry.get("name") == "manifest.json"
-        ]
-        if isinstance(seal_files, list)
-        else []
-    )
-    if (
-        not isinstance(prior_seal, dict)
-        or prior_seal.get("format") != "genereviews-local-handoff-v1"
-        or prior_seal.get("corpus_release_id") != prior["corpus_release_id"]
-        or len(manifest_entries) != 1
-        or manifest_entries[0].get("sha256") != prior["manifest_sha256"]
-        or manifest_entries[0].get("size") != len(prior_bytes)
-    ):
-        raise SourceCaptureError("prior seal manifest does not bind the retained prior manifest")
     prior_content = prior_record.get("content_identity") if isinstance(prior_record, dict) else None
     logical_keys = {
         "chapter_ids",
@@ -363,16 +334,15 @@ def load_offline_capture(
     archive: Path,
     side_data_dir: Path,
     prior_manifest: Path | None,
-    prior_seal_manifest: Path | None,
 ) -> dict[str, object]:
     """Load one exact capture without fetching or deleting any source file.
 
     A capture is either *chained* -- it names a prior artifact and is proven
-    against the retained prior manifest/seal pair -- or *genesis*: the first
-    build of the chain, which carries ``genesis: true`` and
-    ``prior_artifact: null`` and is given no prior pair at all. The two shapes
-    are mutually exclusive and both are fail-closed: a genesis claim with a
-    prior (or a prior pair on disk), and a chained claim without one, are
+    against the retained prior manifest published by the previous release -- or
+    *genesis*: the first build of the chain, which carries ``genesis: true`` and
+    ``prior_artifact: null`` and is given no prior manifest at all. The two
+    shapes are mutually exclusive and both are fail-closed: a genesis claim with
+    a prior (or a prior manifest on disk), and a chained claim without one, are
     refused rather than silently accepted.
     """
     value = _load_bounded_json(metadata, label="source capture metadata", limit=4 << 20)
@@ -391,12 +361,11 @@ def load_offline_capture(
     genesis = value.get("genesis", False)
     if genesis is not True and genesis is not False:
         raise SourceCaptureError("source capture genesis flag must be a literal boolean")
-    supplied_prior = (prior_manifest, prior_seal_manifest)
     if genesis:
-        if prior is not None or any(path is not None for path in supplied_prior):
+        if prior is not None or prior_manifest is not None:
             raise SourceCaptureError("a genesis capture must not name or carry a prior artifact")
-    elif prior is None or any(path is None for path in supplied_prior):
-        raise SourceCaptureError("a chained capture requires a retained prior manifest pair")
+    elif prior is None or prior_manifest is None:
+        raise SourceCaptureError("a chained capture requires a retained prior manifest")
     if not isinstance(listing, Mapping) or set(listing) != {
         "url",
         "raw_sha256",
@@ -470,12 +439,8 @@ def load_offline_capture(
     ):
         raise SourceCaptureError("capture chapter IDs must be exact, unique, and sorted")
     if not genesis:
-        assert prior_manifest is not None and prior_seal_manifest is not None
-        _validate_prior_artifact(
-            prior,
-            prior_manifest=prior_manifest,
-            prior_seal_manifest=prior_seal_manifest,
-        )
+        assert prior_manifest is not None
+        _validate_prior_artifact(prior, prior_manifest=prior_manifest)
     _file_identity(archive, archive_identity, label="archive")
     members_sha256, expanded_sha256 = archive_content_identities(archive)
     if archive_identity.get("members_sha256") != members_sha256:

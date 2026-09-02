@@ -42,19 +42,14 @@ from genereview_link.corpus.archive import (
     fetch_listing_bytes,
     listing_from_bytes,
 )
-from genereview_link.corpus.rights import (
-    RIGHTS_ATTRIBUTION,
-    RIGHTS_PERMITTED_ASSET_USE,
-    RIGHTS_TERMS_SOURCE_URI,
-    RIGHTS_TERMS_VERSION,
-)
+from genereview_link.corpus.rights_notice import load_rights_notice
+from genereview_link.corpus.source_assets import GENESIS_SOURCE_ASSETS, SOURCE_ASSETS
 from genereview_link.corpus.source_capture import (
     SourceCaptureError,
     archive_content_identities,
     load_offline_capture,
 )
 from genereview_link.corpus.source_identity import SIDEDATA_FILES
-from genereview_link.corpus.source_locator import GENESIS_SOURCE_ASSETS, SOURCE_ASSETS
 from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 ARCHIVE_NAME = "gene_NBK1116.tar.gz"
@@ -203,15 +198,14 @@ def _is_reusable(path: Path, entry: Mapping[str, object] | None) -> bool:
     return digest == recorded_digest and size == entry.get("size_bytes")
 
 
-def prior_artifact_from(prior_manifest: Path, prior_seal_manifest: Path) -> dict[str, object]:
-    """Derive the exact prior-artifact claim from a retained manifest/seal pair.
+def prior_artifact_from(prior_manifest: Path) -> dict[str, object]:
+    """Derive the exact prior-artifact claim from the previous release's manifest.
 
     Every field is read out of the prior bytes rather than supplied by hand, so
-    the capture cannot claim a prior identity the retained files do not prove;
+    the capture cannot claim a prior identity the retained file does not prove;
     ``load_offline_capture`` re-derives and re-checks all of it anyway.
     """
     manifest_bytes = prior_manifest.read_bytes()
-    seal_bytes = prior_seal_manifest.read_bytes()
     try:
         manifest = load_strict_json(manifest_bytes, max_bytes=MAX_CONTROL_BYTES)
     except StrictJsonError as error:
@@ -231,7 +225,6 @@ def prior_artifact_from(prior_manifest: Path, prior_seal_manifest: Path) -> dict
     if any(key not in content for key in logical):
         raise SourceFetchError("prior manifest content identity is incomplete")
     return {
-        "object_id": hashlib.sha256(seal_bytes).hexdigest(),
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
         "corpus_release_id": manifest.get("corpus_release_id"),
         "app_git_sha": manifest.get("app_git_sha"),
@@ -240,12 +233,14 @@ def prior_artifact_from(prior_manifest: Path, prior_seal_manifest: Path) -> dict
 
 
 def _terms_acknowledgement() -> dict[str, object]:
+    """Record the committed, reviewed rights notice beside the fetched bytes."""
+    notice = load_rights_notice()
     return {
         "acknowledged": True,
-        "terms_source_uri": RIGHTS_TERMS_SOURCE_URI,
-        "terms_version": RIGHTS_TERMS_VERSION,
-        "permitted_asset_use": RIGHTS_PERMITTED_ASSET_USE,
-        "attribution": RIGHTS_ATTRIBUTION,
+        "terms_source_uri": notice.terms_url,
+        "terms_version": notice.terms_reviewed_at,
+        "permitted_asset_use": notice.use_restriction,
+        "attribution": notice.attribution,
     }
 
 
@@ -263,7 +258,6 @@ async def fetch_source_snapshot(
     genesis: bool,
     acknowledge_terms: bool,
     prior_manifest: Path | None = None,
-    prior_seal_manifest: Path | None = None,
     rate_limiter: PoliteRateLimiter | None = None,
     api_key: str | None = None,
     refresh: bool = False,
@@ -284,10 +278,10 @@ async def fetch_source_snapshot(
             "acknowledgement: the content is copyrighted and licensed for "
             "noncommercial research use only"
         )
-    if genesis and (prior_manifest is not None or prior_seal_manifest is not None):
-        raise SourceFetchError("a genesis snapshot must not be given a prior manifest pair")
-    if not genesis and (prior_manifest is None or prior_seal_manifest is None):
-        raise SourceFetchError("a chained snapshot requires both prior manifest files")
+    if genesis and prior_manifest is not None:
+        raise SourceFetchError("a genesis snapshot must not be given a prior manifest")
+    if not genesis and prior_manifest is None:
+        raise SourceFetchError("a chained snapshot requires the prior release's manifest")
 
     _prepare_destination(destination)
     limiter = rate_limiter or PoliteRateLimiter(default_min_interval(api_key))
@@ -357,15 +351,9 @@ async def fetch_source_snapshot(
 
     prior: dict[str, object] | None = None
     if not genesis:
-        assert prior_manifest is not None and prior_seal_manifest is not None
-        for source, name in (
-            (prior_manifest, "prior-manifest.json"),
-            (prior_seal_manifest, "prior-seal-manifest.json"),
-        ):
-            _write_exact(destination / name, source.read_bytes())
-        prior = prior_artifact_from(
-            destination / "prior-manifest.json", destination / "prior-seal-manifest.json"
-        )
+        assert prior_manifest is not None
+        _write_exact(destination / "prior-manifest.json", prior_manifest.read_bytes())
+        prior = prior_artifact_from(destination / "prior-manifest.json")
 
     capture: dict[str, object] = {
         "format": CAPTURE_FORMAT,
@@ -457,7 +445,6 @@ async def fetch_source_snapshot(
                 archive=archive_path,
                 side_data_dir=destination,
                 prior_manifest=None if genesis else destination / "prior-manifest.json",
-                prior_seal_manifest=(None if genesis else destination / "prior-seal-manifest.json"),
             )
         except SourceCaptureError as error:
             raise SourceFetchError(f"assembled snapshot is not ingestable: {error}") from error

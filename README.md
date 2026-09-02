@@ -86,6 +86,10 @@ namespace token is `genereviews`. Static references are also served as MCP resou
 - **Refresh model:** the passage corpus is an immutable, digest-pinned data release,
   restored once into Postgres; the live-NCBI tools always hit NCBI and stamp their
   response version as `live:<timestamp>`. See [Data & corpus](docs/data.md).
+- **Build provenance:** corpus bundles are built on the maintainer's workstation — the
+  embedding pass is far too slow for a hosted runner — and published as ordinary immutable
+  GitHub releases. Every published `manifest.json` says so: `build_provenance:
+  "maintainer-prebuilt"`. Nothing here claims a CI build or an attestation for corpus data.
 - **Runtime data identity:** `GET /health` proves which reviewed data release is actually
   serving — `data_available` plus `release_identity.data_identity.{expected,actual}` — and
   `python -m genereview_link.data_probe` observes the restored corpus read-only. See
@@ -99,7 +103,9 @@ namespace token is `genereviews`. Static references are also served as MCP resou
   (SPDX `LicenseRef-GeneReviews`) — copyrighted, *not* an open licence. Attribute the
   University of Washington when redistributing; full terms at
   [NBK138602](https://www.ncbi.nlm.nih.gov/books/NBK138602/), and via the `get_license`
-  tool.
+  tool. The reviewed redistribution notice is committed in
+  [`data/RIGHTS.json`](data/RIGHTS.json) and copied verbatim into every published corpus
+  manifest, so attribution and the research-use-only restriction travel with the data.
 
 ## Documentation
 

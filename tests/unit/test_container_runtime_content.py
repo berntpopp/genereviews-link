@@ -26,7 +26,6 @@ PROHIBITED_RUNTIME_PATHS = (
     "download_admission.py",
     "download_guard.py",
     "ingest",
-    "publisher_verifier",
 )
 
 

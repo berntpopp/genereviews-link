@@ -14,44 +14,9 @@ from types import SimpleNamespace
 import pytest
 
 import genereview_link.corpus.pipeline as pipeline
-from genereview_link.corpus.release_transaction import (
-    ReleaseTransactionError,
-    _expected_assets,
-)
-from genereview_link.corpus.rights import RightsError, verify_rights_record
 from genereview_link.db.restore import ArchivePolicyError, extract_bundle
 
 ROOT = Path(__file__).resolve().parents[2]
-RIGHTS_ATTRIBUTION = (
-    "GeneReviews® content ©1993-2026 University of Washington, Seattle; "
-    "source https://www.genereviews.org; noncommercial research purposes only; "
-    "comply with the copyright notice and Usage Disclaimer; no further modifications."
-)
-
-
-def test_release_transaction_accepts_only_the_literal_ordered_asset_set() -> None:
-    digest = "sha256:" + "1" * 64
-    attacker = {f"attacker-{index}": {"size": 1, "digest": digest} for index in range(1, 9)}
-
-    with pytest.raises(ReleaseTransactionError, match="exact"):
-        _expected_assets(attacker)
-
-    expected = {
-        name: {"size": index + 1, "digest": digest}
-        for index, name in enumerate(
-            (
-                "corpus.dump",
-                "manifest.json",
-                "SHA256SUMS",
-                "rights-record.json",
-                "rights-evidence.json",
-                "terms-snapshot.html",
-                "seal-manifest.json",
-                "publisher-tool.whl",
-            )
-        )
-    }
-    assert tuple(_expected_assets(expected)) == tuple(expected)
 
 
 def test_production_image_copies_pg18_clients_without_mutable_pgdg_repository() -> None:
@@ -63,23 +28,26 @@ def test_production_image_copies_pg18_clients_without_mutable_pgdg_repository() 
     assert "COPY --from=pg18-client /usr/lib/x86_64-linux-gnu/libpq.so.5" in dockerfile
 
 
-def test_workflows_produce_and_consume_bound_attestations_for_all_restore_inputs() -> None:
-    producer = (ROOT / ".github/workflows/corpus-data-release.yml").read_text()
+def test_verifier_binds_every_restore_input_without_claiming_an_attestation() -> None:
+    """Nothing about the published bytes is taken on trust, and nothing is signed.
+
+    The corpus is built on the maintainer's workstation, so there is no CI build to
+    attest and the verifier must never pretend otherwise. What it does instead is prove
+    all three published assets from scratch -- the checksum file against the bytes, the
+    manifest against reviewed code -- before a single row is restored.
+    """
     verifier = (ROOT / ".github/workflows/verify-corpus-bundle.yml").read_text()
 
-    assert "name: Attest the exact evaluated build output" in producer
-    producer_subjects = producer.split("name: Attest the exact evaluated build output", 1)[1]
-    producer_subjects = producer_subjects.split("- name:", 1)[0]
-    for name in (
-        "corpus.dump",
-        "manifest.json",
-        "SHA256SUMS",
-        "seal-manifest.json",
-        "publisher-tool.whl",
-    ):
-        assert name in producer_subjects
-    assert "--source-ref refs/heads/main" in verifier
-    assert 'for subject in "$verify_dir/corpus.dump" "$verify_dir/manifest.json"' in verifier
+    assert not (ROOT / ".github/workflows/corpus-data-release.yml").exists()
+    assert "gh attestation verify" not in verifier
+    assert "attest-build-provenance" not in verifier
+    assert "attestations:" not in verifier
+    assert "id-token:" not in verifier
+    for name in ("corpus.dump", "manifest.json", "SHA256SUMS"):
+        assert f"--pattern {name}" in verifier
+    assert "sha256sum -c SHA256SUMS" in verifier
+    assert "verify_data_only_bundle" in verifier
+    assert "build_provenance" in verifier and "rights_notice" in verifier
 
 
 def test_production_seed_contract_preserves_current_pin_and_supports_direct_assets() -> None:
@@ -318,51 +286,6 @@ def test_release_image_allowlist_contains_current_embedding_identity_migration()
         "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/"
         "0007_embedding_run_identity.sql"
     ) in release["data"]["image_allowlist"]
-
-
-@pytest.mark.parametrize(
-    "uri_prefix",
-    ["", "file:"],
-)
-def test_rights_record_rejects_nontransferable_filesystem_references(
-    tmp_path: Path, uri_prefix: str
-) -> None:
-    document = tmp_path / "reviewed-rights-document"
-    document.write_bytes(b"reviewed terms and evidence\n")
-    uri = f"{uri_prefix}{document}"
-    object_id = "1" * 64
-    record = {
-        "artifact_sha256": "2" * 64,
-        "object_id": object_id,
-        "decision": "affirmative",
-        "approval_kind": "repository-owner redistribution determination",
-        "upstream_approval": False,
-        "responsible_reviewer": "reviewer@example.org",
-        "rights_authority": "Bernt Popp / repository owner",
-        "authorization_uri": "https://github.com/berntpopp/genereviews-link/issues/27",
-        "decision_time": "2026-09-01T00:00:00Z",
-        "terms_uri": uri,
-        "terms_sha256": hashlib.sha256(document.read_bytes()).hexdigest(),
-        "terms_version": "2026-09-01",
-        "terms_source_uri": "https://www.genereviews.org/",
-        "permitted_asset_use": (
-            "immutable GeneReviews research corpus artifact for noncommercial research purposes "
-            "only; no further modifications"
-        ),
-        "attribution": RIGHTS_ATTRIBUTION,
-        "evidence_uri": uri,
-        "evidence_sha256": hashlib.sha256(document.read_bytes()).hexdigest(),
-        "source_sha256": "3" * 64,
-        "corpus_release_id": "2026-08-30-r1",
-    }
-    record["rights_record_sha256"] = hashlib.sha256(
-        (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode()
-    ).hexdigest()
-    rights = tmp_path / "rights-record.json"
-    rights.write_text(json.dumps(record))
-
-    with pytest.raises(RightsError, match="bundle"):
-        verify_rights_record(rights, object_id)
 
 
 @pytest.mark.asyncio
