@@ -79,33 +79,18 @@ reference for the shape of the seed directory.
 ### Rebuilding the corpus and publishing it as a release asset
 
 A corpus is built on a workstation and shipped as an artifact; servers only ever restore
-one. The full sequence:
-
-```bash
-uv sync --group dev --extra cpu --frozen
-make db-migrate                                   # schema from reviewed in-repo migrations
-genereview-link ingest --archive <archive> --side-data-dir <dir> \
-  --source-metadata <capture.json> --prior-manifest <prior-manifest.json> \
-  --prior-seal-manifest <prior-seal-manifest.json>
-make embed                                        # BGE backfill + HNSW index
-make bundle-validate                              # active corpus is publish-ready
-RELEASE_ID=2026-05-12-r1 make bundle-publish-local # corpus.dump + manifest.json + SHA256SUMS
-```
-
-Publication is deliberately rights-gated and separate; see *Packaging a local corpus*
-below. Once the release exists, update `container-release.json` (`.data.release_tag` and
+one. There is exactly one flow, end to end — see
+[Building and publishing a corpus](#building-and-publishing-a-corpus-maintainer) below.
+Once the release exists, update `container-release.json` (`.data.release_tag` and
 `.data.digest`), then stage and pin it on the server as above.
 
-### Development: build locally (`BUILD_LOCAL=true`)
+### Development: `BUILD_LOCAL=true` is inert
 
-Runs the full ingest pipeline — download from NCBI, parse, embed — on first boot:
-
-```bash
-BUILD_LOCAL=true DATABASE_URL=postgresql://... genereview-link serve
-```
-
-Expect **15–30 minutes** on first boot; subsequent boots are instant. Requires
-`NCBI_API_KEY` for reliable rate limits. Development only.
+`BUILD_LOCAL` named a boot-time live ingest that no longer exists. Ingest consumes only a
+retained offline source set, so the branch behind the flag could only ever raise; it now
+logs an explicit error and the server degrades exactly as it does with an empty database
+(`/passages/search` → **503**). To get a corpus on a workstation, run the maintainer flow
+below (`snapshot` → `ingest --genesis` → `embed`) against your own `DATABASE_URL`.
 
 ### External Postgres (no corpus env vars)
 
@@ -242,37 +227,84 @@ An app assembled outside the normal server lifespan (unit tests, embedded use) r
 `stale: false` — absence of state is not evidence of staleness, mirroring how
 `embedding_health` treats a never-initialised provider.
 
-## Ingest pipeline (maintainer)
+## Building and publishing a corpus (maintainer)
+
+One flow, start to finish, on a workstation. Every step is explicit: acquisition never
+mutates a database, ingest never fetches, and publication is rights-gated and separate.
 
 ```bash
-make db-migrate     # apply control + data migrations against $DATABASE_URL
-genereview-link ingest --archive <archive> --side-data-dir <dir> \
-  --source-metadata <capture.json> --prior-manifest <prior-manifest.json> \
-  --prior-seal-manifest <prior-seal-manifest.json>
-                    # verify retained bytes → record identity → parse → write → swap
-make embed          # backfill embeddings + build the HNSW index
-make db-reset       # DROP and recreate the genereview schemas (dev only)
+uv sync --group dev --extra cpu --frozen
+make db-migrate                                   # control + data migrations into $DATABASE_URL
+
+# 1. Acquire. Fetches the NCBI litarch listing, the GeneReviews archive and the three
+#    side-data files into exactly the layout ingest consumes, and records what it fetched
+#    in snapshot-manifest.json. Re-running resumes: only the tiny listing is refetched
+#    unless upstream moved, a digest no longer holds, or you pass --refresh.
+genereview-link snapshot --dest ~/genereviews-source --acknowledge-terms --genesis
+
+# 2a. Ingest, first build of a chain (no prior release exists under this scheme).
+genereview-link ingest --genesis \
+  --archive ~/genereviews-source/gene_NBK1116.tar.gz \
+  --side-data-dir ~/genereviews-source \
+  --source-metadata ~/genereviews-source/source-capture.json
+
+# 2b. Ingest, every subsequent build: chained to the previous release. Pass the previous
+#     release's manifest.json / seal-manifest.json to `snapshot` (without --genesis) and
+#     it derives and stages the prior-artifact identity for you.
+genereview-link ingest \
+  --archive ~/genereviews-source/gene_NBK1116.tar.gz \
+  --side-data-dir ~/genereviews-source \
+  --source-metadata ~/genereviews-source/source-capture.json \
+  --prior-manifest ~/genereviews-source/prior-manifest.json \
+  --prior-seal-manifest ~/genereviews-source/prior-seal-manifest.json
+
+make embed                                        # BGE backfill + HNSW index
+make bundle-validate                              # active corpus is publish-ready
+RELEASE_ID=<upstream-date>-r1 make bundle-publish-local
+make db-reset                                     # DROP and recreate the schemas (dev only)
 ```
 
 Migrations are split into **control** (corpus version, refresh log, active embedding) and
 **data** (chapters, passages, embeddings, tables, roles, gene symbols) sets.
 
-## Packaging a local corpus (maintainer)
+> [!IMPORTANT]
+> `RELEASE_ID`'s date component must equal the upstream `last_updated` date that
+> `snapshot` reported (it is printed, and stored as `listing.last_updated` in
+> `source-capture.json`). `verify_data_only_bundle` refuses a release ID whose date does
+> not match the source snapshot it claims to package.
 
-Ingest and embedding are explicit prior operations. This command packages the already-ingested,
-already-embedded, validated database locally; it never uploads, creates a draft, or contacts a
-release service.
+### Acquisition (`snapshot`) and the terms
 
-```bash
-uv sync --group dev --extra cpu --frozen
-make bundle-validate                              # active corpus is bundle-ready
-RELEASE_ID=2026-05-12-r1 make bundle-publish-local
-```
+GeneReviews content is copyrighted — noncommercial research purposes only, retain the
+copyright notice and Usage Disclaimer, no further modifications. Acquisition is not
+redistribution, so `snapshot` is not behind the publication rights gate; it does require
+`--acknowledge-terms` before it writes a byte, and records that acknowledgement alongside
+the fetched files in `snapshot-manifest.json`. **Publication remains gated** by the dated
+owner determination `rights.py` checks (issue #27) — that is unchanged.
 
-`make bundle` builds a release bundle from the active corpus without publishing it. Rights-gated
-publication is deliberately separate: it requires a complete dated affirmative redistribution
-record bound to an immutable sealed handoff object. Do not draft, upload, or publish without that
-record.
+Requests are paced with NCBI's published courtesy interval (`--min-interval`, default
+0.34 s, or 0.11 s when `NCBI_API_KEY` is set). The key does not authenticate the bulk FTP
+paths this command uses — it governs the E-utilities plane above — but the same politeness
+floor applies either way.
+
+### The chain, and its genesis
+
+Each release's `source-capture.json` names the release it was built from, and that claim is
+proven byte-for-byte against the retained prior `manifest.json` / `seal-manifest.json` pair.
+The first build of a chain has nothing to point at, so it is marked explicitly:
+`--genesis` writes `genesis: true` / `prior_artifact: null` into the capture, and the
+resulting `seal-manifest.json` carries `genesis: true` / `prior: null`. A missing prior
+*without* `--genesis` is still refused — the genesis case is declared, never inferred.
+
+### Packaging, sealing and publication
+
+`bundle publish-local` packages the already-ingested, already-embedded, validated database
+locally; it never uploads, creates a draft, or contacts a release service. `make bundle`
+does the same without the release-id ergonomics.
+
+Rights-gated publication is deliberately separate: it requires a complete dated affirmative
+redistribution record bound to an immutable sealed handoff object. Do not draft, upload, or
+publish without that record.
 
 `bundle publish-local` is the ergonomic build-to-seal path: it validates, evaluates, and exports
 the candidate while holding the same corpus advisory lock and repeatable-read exported snapshot.
@@ -355,6 +387,43 @@ bypass actors. Promotion freezes that tag object plus the exact draft representa
 semantic restore, rechecks the protected tag/ruleset and ETag immediately before the only PATCH, and
 uses the verified ETag as `If-Match`. Publication automatically dispatches the external verifier with the
 exact release ID/tag/target/assets tuple; closure requires its successful acceptance artifact.
+
+### Handing a sealed bundle to CI
+
+Two workflows finish the job, and neither is a local step:
+
+| Workflow | Who dispatches it | What it does |
+|---|---|---|
+| `corpus-data-release.yml` (`-f object_id=<sealed sha256>`) | the maintainer, from `main` | the rights-gated **publisher**: reconstructs the sealed handoff from durable release assets, re-verifies rights, then creates the tag/release. Gated by the `data-release` environment (owner approval). |
+| `verify-corpus-bundle.yml` | `corpus-data-release.yml`, automatically | the independent **verifier** of an already drafted/published release: it downloads the eight public assets, restores the dump, and recomputes every identity. |
+
+`verify-corpus-bundle.yml` is **not** a pre-publication check of a local directory and is not
+normally dispatched by hand. Its eight inputs all describe a release that already exists:
+`release_tag`, `release_id` (the numeric GitHub release ID), `target_commit`, `assets_sha256`,
+`publication_nonce`, `verification_phase` (`prepublication` | `postpublication`), `release_etag`,
+and `dispatch_time`. It refuses to run off `refs/heads/main`, and its first act is a
+`If-None-Match` precondition that must return `304` — so a hand-typed dispatch with a stale
+ETag fails closed by design.
+
+Dispatching `corpus-data-release.yml` with an **empty** `object_id` selects the in-CI build
+job instead of the publisher. That path assembles its retained source set from a protected
+locator rather than from `snapshot`.
+
+> [!NOTE]
+> Both CI paths need owner-provisioned protected configuration that is not in this
+> repository: `GENEREVIEWS_SOURCE_LOCATOR` + `GENEREVIEWS_SOURCE_REPOSITORIES` (in-CI build
+> and verifier), `GENEREVIEWS_HANDOFF_LOCATOR` + `GENEREVIEWS_HANDOFF_REPOSITORIES`,
+> `GENEREVIEWS_RIGHTS_LOCATOR` + `GENEREVIEWS_RIGHTS_REPOSITORIES`, and
+> `GENEREVIEWS_TAG_RULESET_ID` (publisher). Without them the workflows fail closed, which
+> is the intended behaviour — but it also means a corpus can be *built* locally long
+> before it can be *published*.
+
+### Historical: the pre-manifest-v3 release shape
+
+`corpus-data-2026-07-13-r1` and earlier ship a single `corpus-bundle.tar.gz` + `SHA256SUMS`
+with no `manifest.json` and no seal manifest; that shape predates the sealed-handoff scheme
+described above, cannot serve as a prior artifact for it, and is retained only because it is
+the currently pinned production corpus.
 
 The repository owner supplied an affirmative redistribution determination dated 2026-09-01;
 publication remains bound to that durable evidence, the exact source/artifact digests, and required

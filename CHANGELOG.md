@@ -4,6 +4,42 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.0] - 2026-09-02
+
+- **Made the corpus pipeline bootstrappable.** `ingest` required a prior manifest/seal
+  pair chaining to a release built under the current scheme (`manifest_version == "3"`,
+  seal `genereviews-local-handoff-v1`), and no such release has ever existed — so the
+  first build under that scheme was unreachable by construction and no corpus could be
+  produced at all (#147). `ingest --genesis` is the explicit first build of a chain: no
+  prior pair, `genesis: true` / `prior_artifact: null` in the capture, `genesis: true` /
+  `prior: null` in the emitted seal manifest, and `delta_from_prior` reporting the whole
+  corpus as added. A missing prior *without* `--genesis` is still refused — the genesis
+  case is declared, never inferred.
+- **Fixed the chained path too.** `content_identity` never carried `chapter_count`, but a
+  capture's `prior_artifact` must, and the two are compared field-for-field — so every
+  chained ingest against a *real* manifest was unprovable as well. The identity now
+  records it, and a test chains a second build off a genesis release end to end.
+- **Added `genereview-link snapshot`**: acquisition of the offline source set `ingest`
+  consumes, assembled from NCBI's litarch listing/archive and the three GeneReviews
+  side-data files into exactly that layout, with a `snapshot-manifest.json` recording
+  every fetched URL, digest, byte count and upstream `last_updated`. Re-runs resume rather
+  than re-download the ~600 MB archive; requests are paced with NCBI's published courtesy
+  interval; `--acknowledge-terms` is required before any byte is written and is recorded
+  next to the files. Acquisition is not redistribution: the publication rights gate
+  (`rights.py`, the dated determination in #27) is unchanged.
+- Reconciled `docs/data.md`, which described two incompatible release schemes. It now
+  documents one flow — `snapshot` → `ingest --genesis` (or chained) → `embed` →
+  `bundle publish-local` → `seal-handoff` → `corpus-data-release.yml` — plus the real
+  eight inputs and dispatcher of `verify-corpus-bundle.yml` (it verifies an *already
+  published* release and is dispatched by the publisher, not by hand), the protected
+  configuration both CI paths still need, and one sentence marking the pre-manifest-v3
+  `corpus-bundle.tar.gz` shape historical.
+- `BUILD_LOCAL=true` is inert and now says so. It named a boot-time live ingest that no
+  longer exists, so the branch behind it reached `run_full_ingest(pool)` with no source
+  set and raised a `ValueError` the bootstrap's error handler did not catch — killing
+  startup with a message that never mentioned the flag. It now logs an explicit error and
+  degrades exactly as an empty database does.
+
 ## [5.1.8] - 2026-09-02
 
 - Surfaced the active corpus's freshness in `GET /health`. The corpus-refresh scheduler

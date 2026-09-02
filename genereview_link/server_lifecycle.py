@@ -23,10 +23,10 @@ async def _bootstrap() -> None:
     request-serving process would give it exactly the egress and the database rights the
     restored-database contract exists to deny it.
 
-    Two modes remain here:
-    1. BUILD_LOCAL=true -> run the full local ingest pipeline (development only).
-    2. Otherwise -> the corpus is already present (restored by the init sidecar), or the
-       database is empty and `/passages/search` degrades to 503 until it is loaded.
+    One mode remains here: the corpus is already present (restored by the init sidecar),
+    or the database is empty and `/passages/search` degrades to 503 until it is loaded.
+    `BUILD_LOCAL=true` is inert -- ingest has no boot-time live-fetch path; a corpus is
+    built by a maintainer with `snapshot` + `ingest` (docs/data.md).
     """
     from genereview_link.db.migrate import apply_control_migrations, apply_data_migrations
     from genereview_link.db.pool import create_pool
@@ -58,16 +58,17 @@ async def _bootstrap() -> None:
             return  # hot path / already-populated by the restore sidecar
 
         if settings.BUILD_LOCAL:
-            logger.info("BUILD_LOCAL=true; running full local ingest")
-            from genereview_link.corpus.pipeline import run_full_ingest
-            from genereview_link.ingest.orchestrator import backfill_embeddings, build_hnsw_index
-            from genereview_link.retrieval.embeddings import SentenceTransformerEmbeddingProvider
-
-            await run_full_ingest(pool)
-            await backfill_embeddings(pool, SentenceTransformerEmbeddingProvider())
-            await build_hnsw_index(pool)
-            logger.info("local ingest complete")
-            return
+            # BUILD_LOCAL named a boot-time live ingest that no longer exists:
+            # ingest consumes only a retained offline source set, so this branch
+            # could only ever raise. Say so plainly and degrade the same way an
+            # empty database does, rather than crashing startup on a ValueError
+            # whose text says nothing about the flag that caused it.
+            logger.error(
+                "BUILD_LOCAL=true is inert: ingest has no boot-time live-fetch path. "
+                "Build a corpus with `genereview-link snapshot` then "
+                "`genereview-link ingest --genesis` (see docs/data.md), or let the "
+                "genereview-corpus-restore sidecar restore a reviewed artifact"
+            )
 
         # No active corpus: the restore sidecar has not run (or the database is external
         # and empty). The server still starts and serves definitions; corpus-backed routes

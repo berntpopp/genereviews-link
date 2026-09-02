@@ -123,7 +123,7 @@ See [data.md](data.md) for what these mean and which combination to pick.
 | `EXPECTED_BUNDLE_SHA256` | *(empty)* | **Security control.** Out-of-band, independently-trusted authenticity anchor. Empty ⇒ promotion is refused unless anchored in-repo. |
 | `ALLOW_UNANCHORED_BUNDLE` | `false` | Knowingly accept transport-integrity-only bootstrap. |
 | `BUNDLE_BOOTSTRAP_DIR` | `/tmp/genereview-link` | Writable download/extraction scratch. |
-| `BUILD_LOCAL` | `false` | Run a full local ingest on first boot (15–30 min). |
+| `BUILD_LOCAL` | `false` | **Inert.** It named a boot-time live ingest that no longer exists; setting it logs an error and the server degrades as with an empty database. Build a corpus with `snapshot` + `ingest` (see [data.md](data.md)). |
 | `GITHUB_REPO` | `berntpopp/genereviews-link` | Release resolution for `BUNDLE_URL=latest`. |
 | `RELEASE_WATCHER_ENABLED` | `false` | Hourly corpus-staleness watcher; records into `public.genereview_refresh_log`. Never pulls. |
 | `AUTO_PULL_RELEASES` | `false` | **Refused at startup if true.** It named a pull that was never implemented (the branch was a bare `pass`). |

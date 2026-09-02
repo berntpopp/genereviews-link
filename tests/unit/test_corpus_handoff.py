@@ -174,6 +174,9 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
         "chapter_ids": [],
         "prior_artifact": {
             "object_id": "4" * 64,
+            "manifest_sha256": "e" * 64,
+            "corpus_release_id": "2026-08-01-r1",
+            "app_git_sha": "c" * 40,
             "chapter_ids": [],
             "chapter_count": 0,
             "chapter_digests": {},
@@ -183,6 +186,7 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
     }
     content_identity = {
         "chapter_ids": [],
+        "chapter_count": 0,
         "chapter_ids_sha256": "7" * 64,
         "side_mapping_ids_sha256": "7" * 64,
         "chapters_sha256": "8" * 64,
@@ -193,6 +197,7 @@ def _verified_manifest(release_id: str = "2026-08-30-r1") -> BundleManifest:
             "expanded_sha256": "3" * 64,
         },
         "delta_from_prior": {
+            "genesis": False,
             "object_id": "4" * 64,
             "prior_chapter_count": 0,
             "added": [],

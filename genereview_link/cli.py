@@ -219,47 +219,10 @@ def db_reset(
     asyncio.run(run())
 
 
-@app.command("ingest")
-def ingest_cmd(
-    dry_run: Annotated[
-        bool,
-        typer.Option("--dry-run", help="Download + parse only; do not write to DB."),
-    ] = False,
-    archive: Annotated[Path | None, typer.Option("--archive")] = None,
-    side_data_dir: Annotated[Path | None, typer.Option("--side-data-dir")] = None,
-    source_metadata: Annotated[Path | None, typer.Option("--source-metadata")] = None,
-    prior_manifest: Annotated[Path | None, typer.Option("--prior-manifest")] = None,
-    prior_seal_manifest: Annotated[Path | None, typer.Option("--prior-seal-manifest")] = None,
-) -> None:
-    """Run the full ingest pipeline against DATABASE_URL."""
-    import asyncio
+from genereview_link.cli_source import ingest_cmd, snapshot_cmd  # noqa: E402
 
-    from genereview_link.corpus.pipeline import run_full_ingest
-    from genereview_link.db.pool import create_pool
-
-    async def run() -> None:
-        pool = await create_pool()
-        try:
-            if dry_run:
-                typer.echo("dry-run not yet implemented; aborting")
-                raise typer.Exit(2)
-            result = await run_full_ingest(
-                pool,
-                archive=archive,
-                side_data_dir=side_data_dir,
-                source_metadata=source_metadata,
-                prior_manifest=prior_manifest,
-                prior_seal_manifest=prior_seal_manifest,
-            )
-            typer.echo(
-                f"ingested {result.chapter_count} chapters / "
-                f"{result.passage_count} passages "
-                f"as corpus_version={result.corpus_version}"
-            )
-        finally:
-            await pool.close()
-
-    asyncio.run(run())
+app.command("ingest")(ingest_cmd)
+app.command("snapshot")(snapshot_cmd)
 
 
 @app.command("embed")

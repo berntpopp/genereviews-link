@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +29,7 @@ from genereview_link.db.locks import CORPUS_INGEST_LOCK_KEY, CORPUS_WRITE_LOCK_K
 from genereview_link.db.migrate import apply_data_migrations
 from genereview_link.download_guard import (
     STREAM_TIMEOUT,
+    RequestHook,
     build_host_allowlist,
     make_url_guard,
     read_capped,
@@ -252,6 +253,39 @@ async def cleanup_old(pool: asyncpg.Pool, *, retain: int = 2) -> int:
     return dropped
 
 
+def _require_offline_source_set(
+    *,
+    archive: Path | None,
+    side_data_dir: Path | None,
+    source_metadata: Path | None,
+    prior_manifest: Path | None,
+    prior_seal_manifest: Path | None,
+    genesis: bool,
+) -> None:
+    """Refuse any partially supplied offline source set, fail-closed in both modes.
+
+    ``genesis`` is the *only* way to build without a prior artifact, and it is
+    explicit: a missing prior pair without it keeps raising today's error rather
+    than quietly ingesting from an empty chain.
+    """
+    retained = (archive, side_data_dir, source_metadata)
+    prior = (prior_manifest, prior_seal_manifest)
+    if genesis:
+        if any(value is not None for value in prior):
+            raise ValueError("genesis ingest must not be given a prior manifest pair")
+        if not all(value is not None for value in retained):
+            raise ValueError("genesis ingest requires archive, side-data directory, and metadata")
+        return
+    offline = retained + prior
+    if not all(value is not None for value in offline):
+        raise ValueError(
+            "offline ingest requires archive, side-data directory, metadata, prior manifest, "
+            "and prior seal manifest"
+            if any(value is not None for value in offline)
+            else "mutating ingest requires the complete retained offline source set"
+        )
+
+
 async def run_full_ingest(
     pool: asyncpg.Pool,
     *,
@@ -260,17 +294,17 @@ async def run_full_ingest(
     source_metadata: Path | None = None,
     prior_manifest: Path | None = None,
     prior_seal_manifest: Path | None = None,
+    genesis: bool = False,
 ) -> IngestResult:
     """Serialize the entire shared staging lifecycle under a distinct session lock."""
-    offline = (archive, side_data_dir, source_metadata, prior_manifest, prior_seal_manifest)
-    if not all(value is not None for value in offline):
-        message = (
-            "offline ingest requires archive, side-data directory, metadata, prior manifest, "
-            "and prior seal manifest"
-            if any(value is not None for value in offline)
-            else "mutating ingest requires the complete retained offline source set"
-        )
-        raise ValueError(message)
+    _require_offline_source_set(
+        archive=archive,
+        side_data_dir=side_data_dir,
+        source_metadata=source_metadata,
+        prior_manifest=prior_manifest,
+        prior_seal_manifest=prior_seal_manifest,
+        genesis=genesis,
+    )
     async with pool.acquire() as lock_connection:
         await lock_connection.execute("select pg_advisory_lock($1)", CORPUS_INGEST_LOCK_KEY)
         try:
@@ -281,6 +315,7 @@ async def run_full_ingest(
                 source_metadata=source_metadata,
                 prior_manifest=prior_manifest,
                 prior_seal_manifest=prior_seal_manifest,
+                genesis=genesis,
             )
         finally:
             await lock_connection.execute("select pg_advisory_unlock($1)", CORPUS_INGEST_LOCK_KEY)
@@ -294,22 +329,22 @@ async def _run_full_ingest_locked(
     source_metadata: Path | None = None,
     prior_manifest: Path | None = None,
     prior_seal_manifest: Path | None = None,
+    genesis: bool = False,
 ) -> IngestResult:
     """End-to-end stages 0-9 (excluding embeddings, which run separately)."""
-    offline = (archive, side_data_dir, source_metadata, prior_manifest, prior_seal_manifest)
-    if any(value is not None for value in offline):
-        if not all(value is not None for value in offline):
-            raise ValueError(
-                "offline ingest requires archive, side-data directory, metadata, prior manifest, "
-                "and prior seal manifest"
-            )
-        assert (
-            archive is not None
-            and side_data_dir is not None
-            and source_metadata is not None
-            and prior_manifest is not None
-            and prior_seal_manifest is not None
+    retained = (archive, side_data_dir, source_metadata)
+    if genesis or any(
+        value is not None for value in (*retained, prior_manifest, prior_seal_manifest)
+    ):
+        _require_offline_source_set(
+            archive=archive,
+            side_data_dir=side_data_dir,
+            source_metadata=source_metadata,
+            prior_manifest=prior_manifest,
+            prior_seal_manifest=prior_seal_manifest,
+            genesis=genesis,
         )
+        assert archive is not None and side_data_dir is not None and source_metadata is not None
         with admit_offline_source(
             archive=archive,
             side_data_dir=side_data_dir,
@@ -442,17 +477,22 @@ async def _flush(
         await copy_passages(conn, passages, corpus_version=version)
 
 
-async def _download_sidedata(target: Path) -> dict[str, dict[str, str | int]]:
+SIDEDATA_BASE_URL = "https://ftp.ncbi.nlm.nih.gov/pub/GeneReviews"
+
+
+async def _download_sidedata(
+    target: Path, *, request_hooks: Sequence[RequestHook] = ()
+) -> dict[str, dict[str, str | int]]:
     """Fetch bounded side data for non-mutating capture tooling only."""
     import httpx
 
-    base = "https://ftp.ncbi.nlm.nih.gov/pub/GeneReviews"
+    base = SIDEDATA_BASE_URL
     identity: dict[str, dict[str, str | int]] = {}
     hosts = build_host_allowlist(base)
     async with httpx.AsyncClient(
         timeout=STREAM_TIMEOUT,
         follow_redirects=False,
-        event_hooks={"request": [make_url_guard(hosts)]},
+        event_hooks={"request": [make_url_guard(hosts), *request_hooks]},
     ) as client:
         for name in SIDEDATA_FILES:
             body = await read_capped(

@@ -33,6 +33,10 @@ SOURCE_ASSETS = frozenset(
         "NBKid_shortname_OMIM.txt",
     }
 )
+PRIOR_ASSETS = frozenset({"prior-manifest.json", "prior-seal-manifest.json"})
+# A genesis build has no prior release to chain from, so its retained source set
+# is the same inventory minus exactly the two prior-artifact files.
+GENESIS_SOURCE_ASSETS = SOURCE_ASSETS - PRIOR_ASSETS
 MAX_LOCATOR_BYTES = 48 * 1024
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -187,4 +191,11 @@ async def fetch_source_assets(
     return locator
 
 
-__all__ = ["SOURCE_ASSETS", "SourceLocatorError", "fetch_source_assets", "load_source_locator"]
+__all__ = [
+    "GENESIS_SOURCE_ASSETS",
+    "PRIOR_ASSETS",
+    "SOURCE_ASSETS",
+    "SourceLocatorError",
+    "fetch_source_assets",
+    "load_source_locator",
+]

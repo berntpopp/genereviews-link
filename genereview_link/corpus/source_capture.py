@@ -22,6 +22,16 @@ from genereview_link.corpus.source_identity import SIDEDATA_FILES
 from genereview_link.strict_json import StrictJsonError, load_strict_json
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+CAPTURE_FIELDS = frozenset(
+    {
+        "format",
+        "listing",
+        "archive",
+        "side_data",
+        "chapter_ids",
+        "prior_artifact",
+    }
+)
 
 
 class SourceCaptureError(ValueError):
@@ -203,98 +213,13 @@ def _load_bounded_json(path: Path, *, label: str, limit: int) -> object:
         raise SourceCaptureError(f"{label} is not valid JSON") from error
 
 
-def load_offline_capture(
-    metadata: Path,
+def _validate_prior_artifact(
+    prior: object,
     *,
-    archive: Path,
-    side_data_dir: Path,
     prior_manifest: Path,
     prior_seal_manifest: Path,
-) -> dict[str, object]:
-    """Load one exact capture without fetching or deleting any source file."""
-    value = _load_bounded_json(metadata, label="source capture metadata", limit=4 << 20)
-    if not isinstance(value, dict) or value.get("format") != "genereviews-offline-source-v1":
-        raise SourceCaptureError("source capture format is invalid")
-    listing = value.get("listing")
-    archive_identity = value.get("archive")
-    side_data = value.get("side_data")
-    chapter_ids = value.get("chapter_ids")
-    prior = value.get("prior_artifact")
-    if not isinstance(listing, Mapping) or set(listing) != {
-        "url",
-        "raw_sha256",
-        "raw_size_bytes",
-        "captured_at",
-        "integrity_class",
-        "relpath",
-        "last_updated",
-    }:
-        raise SourceCaptureError("listing capture metadata is incomplete")
-    captured_at = listing.get("captured_at")
-    try:
-        captured_time = datetime.fromisoformat(str(captured_at).replace("Z", "+00:00"))
-    except ValueError as error:
-        raise SourceCaptureError("listing capture time is invalid") from error
-    if listing.get("url") != FILE_LIST_URL:
-        raise SourceCaptureError("listing URL is not the canonical captured upstream URL")
-    if (
-        listing.get("integrity_class") != "https-captured-untrusted"
-        or not SHA256.fullmatch(str(listing.get("raw_sha256", "")))
-        or type(listing.get("raw_size_bytes")) is not int
-        or not 0 < int(listing["raw_size_bytes"]) <= MAX_LISTING_BYTES
-        or not isinstance(captured_at, str)
-        or not captured_at.endswith("Z")
-        or captured_time.utcoffset() is None
-    ):
-        raise SourceCaptureError("listing capture integrity is invalid")
-    listing_bytes = _read_regular_bounded(
-        metadata.with_name("file_list.csv"), label="file_list.csv", limit=MAX_LISTING_BYTES
-    )
-    if (
-        len(listing_bytes) != listing["raw_size_bytes"]
-        or hashlib.sha256(listing_bytes).hexdigest() != listing["raw_sha256"]
-    ):
-        raise SourceCaptureError("file_list.csv bytes do not match listing capture")
-    try:
-        matching_rows = [
-            parsed
-            for line in listing_bytes.decode("utf-8").splitlines()
-            if (parsed := parse_file_list_row(line, nbk_filter="NBK1116")) is not None
-        ]
-    except UnicodeDecodeError as error:
-        raise SourceCaptureError("file_list.csv is not canonical UTF-8") from error
-    if len(matching_rows) != 1:
-        raise SourceCaptureError("file_list.csv must contain exactly one canonical NBK1116 row")
-    derived_listing = matching_rows[0]
-    if (
-        listing.get("relpath") != derived_listing.relpath
-        or listing.get("last_updated") != derived_listing.last_updated
-    ):
-        raise SourceCaptureError("listing fields are not derived from retained file_list.csv")
-    if not isinstance(archive_identity, Mapping) or set(archive_identity) != {
-        "url",
-        "sha256",
-        "size_bytes",
-        "members_sha256",
-        "expanded_sha256",
-    }:
-        raise SourceCaptureError("archive capture metadata is incomplete")
-    for key in ("members_sha256", "expanded_sha256"):
-        if not SHA256.fullmatch(str(archive_identity.get(key, ""))):
-            raise SourceCaptureError(f"archive {key} is invalid")
-    expected_archive_url = f"{LITARCH_BASE}/{listing.get('relpath')}"
-    if archive_identity.get("url") != expected_archive_url:
-        raise SourceCaptureError("archive URL is not the canonical captured upstream URL")
-    if not isinstance(side_data, Mapping) or set(side_data) != set(SIDEDATA_FILES):
-        raise SourceCaptureError("side-data capture set is incomplete")
-    if (
-        not isinstance(chapter_ids, list)
-        or chapter_ids != sorted(set(chapter_ids))
-        or not all(
-            isinstance(value, str) and re.fullmatch(r"NBK\d+", value) for value in chapter_ids
-        )
-    ):
-        raise SourceCaptureError("capture chapter IDs must be exact, unique, and sorted")
+) -> None:
+    """Prove one retained prior manifest/seal pair against the claimed logical identity."""
     if not isinstance(prior, Mapping) or set(prior) != {
         "object_id",
         "manifest_sha256",
@@ -382,6 +307,130 @@ def load_offline_capture(
         != {key: prior.get(key) for key in logical_keys}
     ):
         raise SourceCaptureError("prior manifest does not prove the claimed logical identity")
+
+
+def load_offline_capture(
+    metadata: Path,
+    *,
+    archive: Path,
+    side_data_dir: Path,
+    prior_manifest: Path | None,
+    prior_seal_manifest: Path | None,
+) -> dict[str, object]:
+    """Load one exact capture without fetching or deleting any source file.
+
+    A capture is either *chained* -- it names a prior artifact and is proven
+    against the retained prior manifest/seal pair -- or *genesis*: the first
+    build of the chain, which carries ``genesis: true`` and
+    ``prior_artifact: null`` and is given no prior pair at all. The two shapes
+    are mutually exclusive and both are fail-closed: a genesis claim with a
+    prior (or a prior pair on disk), and a chained claim without one, are
+    refused rather than silently accepted.
+    """
+    value = _load_bounded_json(metadata, label="source capture metadata", limit=4 << 20)
+    if (
+        not isinstance(value, dict)
+        or value.get("format") != "genereviews-offline-source-v1"
+        or not set(value) >= CAPTURE_FIELDS
+        or not set(value) <= CAPTURE_FIELDS | {"genesis"}
+    ):
+        raise SourceCaptureError("source capture format is invalid")
+    listing = value.get("listing")
+    archive_identity = value.get("archive")
+    side_data = value.get("side_data")
+    chapter_ids = value.get("chapter_ids")
+    prior = value.get("prior_artifact")
+    genesis = value.get("genesis", False)
+    if genesis is not True and genesis is not False:
+        raise SourceCaptureError("source capture genesis flag must be a literal boolean")
+    supplied_prior = (prior_manifest, prior_seal_manifest)
+    if genesis:
+        if prior is not None or any(path is not None for path in supplied_prior):
+            raise SourceCaptureError("a genesis capture must not name or carry a prior artifact")
+    elif prior is None or any(path is None for path in supplied_prior):
+        raise SourceCaptureError("a chained capture requires a retained prior manifest pair")
+    if not isinstance(listing, Mapping) or set(listing) != {
+        "url",
+        "raw_sha256",
+        "raw_size_bytes",
+        "captured_at",
+        "integrity_class",
+        "relpath",
+        "last_updated",
+    }:
+        raise SourceCaptureError("listing capture metadata is incomplete")
+    captured_at = listing.get("captured_at")
+    try:
+        captured_time = datetime.fromisoformat(str(captured_at).replace("Z", "+00:00"))
+    except ValueError as error:
+        raise SourceCaptureError("listing capture time is invalid") from error
+    if listing.get("url") != FILE_LIST_URL:
+        raise SourceCaptureError("listing URL is not the canonical captured upstream URL")
+    if (
+        listing.get("integrity_class") != "https-captured-untrusted"
+        or not SHA256.fullmatch(str(listing.get("raw_sha256", "")))
+        or type(listing.get("raw_size_bytes")) is not int
+        or not 0 < int(listing["raw_size_bytes"]) <= MAX_LISTING_BYTES
+        or not isinstance(captured_at, str)
+        or not captured_at.endswith("Z")
+        or captured_time.utcoffset() is None
+    ):
+        raise SourceCaptureError("listing capture integrity is invalid")
+    listing_bytes = _read_regular_bounded(
+        metadata.with_name("file_list.csv"), label="file_list.csv", limit=MAX_LISTING_BYTES
+    )
+    if (
+        len(listing_bytes) != listing["raw_size_bytes"]
+        or hashlib.sha256(listing_bytes).hexdigest() != listing["raw_sha256"]
+    ):
+        raise SourceCaptureError("file_list.csv bytes do not match listing capture")
+    try:
+        matching_rows = [
+            parsed
+            for line in listing_bytes.decode("utf-8").splitlines()
+            if (parsed := parse_file_list_row(line, nbk_filter="NBK1116")) is not None
+        ]
+    except UnicodeDecodeError as error:
+        raise SourceCaptureError("file_list.csv is not canonical UTF-8") from error
+    if len(matching_rows) != 1:
+        raise SourceCaptureError("file_list.csv must contain exactly one canonical NBK1116 row")
+    derived_listing = matching_rows[0]
+    if (
+        listing.get("relpath") != derived_listing.relpath
+        or listing.get("last_updated") != derived_listing.last_updated
+    ):
+        raise SourceCaptureError("listing fields are not derived from retained file_list.csv")
+    if not isinstance(archive_identity, Mapping) or set(archive_identity) != {
+        "url",
+        "sha256",
+        "size_bytes",
+        "members_sha256",
+        "expanded_sha256",
+    }:
+        raise SourceCaptureError("archive capture metadata is incomplete")
+    for key in ("members_sha256", "expanded_sha256"):
+        if not SHA256.fullmatch(str(archive_identity.get(key, ""))):
+            raise SourceCaptureError(f"archive {key} is invalid")
+    expected_archive_url = f"{LITARCH_BASE}/{listing.get('relpath')}"
+    if archive_identity.get("url") != expected_archive_url:
+        raise SourceCaptureError("archive URL is not the canonical captured upstream URL")
+    if not isinstance(side_data, Mapping) or set(side_data) != set(SIDEDATA_FILES):
+        raise SourceCaptureError("side-data capture set is incomplete")
+    if (
+        not isinstance(chapter_ids, list)
+        or chapter_ids != sorted(set(chapter_ids))
+        or not all(
+            isinstance(value, str) and re.fullmatch(r"NBK\d+", value) for value in chapter_ids
+        )
+    ):
+        raise SourceCaptureError("capture chapter IDs must be exact, unique, and sorted")
+    if not genesis:
+        assert prior_manifest is not None and prior_seal_manifest is not None
+        _validate_prior_artifact(
+            prior,
+            prior_manifest=prior_manifest,
+            prior_seal_manifest=prior_seal_manifest,
+        )
     _file_identity(archive, archive_identity, label="archive")
     members_sha256, expanded_sha256 = archive_content_identities(archive)
     if archive_identity.get("members_sha256") != members_sha256:
@@ -406,4 +455,9 @@ def load_offline_capture(
     return value
 
 
-__all__ = ["SourceCaptureError", "archive_content_identities", "load_offline_capture"]
+__all__ = [
+    "CAPTURE_FIELDS",
+    "SourceCaptureError",
+    "archive_content_identities",
+    "load_offline_capture",
+]
