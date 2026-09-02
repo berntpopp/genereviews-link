@@ -8,6 +8,7 @@ from typing import Any
 
 import asyncpg
 
+from genereview_link.corpus.jsonb import JsonbColumnError, json_object
 from genereview_link.corpus.schema_identity import (
     EXPECTED_CONTROL_MIGRATIONS,
     EXPECTED_DATA_MIGRATIONS,
@@ -106,12 +107,19 @@ async def validate_database_ready(
         )
         if not active_corpus:
             errors.append("no active corpus version")
-        elif (
-            not isinstance(active_corpus["source_capture"], dict)
-            or not active_corpus["ingest_run_id"]
-            or not active_corpus["embedding_run_id"]
-        ):
-            errors.append("active corpus lacks retained source and computation-run identity")
+        else:
+            capture_ok = active_corpus["source_capture"] is not None
+            if capture_ok:
+                try:
+                    json_object(active_corpus["source_capture"], label="source capture")
+                except JsonbColumnError:
+                    capture_ok = False
+            if (
+                not capture_ok
+                or not active_corpus["ingest_run_id"]
+                or not active_corpus["embedding_run_id"]
+            ):
+                errors.append("active corpus lacks retained source and computation-run identity")
 
         chapter_count = int(
             await conn.fetchval(

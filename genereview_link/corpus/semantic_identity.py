@@ -9,6 +9,8 @@ from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from typing import Any
 
+from genereview_link.corpus.jsonb import JsonbColumnError, json_object
+
 
 def _json_value(value: object) -> object:
     if isinstance(value, (date, datetime)):
@@ -147,8 +149,10 @@ async def collect_content_identity(connection: Any) -> dict[str, object]:
     capture = await connection.fetchval(
         "select source_capture from public.genereview_corpus_version where is_active"
     )
-    if not isinstance(capture, Mapping):
-        raise ValueError("active corpus lacks its retained source capture")
+    try:
+        capture = json_object(capture, label="source capture")
+    except JsonbColumnError as error:
+        raise ValueError("active corpus lacks its retained source capture") from error
     mapping_ids = capture.get("chapter_ids")
     if not isinstance(mapping_ids, list):
         raise ValueError("source capture lacks sorted mapping chapter IDs")

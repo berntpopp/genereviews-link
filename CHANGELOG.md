@@ -4,6 +4,23 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.3] - 2026-09-02
+
+- **No reader of a `jsonb` column could see its contents.** asyncpg has no built-in jsonb
+  codec and nothing here registers one, so `source_capture` and the ingest/embedding
+  `provenance` records arrive as `str`. Every corpus reader tested
+  `isinstance(value, dict)` and refused the row it had just been handed — so a freshly
+  ingested, fully embedded 890-chapter corpus still failed `bundle validate` with "active
+  corpus lacks retained source and computation-run identity" while the row was complete and
+  correct. `bundle_validation`, `bundle_metadata`, `semantic_identity` and
+  `computation_runs` now decode through one helper that leaves already-decoded objects
+  untouched and refuses anything that is not a JSON object. The write path is unchanged:
+  it still binds canonical JSON text with an explicit `::jsonb` cast, so no stored bytes
+  change shape.
+- `load_active_computation` also returned the raw text for `provenance`, so even a caller
+  that got past the check would have put a string into the release manifest where the
+  verifier requires an object.
+
 ## [5.2.2] - 2026-09-02
 
 Two more refusals that only the *real* upstream bytes trigger, both found running the

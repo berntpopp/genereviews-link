@@ -12,6 +12,8 @@ from pathlib import Path
 
 import asyncpg
 
+from genereview_link.corpus.jsonb import JsonbColumnError, json_object
+
 GIT_REVISION_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
@@ -136,9 +138,10 @@ async def collect_database_facts_from_connection(
 
     computation = await load_active_computation(connection)
     content_identity = await collect_content_identity(connection)
-    source_capture = row["source_capture"]
-    if not isinstance(source_capture, dict):
-        raise ValueError("active corpus lacks retained source capture identity")
+    try:
+        source_capture = json_object(row["source_capture"], label="source capture")
+    except JsonbColumnError as error:
+        raise ValueError("active corpus lacks retained source capture identity") from error
 
     migration_rows = await connection.fetch(
         """
