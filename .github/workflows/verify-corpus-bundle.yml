@@ -65,6 +65,16 @@ jobs:
           printf 'PG18_MOUNT_ROOT=%s\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
           printf '%s\n' "$client_bin" >> "$GITHUB_PATH"
           PG18_MOUNT_ROOT="$RUNNER_TEMP" "$client_bin/pg_restore" --version | grep -Eq 'PostgreSQL\) 18\.'
+          # Prove a heredoc actually reaches psql's stdin before anything depends on it.
+          # The client is a `docker run` wrapper; without --interactive psql reads an
+          # empty script, prints nothing and exits 0, so every later
+          # `test "$(psql ... <<SQL)" = <value>` guard compares the empty string and
+          # fails with no diagnostic at all. Fail here instead, by name.
+          PG18_MOUNT_ROOT="$RUNNER_TEMP" "$client_bin/psql" "$DATABASE_URL" -At \
+            -v ON_ERROR_STOP=1 <<<'select 1;' | grep -qx 1 || {
+            echo 'psql does not receive SQL on stdin: the PG18 client wrapper needs --interactive' >&2
+            exit 1
+          }
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: false

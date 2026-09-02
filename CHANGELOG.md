@@ -4,6 +4,15 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+- **Fixed: the PG18 client wrapper swallowed every heredoc.** `scripts/pg18-client` runs
+  the pinned PostgreSQL 18 client in `docker run` without `--interactive`, so stdin was
+  closed and `psql <<'SQL'` read an empty script, printed nothing and exited 0. Every
+  `test "$(psql ... <<SQL)" = <value>` guard in `verify-corpus-bundle.yml` was therefore
+  comparing against the empty string and failing with no diagnostic at all. The wrapper now
+  passes `--interactive`, the verifier proves a heredoc round-trips through psql before
+  anything depends on it, and `tests/unit/test_pg18_client_wrapper.py` pins both. This was
+  latent, not new: that workflow had never been run before today.
+
 - **Corpus publication is now a plain, honest GitHub release.** The corpus is built on the
   maintainer's workstation — the embedding pass is roughly twenty minutes on 32 cores, far
   beyond what a hosted runner will do — and is published with `gh release create` as an
