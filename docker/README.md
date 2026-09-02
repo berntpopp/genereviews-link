@@ -78,7 +78,8 @@ CORPUS_SEED_DIR=/srv/genefoundry/genereviews-seed
 CORPUS_BUNDLE_SHA256=<the digest published with the corpus release>
 ```
 
-Docker does not run ingest/backfill unless `BUILD_LOCAL=true` is explicitly set.
+Docker never runs ingest/backfill: a corpus is built by a maintainer and restored by the
+no-egress init sidecar. (`BUILD_LOCAL=true` is inert.)
 See [../docs/data.md](../docs/data.md) for staging the asset and rebuilding a corpus.
 
 The production compose stack runs `genereview-link serve --transport unified`,

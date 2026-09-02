@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import genereview_link.corpus.pipeline as pipeline
 import genereview_link.db.migrate as migrate
 import genereview_link.db.pool as pool_mod
 from genereview_link.config import settings
@@ -81,5 +82,36 @@ async def test_bootstrap_skips_data_migrations_when_no_active_corpus(
 
     await _bootstrap()
 
+    apply_data_migrations.assert_not_awaited()
+    mock_pool.close.assert_awaited_once()
+
+
+async def test_bootstrap_says_build_local_is_inert_instead_of_crashing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUILD_LOCAL named a boot-time live ingest that ingest no longer has.
+
+    It used to reach ``run_full_ingest(pool)`` with no source set at all, which
+    raised a ValueError whose text never mentioned the flag -- and which the
+    bootstrap's ``asyncpg.PostgresError`` handler did not catch, so the server
+    died on startup. It must now say so plainly and degrade like an empty
+    database, pointing at the maintainer flow that does work.
+    """
+    mock_pool = AsyncMock()
+    mock_pool.fetchval = AsyncMock(return_value=None)  # no active corpus
+    mock_pool.close = AsyncMock()
+    monkeypatch.setattr(pool_mod, "create_pool", AsyncMock(return_value=mock_pool))
+    monkeypatch.setattr(migrate, "apply_control_migrations", AsyncMock(return_value=[]))
+    apply_data_migrations = AsyncMock(return_value=[])
+    monkeypatch.setattr(migrate, "apply_data_migrations", apply_data_migrations)
+    monkeypatch.setattr(settings, "BUILD_LOCAL", True)
+    monkeypatch.setattr(settings, "DATABASE_URL", "postgresql://example/test")
+
+    ingest = AsyncMock()
+    monkeypatch.setattr(pipeline, "run_full_ingest", ingest)
+
+    await _bootstrap()
+
+    ingest.assert_not_awaited()
     apply_data_migrations.assert_not_awaited()
     mock_pool.close.assert_awaited_once()

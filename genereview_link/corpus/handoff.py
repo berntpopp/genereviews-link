@@ -343,9 +343,12 @@ def seal_handoff(source: Path, handoff_root: Path, *, publisher_tool: Path) -> S
     if wheel_mode & 0o111:
         raise HandoffError("publisher wheel must not be executable")
     files.append({"name": wheel.name, "sha256": wheel_digest, "size": wheel_size, "mode": 0o400})
+    genesis, prior = chain_position(source_manifest)
     seal = {
         "format": "genereviews-local-handoff-v1",
         "corpus_release_id": source_manifest["corpus_release_id"],
+        "genesis": genesis,
+        "prior": prior,
         "source_sha256": source_manifest["tarball_source_sha256"],
         "artifact_sha256": next(
             entry["sha256"] for entry in files if entry["name"] == "corpus.dump"
@@ -486,6 +489,8 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
         != {
             "format",
             "corpus_release_id",
+            "genesis",
+            "prior",
             "source_sha256",
             "artifact_sha256",
             "publisher_tool",
@@ -493,6 +498,21 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
         }
     ):
         raise HandoffError("seal manifest lacks source/artifact identity")
+    genesis = record.get("genesis")
+    prior = record.get("prior")
+    if genesis is not True and genesis is not False:
+        raise HandoffError("seal manifest chain position must be a literal boolean")
+    if genesis:
+        if prior is not None:
+            raise HandoffError("a genesis seal must not name a prior artifact")
+    elif (
+        not isinstance(prior, dict)
+        or set(prior) != {"object_id", "manifest_sha256", "corpus_release_id"}
+        or not re.fullmatch(r"[0-9a-f]{64}", str(prior["object_id"]))
+        or not re.fullmatch(r"[0-9a-f]{64}", str(prior["manifest_sha256"]))
+        or not re.fullmatch(r"20\d{2}-\d{2}-\d{2}-r[1-9]\d*", str(prior["corpus_release_id"]))
+    ):
+        raise HandoffError("a chained seal must name its exact prior artifact")
     files = record.get("files")
     publisher = record.get("publisher_tool")
     if (
@@ -556,6 +576,7 @@ def verify_handoff(handoff_root: Path, object_id: str) -> SealedHandoff:
     return SealedHandoff(object_id=object_id, path=target, manifest=manifest)
 
 
+from genereview_link.corpus.handoff_chain import chain_position  # noqa: E402
 from genereview_link.corpus.handoff_io import copy_regular as _copy_regular  # noqa: E402
 from genereview_link.corpus.publisher_gate import (  # noqa: E402
     prepare_publish_handoff,

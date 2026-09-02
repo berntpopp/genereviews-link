@@ -41,7 +41,12 @@ def compute_content_identity(
     side_mapping_ids: set[str],
     source_capture: Mapping[str, object],
 ) -> dict[str, object]:
-    """Hash logical rows in canonical key order and compare every prior chapter."""
+    """Hash logical rows in canonical key order and compare every prior chapter.
+
+    A genesis capture has no prior to compare against: ``delta_from_prior`` then
+    records ``genesis: true`` with a null prior identity and reports the whole
+    corpus as added, which is exactly what a first build of the chain is.
+    """
     ordered_chapters = sorted(chapters, key=lambda row: str(row["nbk_id"]))
     ordered_passages = sorted(
         passages, key=lambda row: (str(row["nbk_id"]), str(row["passage_id"]))
@@ -63,22 +68,34 @@ def compute_content_identity(
         ).hexdigest()
         for chapter in ordered_chapters
     }
+    genesis = source_capture.get("genesis", False) is True
     prior = source_capture.get("prior_artifact")
-    if not isinstance(prior, Mapping) or not isinstance(prior.get("chapter_digests"), Mapping):
+    if genesis:
+        if prior is not None:
+            raise ValueError("a genesis capture must not carry a prior artifact")
+    elif not isinstance(prior, Mapping) or not isinstance(prior.get("chapter_digests"), Mapping):
         raise ValueError("source capture lacks prior per-chapter identity")
-    prior_ids = {str(value) for value in prior.get("chapter_ids", [])}
     current_ids = set(chapter_ids)
-    prior_digests = prior["chapter_digests"]
-    changed = sorted(
-        chapter_id
-        for chapter_id in current_ids & prior_ids
-        if prior_digests.get(chapter_id) != chapter_digests[chapter_id]
-    )
+    prior_ids: set[str] = set()
+    changed: list[str] = []
+    if isinstance(prior, Mapping):
+        prior_ids = {str(value) for value in prior.get("chapter_ids", [])}
+        prior_digests = prior["chapter_digests"]
+        changed = sorted(
+            chapter_id
+            for chapter_id in current_ids & prior_ids
+            if prior_digests.get(chapter_id) != chapter_digests[chapter_id]
+        )
     archive = source_capture.get("archive")
     if not isinstance(archive, Mapping):
         raise ValueError("source capture lacks archive identity")
     return {
         "chapter_ids": chapter_ids,
+        # chapter_count is redundant with len(chapter_ids) but not optional: the
+        # next build's prior_artifact is proven field-for-field against exactly
+        # this dict, and it carries a chapter_count. Omitting it here made every
+        # chained ingest unprovable against a real manifest.
+        "chapter_count": len(chapter_ids),
         "chapter_ids_sha256": hashlib.sha256(_canonical(chapter_ids)).hexdigest(),
         "side_mapping_ids_sha256": hashlib.sha256(_canonical(sorted(side_mapping_ids))).hexdigest(),
         "chapters_sha256": _digest_rows(ordered_chapters),
@@ -89,17 +106,20 @@ def compute_content_identity(
             "expanded_sha256": archive.get("expanded_sha256"),
         },
         "delta_from_prior": {
-            "object_id": prior.get("object_id"),
-            "prior_chapter_count": prior.get("chapter_count"),
+            "genesis": genesis,
+            "object_id": prior.get("object_id") if isinstance(prior, Mapping) else None,
+            "prior_chapter_count": (
+                prior.get("chapter_count") if isinstance(prior, Mapping) else None
+            ),
             "added": sorted(current_ids - prior_ids),
             "removed": sorted(prior_ids - current_ids),
             "changed": changed,
             "chapters_sha256": {
-                "prior": prior.get("chapters_sha256"),
+                "prior": prior.get("chapters_sha256") if isinstance(prior, Mapping) else None,
                 "current": _digest_rows(ordered_chapters),
             },
             "passages_sha256": {
-                "prior": prior.get("passages_sha256"),
+                "prior": prior.get("passages_sha256") if isinstance(prior, Mapping) else None,
                 "current": _digest_rows(ordered_passages),
             },
         },

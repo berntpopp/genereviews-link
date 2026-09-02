@@ -157,7 +157,9 @@ class Settings(BaseSettings):
     ALLOW_UNANCHORED_BUNDLE: bool = False
     # Writable directory for bundle download/extraction during bootstrap.
     BUNDLE_BOOTSTRAP_DIR: str = "/tmp/genereview-link"  # noqa: S108
-    # BUILD_LOCAL: set to True to run a full local ingest on first boot.
+    # BUILD_LOCAL is inert: ingest has no boot-time live-fetch path. Retained so an
+    # existing deployment that still sets it starts (with an explicit error log)
+    # rather than failing config validation. See docs/data.md.
     BUILD_LOCAL: bool = False
     # GITHUB_REPO: owner/repo for release resolution when BUNDLE_URL="latest".
     GITHUB_REPO: str = "berntpopp/genereviews-link"

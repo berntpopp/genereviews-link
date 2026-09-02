@@ -12,7 +12,7 @@ from pathlib import Path
 
 from genereview_link.corpus.archive import MAX_LISTING_BYTES, MAX_TARBALL_BYTES
 from genereview_link.corpus.source_identity import SIDEDATA_FILES
-from genereview_link.corpus.source_locator import SOURCE_ASSETS
+from genereview_link.corpus.source_locator import GENESIS_SOURCE_ASSETS, SOURCE_ASSETS
 
 CHUNK_BYTES = 1 << 20
 MAX_SIDEDATA_BYTES = 64 * 1024 * 1024
@@ -30,8 +30,8 @@ class OfflineSourceSnapshot:
     side_data_dir: Path
     source_metadata: Path
     file_list: Path
-    prior_manifest: Path
-    prior_seal_manifest: Path
+    prior_manifest: Path | None
+    prior_seal_manifest: Path | None
 
 
 def _open_directory(path: Path) -> int:
@@ -105,32 +105,43 @@ def admit_offline_source(
     archive: Path,
     side_data_dir: Path,
     source_metadata: Path,
-    prior_manifest: Path,
-    prior_seal_manifest: Path,
+    prior_manifest: Path | None,
+    prior_seal_manifest: Path | None,
 ) -> Iterator[OfflineSourceSnapshot]:
-    """Yield private copies used by both provenance validation and parsing."""
+    """Yield private copies used by both provenance validation and parsing.
+
+    A genesis admission (no prior pair) copies exactly the same inventory minus
+    the two prior-artifact files; anything in between is refused, so a partially
+    supplied prior can never be silently dropped.
+    """
+    genesis = prior_manifest is None and prior_seal_manifest is None
+    if not genesis and (prior_manifest is None or prior_seal_manifest is None):
+        raise SourceSnapshotError("a chained offline source set requires both prior files")
+    expected = GENESIS_SOURCE_ASSETS if genesis else SOURCE_ASSETS
     sources = {
         "source-capture.json": source_metadata,
         "file_list.csv": source_metadata.with_name("file_list.csv"),
-        "prior-manifest.json": prior_manifest,
-        "prior-seal-manifest.json": prior_seal_manifest,
         "gene_NBK1116.tar.gz": archive,
         **{name: side_data_dir / name for name in SIDEDATA_FILES},
     }
     limits = {
         "source-capture.json": MAX_CONTROL_BYTES,
         "file_list.csv": MAX_LISTING_BYTES,
-        "prior-manifest.json": MAX_CONTROL_BYTES,
-        "prior-seal-manifest.json": MAX_CONTROL_BYTES,
         "gene_NBK1116.tar.gz": MAX_TARBALL_BYTES,
         **dict.fromkeys(SIDEDATA_FILES, MAX_SIDEDATA_BYTES),
     }
-    if set(sources) != SOURCE_ASSETS or set(limits) != SOURCE_ASSETS:
+    if not genesis:
+        assert prior_manifest is not None and prior_seal_manifest is not None
+        sources["prior-manifest.json"] = prior_manifest
+        sources["prior-seal-manifest.json"] = prior_seal_manifest
+        limits["prior-manifest.json"] = MAX_CONTROL_BYTES
+        limits["prior-seal-manifest.json"] = MAX_CONTROL_BYTES
+    if set(sources) != expected or set(limits) != expected:
         raise SourceSnapshotError("offline source inventory differs from the exact asset contract")
     with tempfile.TemporaryDirectory(prefix="genereviews-admitted-source-") as temporary:
         root = Path(temporary)
         os.chmod(root, 0o700)
-        for name in sorted(SOURCE_ASSETS):
+        for name in sorted(expected):
             _copy_stable_regular(sources[name], root / name, max_bytes=limits[name])
         yield OfflineSourceSnapshot(
             root=root,
@@ -138,8 +149,8 @@ def admit_offline_source(
             side_data_dir=root,
             source_metadata=root / "source-capture.json",
             file_list=root / "file_list.csv",
-            prior_manifest=root / "prior-manifest.json",
-            prior_seal_manifest=root / "prior-seal-manifest.json",
+            prior_manifest=None if genesis else root / "prior-manifest.json",
+            prior_seal_manifest=None if genesis else root / "prior-seal-manifest.json",
         )
 
 

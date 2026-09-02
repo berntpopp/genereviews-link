@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import io
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import httpx
 
 from genereview_link.download_guard import (
     STREAM_TIMEOUT,
+    RequestHook,
     build_host_allowlist,
     make_url_guard,
     read_capped,
@@ -39,11 +41,17 @@ LISTING_DOWNLOAD_DEADLINE_SECONDS = 2 * 60.0
 TARBALL_DOWNLOAD_DEADLINE_SECONDS = 20 * 60.0
 
 
-def _ncbi_client() -> httpx.AsyncClient:
+def _ncbi_client(*, request_hooks: Sequence[RequestHook] = ()) -> httpx.AsyncClient:
+    """Build the pinned NCBI client, optionally behind extra request hooks.
+
+    ``request_hooks`` runs after the host guard and before the request leaves,
+    which is where a politeness rate limiter belongs: it then also throttles
+    every auto-followed hop, not just the calls a caller remembered to gate.
+    """
     return httpx.AsyncClient(
         timeout=STREAM_TIMEOUT,
         follow_redirects=False,
-        event_hooks={"request": [make_url_guard(_NCBI_HOSTS)]},
+        event_hooks={"request": [make_url_guard(_NCBI_HOSTS), *request_hooks]},
     )
 
 
@@ -83,15 +91,27 @@ def parse_file_list_row(row: str, nbk_filter: str = "NBK1116") -> ArchiveListing
     )
 
 
-async def fetch_listing(*, nbk_id: str = "NBK1116") -> ArchiveListing:
-    """Fetch file_list.csv and return the ArchiveListing for *nbk_id*."""
-    async with _ncbi_client() as client:
-        body = await read_capped(
+async def fetch_listing_bytes(*, request_hooks: Sequence[RequestHook] = ()) -> bytes:
+    """Fetch the raw, byte-capped file_list.csv response body."""
+    async with _ncbi_client(request_hooks=request_hooks) as client:
+        return await read_capped(
             client,
             FILE_LIST_URL,
             max_bytes=MAX_LISTING_BYTES,
             deadline_seconds=LISTING_DOWNLOAD_DEADLINE_SECONDS,
         )
+
+
+async def fetch_listing(
+    *, nbk_id: str = "NBK1116", request_hooks: Sequence[RequestHook] = ()
+) -> ArchiveListing:
+    """Fetch file_list.csv and return the ArchiveListing for *nbk_id*."""
+    body = await fetch_listing_bytes(request_hooks=request_hooks)
+    return listing_from_bytes(body, nbk_id=nbk_id)
+
+
+def listing_from_bytes(body: bytes, *, nbk_id: str = "NBK1116") -> ArchiveListing:
+    """Return the single ArchiveListing for *nbk_id* in one retained listing body."""
     for line in body.decode("utf-8", "replace").splitlines():
         parsed = parse_file_list_row(line, nbk_filter=nbk_id)
         if parsed:
@@ -104,6 +124,7 @@ async def download_tarball(
     *,
     dest: Path,
     chunk_size: int = 1 << 20,  # 1 MiB
+    request_hooks: Sequence[RequestHook] = (),
 ) -> str:
     """Stream-download the tarball to *dest*; return its sha256.
 
@@ -113,7 +134,7 @@ async def download_tarball(
     """
     url = f"{LITARCH_BASE}/{listing.relpath}"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    async with _ncbi_client() as client:
+    async with _ncbi_client(request_hooks=request_hooks) as client:
         return await stream_to_file(
             client,
             url,
