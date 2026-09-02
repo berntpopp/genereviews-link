@@ -4,6 +4,48 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.4] - 2026-09-02
+
+- **Adopted the GeneFoundry runtime data identity (`runtime-v1`).** Until now
+  `container-release.json` declared `data_identity_contract: "unadopted"`: the deployment
+  could not prove *which* reviewed corpus release it was serving, so the fleet controller
+  had no way to activate a new one for it. `GET /health` now carries `data_available` and
+  `release_identity` (`schema_version: 1`, `data_identity.{expected,actual}`, each exactly
+  `{release_tag, digest}`). `expected` is the configured release
+  (`CORPUS_RELEASE_TAG` + the seed digest, i.e. `container-release.json`
+  `.data.release_tag`/`.data.digest`); `actual` is re-derived from what is restored, never
+  from configuration.
+- **The identity is written by the restore and re-checked by the server.** New control
+  migration `0008_runtime_data_identity`. The no-egress init sidecar hashes the staged
+  artifact itself, requires the artifact manifest's `corpus_release_id`, `corpus_version`
+  and chapter/passage/embedding counts to equal the rows really in the database, and only
+  then records the row — on *both* paths, including the already-restored one, where nothing
+  is restored but the artifact is re-proved and re-bound, so an existing deployment adopts
+  the contract on its next start without a re-restore. The server re-reads the live corpus
+  version and counts at startup before republishing the row, so a corpus swapped underneath
+  a running deployment stops matching and `data_available` goes false.
+- **New read-only probe:** `python -m genereview_link.data_probe` prints exactly
+  `{"data_schema_version", "record_count", "query_result_sha256"}` from a `READ ONLY`,
+  `REPEATABLE READ` transaction over `DATABASE_URL` — the controller execs it in the app
+  container to observe the data independently of what the deployment claims.
+  `container-release.json` now declares
+  `data.schema_compatibility: ["0007_embedding_run_identity"]`.
+- A corpus that is serving while its identity is absent or disagrees now reports
+  `status: "degraded"` — the same failure class as the corpus that sat frozen while
+  `/health` stayed green (#145).
+- `docker/docker-compose.yml` defaults `CORPUS_RELEASE_TAG` to the pinned
+  `container-release.json` release (a guard test fails if the two ever disagree) and passes
+  `CORPUS_RELEASE_TAG` / `CORPUS_BUNDLE_SHA256` / `CORPUS_DUMP_SHA256` to the *server* as
+  well, so an unchanged server `.env.docker` renders the reviewed identity rather than an
+  empty one. The server still has no restore path and never reads the seed.
+- Re-pinned the reusable container CI/release workflows to `genefoundry-router` v0.8.6
+  (`3d3cc20`), whose release config accepts `data.schema_compatibility`.
+- **Forward note for the next *direct* (manifest-v3) corpus release:** the readiness record
+  compares applied migrations against the manifest's, so a bundle must be built by an app
+  build that has the same control-migration set. Build the next data release with 5.2.4 or
+  later; a manifest-v3 bundle built by <= 5.2.3 would fail readiness under 5.2.4. The
+  current legacy (manifest-v2) pin `corpus-data-2026-07-13-r1` is unaffected and unchanged.
+
 ## [5.2.3] - 2026-09-02
 
 - **No reader of a `jsonb` column could see its contents.** asyncpg has no built-in jsonb
