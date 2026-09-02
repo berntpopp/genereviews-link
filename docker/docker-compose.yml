@@ -111,7 +111,7 @@ services:
       # container-release.json (.data.release_tag). Defaulting it here means an UNCHANGED
       # server .env.docker renders the pinned release rather than an empty identity, and
       # tests/unit/test_runtime_data_identity.py fails if the two ever disagree.
-      CORPUS_RELEASE_TAG: "${CORPUS_RELEASE_TAG:-corpus-data-2026-07-13-r1}"
+      CORPUS_RELEASE_TAG: "${CORPUS_RELEASE_TAG:-corpus-data-2026-09-01-r1}"
       CORPUS_RESTORE_DIR: /var/lib/genereview/restore
       MODEL_SEED_PATH: /seed/model
       MODEL_DIR: /data
@@ -179,7 +179,7 @@ services:
       # never reads the seed: it publishes these as `release_identity.data_identity.expected`
       # on /health and compares them with what the restore actually materialised. Same
       # values, same defaults as the init sidecar above -- one pinned identity, two readers.
-      CORPUS_RELEASE_TAG: "${CORPUS_RELEASE_TAG:-corpus-data-2026-07-13-r1}"
+      CORPUS_RELEASE_TAG: "${CORPUS_RELEASE_TAG:-corpus-data-2026-09-01-r1}"
       CORPUS_BUNDLE_SHA256: "${CORPUS_BUNDLE_SHA256:-}"
       CORPUS_DUMP_SHA256: "${CORPUS_DUMP_SHA256:-}"
       MODEL_DIR: /data
