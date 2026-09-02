@@ -6,7 +6,7 @@ import asyncio
 import sys
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 import uvicorn
@@ -440,13 +440,51 @@ def corpus_restore() -> None:
     from genereview_link.db.pool import create_pool
     from genereview_link.db.restore import (
         ArchivePolicyError,
+        CorpusBundle,
         assert_data_only_archive,
         ensure_restore_role,
         extract_bundle,
         read_archive_entries,
         restore_data_only,
         seed_identity_mode,
+        sha256_file,
     )
+    from genereview_link.runtime_data_identity import (
+        RuntimeDataIdentityError,
+        record_data_identity,
+    )
+
+    def staged_bundle(seed_path: Path) -> CorpusBundle:
+        """Prove the staged seed artifact and expand it into the restore-state volume."""
+        return extract_bundle(
+            seed_path,
+            Path(settings.CORPUS_RESTORE_DIR) / "bundle",
+            expected_sha256=settings.CORPUS_DUMP_SHA256 or settings.CORPUS_BUNDLE_SHA256,
+            expected_manifest_sha256=settings.CORPUS_MANIFEST_SHA256,
+            expected_checksums_sha256=settings.CORPUS_CHECKSUMS_SHA256,
+        )
+
+    async def publish_identity(pool: Any, seed_path: Path, bundle: CorpusBundle, mode: str) -> None:
+        """Record which reviewed data release this deployment is actually serving.
+
+        The digest is computed here from the artifact's own bytes -- the corpus bundle in
+        legacy mode, `corpus.dump` in direct mode -- and `record_data_identity` refuses to
+        write it unless the artifact manifest's corpus identity equals the rows that are
+        really in the database. Configuration alone can never produce this row.
+        """
+        digest = bundle.dump_sha256 if seed_path.is_dir() else sha256_file(seed_path)
+        identity = await record_data_identity(
+            pool,
+            release_tag=settings.CORPUS_RELEASE_TAG,
+            digest=digest,
+            seed_mode=mode,
+            manifest=bundle.manifest,
+        )
+        logger.info(
+            "runtime data identity recorded",
+            release_tag=identity["release_tag"],
+            digest=identity["digest"],
+        )
 
     async def run() -> None:
         pool = await create_pool()
@@ -465,6 +503,7 @@ def corpus_restore() -> None:
                 settings.CORPUS_CHECKSUMS_SHA256,
             )
 
+            seed_path = Path(settings.CORPUS_SEED_PATH)
             active = await pool.fetchval(
                 "select version from public.genereview_corpus_version where is_active"
             )
@@ -484,15 +523,14 @@ def corpus_restore() -> None:
                     logger.info(
                         "active legacy corpus retained without controller readiness", version=active
                     )
+                # Nothing is restored on this path -- the corpus is already in the volume --
+                # but the deployment must still be able to PROVE which reviewed release that
+                # is, or the fleet controller cannot activate a new one. Re-prove the staged
+                # artifact and bind its manifest to the rows that are actually present.
+                await publish_identity(pool, seed_path, staged_bundle(seed_path), identity_mode)
                 return
 
-            bundle = extract_bundle(
-                Path(settings.CORPUS_SEED_PATH),
-                Path(settings.CORPUS_RESTORE_DIR) / "bundle",
-                expected_sha256=settings.CORPUS_DUMP_SHA256 or settings.CORPUS_BUNDLE_SHA256,
-                expected_manifest_sha256=settings.CORPUS_MANIFEST_SHA256,
-                expected_checksums_sha256=settings.CORPUS_CHECKSUMS_SHA256,
-            )
+            bundle = staged_bundle(seed_path)
             assert_data_only_archive(read_archive_entries(bundle.dump))
             logger.info("corpus archive verified data-only", version=bundle.corpus_version)
 
@@ -528,13 +566,14 @@ def corpus_restore() -> None:
                 )
             else:
                 logger.info("legacy corpus restored without a verified-v1 readiness claim")
+            await publish_identity(pool, seed_path, bundle, identity_mode)
             logger.info("corpus restored", version=restored)
         finally:
             await pool.close()
 
     try:
         asyncio.run(run())
-    except (ArchivePolicyError, ReadinessError) as exc:
+    except (ArchivePolicyError, ReadinessError, RuntimeDataIdentityError) as exc:
         typer.echo(f"corpus restore refused: {exc}", err=True)
         raise typer.Exit(1) from exc
 

@@ -151,6 +151,32 @@ baked-in uid/gid (`docker/Dockerfile`: `groupadd --gid 999 app` / `useradd --uid
   (`data.release_tag`, `data.digest`) so CI and the fleet controller agree on which corpus
   is pinned. See [docs/deployment.md § Corpus restore](docs/deployment.md#corpus-restore-production)
   and [docs/data.md § Corpus freshness](docs/data.md#corpus-freshness).
+- **Runtime data identity: `runtime-v1` (adopted in 5.2.4).**
+  `container-release.json` declares `"data_identity_contract": "runtime-v1"`, which commits
+  this service to *proving at runtime* which reviewed data release it serves — that is what
+  lets the fleet controller activate a NEW corpus release for it. Two obligations, both in
+  `genereview_link/runtime_data_identity.py`:
+  1. `GET /health` carries `"data_available": <bool>` and
+     `"release_identity": {"schema_version": 1, "data_identity": {"expected": {...}, "actual": {...}}}`,
+     where `expected`/`actual` have exactly the keys `release_tag` and `digest`.
+     `expected` is the configured release (`CORPUS_RELEASE_TAG` + the seed digest, i.e.
+     `container-release.json` `.data.release_tag`/`.data.digest`); `actual` is re-derived
+     from `public.genereview_runtime_data_identity` — written by the init sidecar from the
+     artifact bytes it proved — and republished only after the live `corpus_version` and the
+     chapter/passage/embedding counts are re-read and still match. Unequal or absent ⇒
+     `data_available: false` and, when a corpus is nonetheless serving, `status: degraded`.
+  2. The controller execs the read-only probe
+     `docker compose exec -T genereview-link python -m genereview_link.data_probe`, which
+     prints exactly `{"data_schema_version", "record_count", "query_result_sha256"}` from a
+     `READ ONLY`, `REPEATABLE READ` transaction. `data_schema_version` is the newest applied
+     data migration without its schema prefix, and it is what
+     `container-release.json` `.data.schema_compatibility` must list.
+  The init sidecar records the identity on BOTH paths — a fresh restore and an
+  already-restored volume (where nothing is restored but the staged artifact is re-proved
+  and bound to the live rows). Adding a control migration therefore also requires updating
+  `genereview_link/corpus/schema_identity.py::EXPECTED_CONTROL_MIGRATIONS` and the
+  `data.image_allowlist` in `container-release.json` (the OCI content policy denies `.sql`).
+  Guard test: `tests/unit/test_runtime_data_identity.py`.
 
 ## Postgres Connection
 
