@@ -4,6 +4,28 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.2] - 2026-09-02
+
+Two more refusals that only the *real* upstream bytes trigger, both found running the
+newly unblocked pipeline against live NCBI data.
+
+- **NCBI's litarch index is not canonical UTF-8, and the capture reader demanded that it
+  be.** Four rows out of 9508 — NTP technical reports and Spanish-language WHO documents —
+  carry latin-1 bytes, so `load_offline_capture` refused every real capture with
+  "file_list.csv is not canonical UTF-8" over rows that have nothing to do with
+  GeneReviews. Rows are now decoded individually and undecodable ones skipped; the raw
+  bytes are still digest-bound, and the "exactly one canonical NBK1116 row" rule still
+  governs — so an undecodable GeneReviews row would be skipped and fail closed rather than
+  slip through. The snapshot writer and the capture reader now share one row decoder and
+  cannot disagree about what a listing contains.
+- **Offline ingest died at stage 0 on any real capture.** A capture's side-data entry
+  carries `{url, sha256, size_bytes}` because the capture attests where the bytes came
+  from; the corpus-version row and the release manifest record digest and size only, and
+  `validate_source_identity` demands exactly those two keys. Handing it a capture entry
+  verbatim raised "side_data GRtitle_shortname_NBKid.txt must contain exactly sha256 and
+  size_bytes" before a row was ever written. The pipeline now projects capture entries onto
+  the stored identity shape, and refuses an entry that lacks a digest identity.
+
 ## [5.2.1] - 2026-09-02
 
 - **`archive_content_identities` did not finish on the real archive.** It hashed members in

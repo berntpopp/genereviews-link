@@ -20,6 +20,7 @@ from genereview_link.corpus.archive import (
     FILE_LIST_URL,
     LITARCH_BASE,
     MAX_LISTING_BYTES,
+    decodable_listing_rows,
     parse_file_list_row,
 )
 from genereview_link.corpus.source_identity import SIDEDATA_FILES
@@ -431,14 +432,11 @@ def load_offline_capture(
         or hashlib.sha256(listing_bytes).hexdigest() != listing["raw_sha256"]
     ):
         raise SourceCaptureError("file_list.csv bytes do not match listing capture")
-    try:
-        matching_rows = [
-            parsed
-            for line in listing_bytes.decode("utf-8").splitlines()
-            if (parsed := parse_file_list_row(line, nbk_filter="NBK1116")) is not None
-        ]
-    except UnicodeDecodeError as error:
-        raise SourceCaptureError("file_list.csv is not canonical UTF-8") from error
+    matching_rows = [
+        parsed
+        for line in decodable_listing_rows(listing_bytes)
+        if (parsed := parse_file_list_row(line, nbk_filter="NBK1116")) is not None
+    ]
     if len(matching_rows) != 1:
         raise SourceCaptureError("file_list.csv must contain exactly one canonical NBK1116 row")
     derived_listing = matching_rows[0]
