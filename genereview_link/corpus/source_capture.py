@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import os
 import re
 import stat
 import tarfile
+import tempfile
+import zlib
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
+from typing import IO
 
 from genereview_link.corpus.archive import (
     FILE_LIST_URL,
@@ -42,11 +46,102 @@ def _canonical(value: object) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
-def archive_content_identities(path: Path) -> tuple[str, str]:
-    """Hash an archive's exact sorted member inventory and expanded regular bytes."""
+MAX_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024
+MAX_MEMBER_BYTES = 64 * 1024 * 1024
+MAX_MEMBERS = 10_000
+# Tar overhead above the regular-member payload the reviewed bound covers: one
+# 512-byte header per member plus at most 512 bytes of padding, twice over for
+# long-name extension records, plus the two-block end marker. Generous at 10k
+# members, and still far below anything that could exhaust the decompression
+# target.
+_TAR_OVERHEAD_BYTES = 32 * 1024 * 1024
+
+
+def _decompress_bounded(source: IO[bytes], target: IO[bytes]) -> None:
+    """Expand one gzip member stream into a seekable target under a byte cap.
+
+    Random access into a ``tarfile`` opened as ``r:gz`` is a trap: every seek
+    backwards rewinds the gzip stream and re-inflates from byte zero, so hashing
+    ~3000 members in sorted (i.e. not archive) order re-inflates the whole
+    archive thousands of times. On the real GeneReviews archive that turned a
+    30-second identity computation into hours -- long enough that a maintainer
+    would reasonably conclude the pipeline had hung. Inflating once into a
+    seekable temporary file makes the same reads O(1), and every digest, bound
+    and refusal below is unchanged.
+    """
+    limit = MAX_EXPANDED_BYTES + _TAR_OVERHEAD_BYTES
+    written = 0
+    with gzip.GzipFile(fileobj=source, mode="rb") as stream:
+        while chunk := stream.read(1 << 20):
+            written += len(chunk)
+            if written > limit:
+                raise SourceCaptureError("archive expanded data exceeds the reviewed bound")
+            target.write(chunk)
+    target.flush()
+    target.seek(0)
+
+
+def _member_identities(archive: tarfile.TarFile) -> tuple[list[dict[str, object]], str]:
+    """Hash every member in sorted name order, refusing anything unsafe or oversized."""
     members: list[dict[str, object]] = []
     expanded = hashlib.sha256()
     total = 0
+    entries = sorted(archive.getmembers(), key=lambda entry: entry.name)
+    if not entries or len(entries) > MAX_MEMBERS:
+        raise SourceCaptureError("archive member count is outside the reviewed bound")
+    seen: set[str] = set()
+    regular_members = 0
+    for entry in entries:
+        if (
+            entry.name in seen
+            or not entry.name
+            or len(entry.name.encode("utf-8")) > 512
+            or entry.name.startswith("/")
+            or "\\" in entry.name
+            or "//" in entry.name
+            or entry.name in {".", ".."}
+            or ".." in Path(entry.name).parts
+        ):
+            raise SourceCaptureError("archive contains an unsafe or duplicate member")
+        seen.add(entry.name)
+        if entry.isdir():
+            members.append({"name": entry.name, "type": "directory"})
+            continue
+        if not entry.isfile():
+            raise SourceCaptureError("archive contains an unsafe or duplicate member")
+        regular_members += 1
+        total += entry.size
+        if entry.size > MAX_MEMBER_BYTES or total > MAX_EXPANDED_BYTES:
+            raise SourceCaptureError("archive expanded data exceeds the reviewed bound")
+        stream = archive.extractfile(entry)
+        if stream is None:
+            raise SourceCaptureError("archive regular member cannot be read")
+        digest = hashlib.sha256()
+        expanded.update(entry.name.encode())
+        expanded.update(b"\0")
+        size = 0
+        while chunk := stream.read(1 << 20):
+            digest.update(chunk)
+            expanded.update(chunk)
+            size += len(chunk)
+        if size != entry.size:
+            raise SourceCaptureError("archive regular member is truncated")
+        expanded.update(b"\0")
+        members.append(
+            {
+                "name": entry.name,
+                "type": "file",
+                "size_bytes": size,
+                "sha256": digest.hexdigest(),
+            }
+        )
+    if regular_members == 0:
+        raise SourceCaptureError("archive contains no regular source members")
+    return members, expanded.hexdigest()
+
+
+def archive_content_identities(path: Path) -> tuple[str, str]:
+    """Hash an archive's exact sorted member inventory and expanded regular bytes."""
     parent_fd: int | None = None
     descriptor: int | None = None
     try:
@@ -57,59 +152,11 @@ def archive_content_identities(path: Path) -> tuple[str, str]:
             raise SourceCaptureError("archive must be a retained regular file")
         with (
             os.fdopen(descriptor, "rb", closefd=False) as source,
-            tarfile.open(fileobj=source, mode="r:gz") as archive,
+            tempfile.TemporaryFile() as plain,
         ):
-            entries = sorted(archive.getmembers(), key=lambda entry: entry.name)
-            if not entries or len(entries) > 10_000:
-                raise SourceCaptureError("archive member count is outside the reviewed bound")
-            seen: set[str] = set()
-            regular_members = 0
-            for entry in entries:
-                if (
-                    entry.name in seen
-                    or not entry.name
-                    or len(entry.name.encode("utf-8")) > 512
-                    or entry.name.startswith("/")
-                    or "\\" in entry.name
-                    or "//" in entry.name
-                    or entry.name in {".", ".."}
-                    or ".." in Path(entry.name).parts
-                ):
-                    raise SourceCaptureError("archive contains an unsafe or duplicate member")
-                seen.add(entry.name)
-                if entry.isdir():
-                    members.append({"name": entry.name, "type": "directory"})
-                    continue
-                if not entry.isfile():
-                    raise SourceCaptureError("archive contains an unsafe or duplicate member")
-                regular_members += 1
-                total += entry.size
-                if entry.size > 64 * 1024 * 1024 or total > 4 * 1024 * 1024 * 1024:
-                    raise SourceCaptureError("archive expanded data exceeds the reviewed bound")
-                stream = archive.extractfile(entry)
-                if stream is None:
-                    raise SourceCaptureError("archive regular member cannot be read")
-                digest = hashlib.sha256()
-                expanded.update(entry.name.encode())
-                expanded.update(b"\0")
-                size = 0
-                while chunk := stream.read(1 << 20):
-                    digest.update(chunk)
-                    expanded.update(chunk)
-                    size += len(chunk)
-                if size != entry.size:
-                    raise SourceCaptureError("archive regular member is truncated")
-                expanded.update(b"\0")
-                members.append(
-                    {
-                        "name": entry.name,
-                        "type": "file",
-                        "size_bytes": size,
-                        "sha256": digest.hexdigest(),
-                    }
-                )
-            if regular_members == 0:
-                raise SourceCaptureError("archive contains no regular source members")
+            _decompress_bounded(source, plain)
+            with tarfile.open(fileobj=plain, mode="r:") as archive:
+                members, expanded_sha256 = _member_identities(archive)
         after = os.fstat(descriptor)
         if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
             after.st_dev,
@@ -118,14 +165,14 @@ def archive_content_identities(path: Path) -> tuple[str, str]:
             after.st_mtime_ns,
         ):
             raise SourceCaptureError("archive changed while its identity was computed")
-    except (OSError, tarfile.TarError) as error:
+    except (OSError, EOFError, gzip.BadGzipFile, tarfile.TarError, zlib.error) as error:
         raise SourceCaptureError("archive is not a readable gzip tar capture") from error
     finally:
         if descriptor is not None:
             os.close(descriptor)
         if parent_fd is not None:
             os.close(parent_fd)
-    return hashlib.sha256(_canonical(members)).hexdigest(), expanded.hexdigest()
+    return hashlib.sha256(_canonical(members)).hexdigest(), expanded_sha256
 
 
 def _file_identity(path: Path, expected: object, *, label: str) -> None:
