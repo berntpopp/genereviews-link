@@ -61,13 +61,13 @@ dependencies = [
 cpu = [
     "sentence-transformers>=3.0.0",
     "tokenizers>=0.20.0",
-    "torch>=2.13.0,<2.14.0",
+    "torch>=2.13.0,<2.15.0",
     "transformers>=4.46.0",
 ]
 cu130 = [
     "sentence-transformers>=3.0.0",
     "tokenizers>=0.20.0",
-    "torch>=2.13.0,<2.14.0",
+    "torch>=2.13.0,<2.15.0",
     "transformers>=4.46.0",
 ]
 
