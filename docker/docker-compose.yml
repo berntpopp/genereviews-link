@@ -19,8 +19,8 @@ name: genereviews-link
 services:
   postgres:
     # Pinned by digest (Hardening Standard v1 §1): index digest from
-    # `docker buildx imagetools inspect pgvector/pgvector:0.8.2-pg18`.
-    image: docker.io/pgvector/pgvector@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d
+    # `docker buildx imagetools inspect pgvector/pgvector:0.8.6-pg18`.
+    image: docker.io/pgvector/pgvector@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a
     pull_policy: missing
     # Start AS postgres (the image's own uid:gid). The stock entrypoint starts as root and
     # gosu-drops to postgres, which needs CAP_CHOWN + CAP_SETUID/CAP_SETGID -- impossible

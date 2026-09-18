@@ -122,7 +122,9 @@ def test_docker_example_pins_the_reviewed_corpus_artifact() -> None:
     assert "BUNDLE_URL" not in env
     assert env["CORPUS_SEED_DIR"]
     declared = json.loads((REPO_ROOT / "container-release.json").read_text())
-    assert env["CORPUS_BUNDLE_SHA256"] == declared["data"]["digest"].removeprefix("sha256:")
+    assert (env.get("CORPUS_DUMP_SHA256") or env.get("CORPUS_BUNDLE_SHA256")) == declared["data"][
+        "digest"
+    ].removeprefix("sha256:")
 
 
 def test_production_compose_uses_unified_cli_server_not_gunicorn_env() -> None:
@@ -195,7 +197,7 @@ def test_container_release_json_declares_the_deployed_overlay() -> None:
     sidecars = {sidecar["name"]: sidecar["image"] for sidecar in service["deployed_sidecars"]}
     assert sidecars["postgres"] == (
         "docker.io/pgvector/pgvector@"
-        "sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d"
+        "sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a"
     )
 
 

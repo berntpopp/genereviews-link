@@ -17,7 +17,7 @@
     "deployed_sidecars": [
       {
         "name": "postgres",
-        "image": "docker.io/pgvector/pgvector@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d"
+        "image": "docker.io/pgvector/pgvector@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a"
       }
     ],
     "name": "genereview-link",

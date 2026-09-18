@@ -8,6 +8,10 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    groups:
+      dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -17,6 +21,10 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    groups:
+      dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: "docker"
     directory: "/docker"

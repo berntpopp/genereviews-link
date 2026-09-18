@@ -29,7 +29,7 @@ def test_pg18_client_shell_executes_digest_pinned_image(tmp_path: Path) -> None:
     )
 
     arguments = log.read_text().splitlines()
-    assert "pgvector/pgvector:0.8.2-pg18@sha256:" in " ".join(arguments)
+    assert "pgvector/pgvector:0.8.6-pg18@sha256:" in " ".join(arguments)
     assert arguments[-3:] == ["pg_restore", "--list", str(tmp_path / "x.dump")]
 
 
