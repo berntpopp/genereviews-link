@@ -4,6 +4,13 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.7] - 2026-09-18
+
+- Consolidated Dependabot dependency updates (astral-sh/setup-uv v10.1.0, genefoundry-router workflows v0.9.1, github/codeql-action v4.38.0, pgvector 0.8.6-pg18, fastmcp, torch, hatchling).
+- Fixed security vulnerability CVE-2026-9856 by upgrading transformers to >=5.10.0.
+- Updated Dockerfile base image and added `apt-get upgrade -y` for container security.
+- Configured Dependabot grouping for pip and github-actions ecosystems.
+
 ## [5.2.6] - 2026-09-02
 
 - **Fixed: the fleet contract gate refused 5.2.5.** The router's `ReleaseConfig`
