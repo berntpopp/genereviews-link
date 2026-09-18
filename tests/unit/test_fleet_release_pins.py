@@ -10,24 +10,21 @@ def test_release_dependencies_use_reviewed_immutable_pins() -> None:
         "python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217"
         in (ROOT / "docker/Dockerfile").read_text()
     )
+    assert "apt-get upgrade -y" in (ROOT / "docker/Dockerfile").read_text()
     assert (
-        "apt-get install -y --only-upgrade --no-install-recommends"
-        in (ROOT / "docker/Dockerfile").read_text()
-    )
-    assert (
-        "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
+        "astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4"
         in (ROOT / ".github/workflows/ci.yml").read_text()
     )
     assert (
-        "_container-ci.yml@3d3cc20477828ddbd8a0c980b5b4f709e2612c02"
+        "_container-ci.yml@adfc1cffed6530d6453c9dbb40be5f4c5884b8a2"
         in (ROOT / ".github/workflows/container-ci.yml").read_text()
     )
     assert (
-        "_container-release.yml@3d3cc20477828ddbd8a0c980b5b4f709e2612c02"
+        "_container-release.yml@adfc1cffed6530d6453c9dbb40be5f4c5884b8a2"
         in (ROOT / ".github/workflows/container-release.yml").read_text()
     )
     assert (
-        "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
+        "astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4"
         in (ROOT / ".github/workflows/verify-corpus-bundle.yml").read_text()
     )
     assert (

@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 90
     services:
       postgres:
-        image: pgvector/pgvector:0.8.2-pg18@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d
+        image: pgvector/pgvector:0.8.6-pg18@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a
         env:
           POSTGRES_PASSWORD: ci
           POSTGRES_DB: genereview
@@ -75,7 +75,7 @@ jobs:
             echo 'psql does not receive SQL on stdin: the PG18 client wrapper needs --interactive' >&2
             exit 1
           }
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: false
       - run: uv sync --group dev --extra cpu --frozen

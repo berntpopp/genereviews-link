@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly image='pgvector/pgvector:0.8.2-pg18@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d'
+readonly image='pgvector/pgvector:0.8.6-pg18@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a'
 tool="$(basename -- "$0")"
 if test "$tool" = pg18-client; then
   test "$#" -gt 0 || { echo 'usage: pg18-client TOOL [ARG...]' >&2; exit 64; }

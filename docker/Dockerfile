@@ -2,7 +2,7 @@
 
 # Exact client binaries for data-only dump/restore compatibility. The same immutable
 # PostgreSQL 18/pgvector image is used by corpus build and verification workflows.
-FROM pgvector/pgvector:0.8.2-pg18@sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d AS pg18-client
+FROM pgvector/pgvector:0.8.6-pg18@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a AS pg18-client
 
 # --- Builder Stage ---
 FROM python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217 AS builder
@@ -82,12 +82,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     GENEREVIEW_LINK_PORT=8000 \
     TMPDIR=/tmp
 
-RUN apt-get update \
-    && apt-get install -y --only-upgrade --no-install-recommends \
-    openssl \
-    libssl3t64 \
-    openssl-provider-legacy \
-    && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/* \

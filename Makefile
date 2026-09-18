@@ -137,7 +137,7 @@ docker-logs: ## Tail Docker service logs
 #     -e POSTGRES_USER=genereview -e POSTGRES_PASSWORD=genereview \
 #     -e POSTGRES_DB=genereview \
 #     -v genereview_gr_pg:/var/lib/postgresql/data \
-#     pgvector/pgvector:0.8.2-pg18
+#     pgvector/pgvector:0.8.6-pg18
 DOCKER_DEV_COMPOSE := $(DOCKER_COMPOSE) -f docker/docker-compose.yml -f docker/docker-compose.override.gr-pg.yml
 
 docker-dev-build: ## Build dev image (uses gr-pg override)

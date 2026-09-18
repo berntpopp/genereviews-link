@@ -36,7 +36,7 @@ dependencies = [
     "rich>=15.0.0,<16.0.0",
     "typer>=0.25.1,<1.0.0",
     "mcp[cli]>=1.27.0,<3.0.0",
-    "fastmcp>=3.4.4,<4.0.0",
+    "fastmcp>=3.4.4,<5.0.0",
     "gunicorn>=25.3.0,<27.0.0",
     "defusedxml>=0.7.1",
     "asgi-correlation-id>=4.3.0,<6.0.0",
@@ -61,14 +61,14 @@ dependencies = [
 cpu = [
     "sentence-transformers>=3.0.0",
     "tokenizers>=0.20.0",
-    "torch>=2.13.0,<2.14.0",
-    "transformers>=4.46.0",
+    "torch>=2.13.0,<2.15.0",
+    "transformers>=5.10.0",
 ]
 cu130 = [
     "sentence-transformers>=3.0.0",
     "tokenizers>=0.20.0",
-    "torch>=2.13.0,<2.14.0",
-    "transformers>=4.46.0",
+    "torch>=2.13.0,<2.15.0",
+    "transformers>=5.10.0",
 ]
 
 [dependency-groups]
@@ -85,8 +85,8 @@ dev = [
     "types-defusedxml>=0.7.0.20260408",
     "psutil>=7.2.2",
     "tokenizers>=0.20.0",
-    "transformers>=4.46.0",
-    "hatchling==1.27.0",
+    "transformers>=5.10.0",
+    "hatchling==1.32.0",
 ]
 
 [tool.uv]
