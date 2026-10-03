@@ -7,28 +7,28 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_release_dependencies_use_reviewed_immutable_pins() -> None:
     assert (
-        "python:3.12-slim@sha256:09f7da3bc104798d0afb40bc08d23ab2da20a76130cec1f2ef170848f5d85217"
+        "python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016"
         in (ROOT / "docker/Dockerfile").read_text()
     )
     assert "apt-get upgrade -y" in (ROOT / "docker/Dockerfile").read_text()
     assert (
-        "astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4"
+        "astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7"
         in (ROOT / ".github/workflows/ci.yml").read_text()
     )
     assert (
-        "_container-ci.yml@adfc1cffed6530d6453c9dbb40be5f4c5884b8a2"
+        "_container-ci.yml@0122f6e6d8f6a9057b80134d7cacbf61c5bd2e84"
         in (ROOT / ".github/workflows/container-ci.yml").read_text()
     )
     assert (
-        "_container-release.yml@adfc1cffed6530d6453c9dbb40be5f4c5884b8a2"
+        "_container-release.yml@0122f6e6d8f6a9057b80134d7cacbf61c5bd2e84"
         in (ROOT / ".github/workflows/container-release.yml").read_text()
     )
     assert (
-        "astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4"
+        "astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7"
         in (ROOT / ".github/workflows/verify-corpus-bundle.yml").read_text()
     )
     assert (
-        "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8"
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
         in (ROOT / ".github/workflows/verify-corpus-bundle.yml").read_text()
     )
 
