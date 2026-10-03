@@ -23,7 +23,7 @@ config="$(dirname "$0")/../container-release.json"
 # The fleet contract (the router's ReleaseConfig, extra keys forbidden) owns
 # container-release.json's `data` block: mode, release_tag, digest, schema
 # compatibility, image allowlist. Which release ASSET carries that digest, and the
-# digests of the two control files a direct (manifest-v3) release ships beside it,
+# digests of the two control files a direct (manifest-v3/v4) release ships beside it,
 # are this repository's own concern and live in corpus-release.json. When that file
 # is present it must name the same release and the same digest as the contract pin.
 seed_config="$(dirname "$0")/../corpus-release.json"

@@ -4,6 +4,9 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.9] - 2026-10-03
+
+- Adopt the immutable GeneReviews corpus release `corpus-data-2026-10-03-r1` with v4 producer/computation provenance.
 - Keep explicit `gene=` filtering unchanged while using indexed chapter gene metadata to
   improve unambiguous single-gene queries; dense-only results no longer receive a synthetic
   lexical vote in reciprocal-rank fusion.

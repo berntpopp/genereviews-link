@@ -76,7 +76,7 @@ verifies nothing while looking like verification is worse than no checksum.
 
 ```bash
 # On the server, once per corpus release (direct, manifest-v4 shape):
-tag=corpus-data-2026-09-01-r1
+tag=corpus-data-2026-10-03-r1
 base="https://github.com/berntpopp/genereviews-link/releases/download/$tag"
 sudo install -d -m 0755 /srv/genefoundry/genereviews-seed
 tmp=$(mktemp -d)
@@ -383,10 +383,10 @@ silent update -- which is exactly why replacing one is never the right move. Cut
 release id instead.
 
 ```bash
-cd genereview-corpus-data-2026-09-01-r1
-gh release create corpus-data-2026-09-01-r1 \
+cd genereview-corpus-data-2026-10-03-r1
+gh release create corpus-data-2026-10-03-r1 \
   --target "$(jq -er .app_git_sha manifest.json)" \
-  --title corpus-data-2026-09-01-r1 \
+  --title corpus-data-2026-10-03-r1 \
   --notes-file release-notes.md \
   corpus.dump manifest.json SHA256SUMS
 ```
@@ -398,7 +398,7 @@ reviewed -- so nobody reading the release page infers a CI build that never happ
 Then verify the published release from scratch, in CI:
 
 ```bash
-gh workflow run verify-corpus-bundle.yml -f release_tag=corpus-data-2026-09-01-r1
+gh workflow run verify-corpus-bundle.yml -f release_tag=corpus-data-2026-10-03-r1
 ```
 
 `verify-corpus-bundle.yml` downloads the three assets, checks them against `SHA256SUMS`,
@@ -422,19 +422,19 @@ it proves the bytes against those digests before they reach the restore sidecar:
 // container-release.json — the fleet contract's `data` block (no other keys are admitted)
 "data": {
   "mode": "restored-database",
-  "release_tag": "corpus-data-2026-09-01-r1",
-  "digest": "sha256:<corpus.dump>",
+  "release_tag": "corpus-data-2026-10-03-r1",
+  "digest": "sha256:ca358d3f7052ed97f03f4ac9a9f953b6d3d1c1eaf5faa693d4cffe1949ab0c0a",
   "schema_compatibility": ["0007_embedding_run_identity"],
   "image_allowlist": ["..."]
 }
 // corpus-release.json — this repository's own pin of WHICH asset carries that digest
 {
   "schema_version": 1,
-  "release_tag": "corpus-data-2026-09-01-r1",
+  "release_tag": "corpus-data-2026-10-03-r1",
   "asset_name": "corpus.dump",
-  "digest": "sha256:<corpus.dump>",
-  "manifest_digest": "sha256:<manifest.json>",
-  "checksums_digest": "sha256:<SHA256SUMS>"
+  "digest": "sha256:ca358d3f7052ed97f03f4ac9a9f953b6d3d1c1eaf5faa693d4cffe1949ab0c0a",
+  "manifest_digest": "sha256:aab5049f24235cc8d143456f31a01dd2417450a36c53edad5394f84172ec7fe6",
+  "checksums_digest": "sha256:4a9b105f9f4bc00c6209713a7b68e09b62fc2ada9964b5e94db1834c69dfc2a0"
 }
 ```
 
