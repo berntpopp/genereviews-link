@@ -12,6 +12,7 @@ from typing import Any
 import asyncpg
 
 from genereview_link.corpus.jsonb import JsonbColumnError, json_object
+from genereview_link.corpus.postgres_identity import is_supported_pgvector_runtime
 
 _SERVER_VERSION = re.compile(r"^18[0-9]{4}$")
 
@@ -35,7 +36,7 @@ def collect_computation_provenance(*, app_git_sha: str) -> dict[str, object]:
 def _database_identity(row: Any) -> dict[str, str]:
     server_version = str(row["server_version_num"])
     pgvector = str(row["pgvector"])
-    if not _SERVER_VERSION.fullmatch(server_version) or pgvector != "0.8.2":
+    if not _SERVER_VERSION.fullmatch(server_version) or not is_supported_pgvector_runtime(pgvector):
         raise RuntimeError("database runtime does not match the reviewed PostgreSQL 18 identity")
     return {
         "server_version_num": server_version,

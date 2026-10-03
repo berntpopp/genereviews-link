@@ -33,6 +33,7 @@ def build_bundle(
     )
     from genereview_link.corpus.bundle_validation import validate_database_ready_from_connection
     from genereview_link.corpus.evaluation import (
+        CURRENT_EVALUATION_ALGORITHM,
         build_evaluation_evidence,
         evaluate_connection,
     )
@@ -89,7 +90,9 @@ def build_bundle(
                                 raise typer.Exit(1)
                         snapshot = await connection.fetchval("select pg_export_snapshot()")
                         snapshot_id = str(snapshot)
-                        metrics = await evaluate_connection(connection)
+                        metrics = await evaluate_connection(
+                            connection, algorithm=CURRENT_EVALUATION_ALGORITHM
+                        )
                         pg_dump_to(
                             td_path / "corpus.dump",
                             database_url=settings.DATABASE_URL,
@@ -110,6 +113,7 @@ def build_bundle(
                             },
                             export_snapshot=snapshot_id,
                             dump_sha256=sha256_file(td_path / "corpus.dump"),
+                            algorithm=CURRENT_EVALUATION_ALGORITHM,
                         )
 
                 if release_id:

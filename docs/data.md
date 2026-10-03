@@ -136,6 +136,21 @@ the **same** model. The corpus is embedded with `BAAI/bge-small-en-v1.5` (revisi
 `5c38ec7c405ec4b44b94cc5a9bb96e735b38267a`, 384-d), recorded in
 `public.genereview_active_embedding`.
 
+### PostgreSQL and corpus bundle identity
+
+The serving database runs PostgreSQL 18. The pinned pgvector image currently installs
+extension 0.8.6 on a new volume. A corpus bundle exported with runtime extension 0.8.2 can
+be restored onto 0.8.6; a bundle exported on 0.8.6 cannot be restored onto 0.8.2. The
+restore path checks this direction before recording runtime data identity. Bundle metadata
+records the actual extension present at export time.
+
+Embedding computation provenance is separate: it records the PostgreSQL client image,
+server version, and pgvector version used when the corpus was ingested or embedded. Those
+historical facts remain unchanged after a data-only restore. The exact prior 0.8.2 client
+digest is retained for verification of the published September bundle; new runs use the
+current digest-pinned 0.8.6 PostgreSQL 18 client. Both client images are PostgreSQL 18
+tools and may connect to either reviewed PostgreSQL 18 server runtime.
+
 ### How the model reaches the container
 
 The weights are 127 MiB, and the fleet OCI content policy caps any single file in an image

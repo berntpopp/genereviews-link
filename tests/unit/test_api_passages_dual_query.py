@@ -95,7 +95,9 @@ async def test_q_query_and_matching_dual_query_return_identical_results() -> Non
         q_resp.json()["results"]
     )
     repo = app.state.repository
-    assert [call.args[0] for call in repo.search_passages.await_args_list] == [
+    calls = repo.search_passages.await_args_list
+    assert [call.args[0] for call in calls] == ["BRCA1"] * 6
+    assert [calls[index].kwargs.get("gene_symbol") for index in (1, 3, 5)] == [
         "BRCA1",
         "BRCA1",
         "BRCA1",
@@ -126,3 +128,30 @@ async def test_missing_q_and_query_returns_structured_422() -> None:
     detail: dict[str, Any] = resp.json()["detail"]
     assert detail["code"] == "missing_query"
     assert detail["message"] == "one of q or query is required"
+
+
+@pytest.mark.asyncio
+async def test_inline_gene_candidate_lookup_preserves_route_filters() -> None:
+    app = _app()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        response = await client.get(
+            "/passages/search",
+            params={
+                "q": "BRCA1 risk-reducing surgery",
+                "sections": "management",
+                "heading_path_contains": "Management",
+                "rerank": "rrf",
+                "limit": 10,
+            },
+        )
+
+    assert response.status_code == 200
+    calls = app.state.repository.search_passages.await_args_list
+    assert len(calls) == 2
+    for call in calls:
+        assert call.kwargs["sections"] == ["management"]
+        assert call.kwargs["heading_path_contains"] == "Management"
+        assert call.kwargs["limit"] == 200
+    assert calls[1].kwargs["gene_symbol"] == "BRCA1"
+    assert calls[1].kwargs["gene_role"] == "any"

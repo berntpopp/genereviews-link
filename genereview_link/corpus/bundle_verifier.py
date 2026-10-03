@@ -15,9 +15,42 @@ from genereview_link.corpus.bundle_integrity import (
     _verify_source,
 )
 from genereview_link.corpus.computation_validation import validate_computation_provenance
-from genereview_link.corpus.pg_client import PG18_IMAGE
+from genereview_link.corpus.pg_client import is_supported_pg_client_image
+from genereview_link.corpus.postgres_identity import is_supported_pgvector_runtime
 
 MAINTAINER_PREBUILT = "maintainer-prebuilt"
+
+
+def _evaluation_algorithm(evaluation: object) -> str:
+    """Validate the old/new closed-world evaluation shape and return its algorithm."""
+    legacy_keys = {
+        "status",
+        "suite",
+        "suite_sha256",
+        "model_name",
+        "corpus_identity",
+        "export_snapshot",
+        "dump_sha256",
+        "results",
+        "result_sha256",
+    }
+    if not isinstance(evaluation, dict) or set(evaluation) not in {
+        frozenset(legacy_keys),
+        frozenset(legacy_keys | {"algorithm"}),
+    }:
+        raise BundleIntegrityError("manifest.json lacks exact evaluation evidence")
+    from genereview_link.corpus.evaluation import (
+        CURRENT_EVALUATION_ALGORITHM,
+        LEGACY_EVALUATION_ALGORITHM,
+    )
+
+    algorithm = evaluation.get("algorithm", LEGACY_EVALUATION_ALGORITHM)
+    if not isinstance(algorithm, str) or algorithm not in {
+        LEGACY_EVALUATION_ALGORITHM,
+        CURRENT_EVALUATION_ALGORITHM,
+    }:
+        raise BundleIntegrityError("manifest.json evaluation algorithm is unsupported")
+    return algorithm
 
 
 def _computation_run_id(
@@ -153,7 +186,9 @@ def verify_data_only_bundle_impl(
         and all(isinstance(postgres[name], str) and postgres[name] for name in postgres)
     ):
         raise BundleIntegrityError("manifest.json PostgreSQL identity is incomplete")
-    if postgres != {"major_version": "18", "pgvector_version": "0.8.2"}:
+    if postgres["major_version"] != "18" or not is_supported_pgvector_runtime(
+        postgres["pgvector_version"]
+    ):
         raise BundleIntegrityError(
             "manifest.json PostgreSQL identity does not match reviewed runtime"
         )
@@ -176,18 +211,7 @@ def verify_data_only_bundle_impl(
     if not isinstance(validation, dict) or validation.get("status") != "passed":
         raise BundleIntegrityError("manifest.json lacks a passing candidate validation")
     evaluation = metadata.get("evaluation")
-    if not isinstance(evaluation, dict) or set(evaluation) != {
-        "status",
-        "suite",
-        "suite_sha256",
-        "model_name",
-        "corpus_identity",
-        "export_snapshot",
-        "dump_sha256",
-        "results",
-        "result_sha256",
-    }:
-        raise BundleIntegrityError("manifest.json lacks exact evaluation evidence")
+    _evaluation_algorithm(evaluation)
     if (
         evaluation["status"] != "passed"
         or evaluation["suite"] != "tests/eval/genereviews_queries.jsonl"
@@ -435,8 +459,8 @@ def verify_data_only_bundle_impl(
         }
         or database["client_major"] != "18"
         or database["server_major"] != "18"
-        or database["pgvector"] != "0.8.2"
-        or database["client_image"] != PG18_IMAGE
+        or not is_supported_pgvector_runtime(database["pgvector"])
+        or not is_supported_pg_client_image(database["client_image"])
         or not isinstance(determinism, dict)
         or determinism
         != {

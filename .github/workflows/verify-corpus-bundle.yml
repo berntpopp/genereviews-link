@@ -212,7 +212,12 @@ jobs:
           actual_pgvector="$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c \
             "select extversion from pg_extension where extname = 'vector'")"
           test "$EXPECTED_PG_MAJOR" = "$actual_pg_major"
-          test "$EXPECTED_PGVECTOR" = "$actual_pgvector"
+          uv run python - "$EXPECTED_PGVECTOR" "$actual_pgvector" <<'PY'
+          import sys
+          from genereview_link.corpus.postgres_identity import is_supported_pgvector_restore
+          if not is_supported_pgvector_restore(sys.argv[1], sys.argv[2]):
+              raise SystemExit(f"unsupported pgvector restore pair: {sys.argv[1]} -> {sys.argv[2]}")
+          PY
           while IFS= read -r migration; do
             namespace="${migration%%:*}"
             version="${migration#*:}"
@@ -298,16 +303,19 @@ jobs:
                   raise SystemExit("restored ingest/embedding computation chain mismatch")
           asyncio.run(main())
           PY
-          DATABASE_URL="$DATABASE_URL" uv run python - "$RUNNER_TEMP/restored-evaluation.json" <<'PY'
+          DATABASE_URL="$DATABASE_URL" uv run python - "$RUNNER_TEMP/restored-evaluation.json" "$VERIFY_DIR/manifest.json" <<'PY'
           import asyncio, json, sys
           from pathlib import Path
-          from genereview_link.corpus.evaluation import canonical_json, evaluate_connection
+          from genereview_link.corpus.evaluation import canonical_json, evaluate_connection, evaluation_algorithm_from_manifest
           from genereview_link.db.pool import create_pool
           async def main():
               pool = await create_pool()
+              manifest = json.loads(Path(sys.argv[2]).read_text())
               try:
                   async with pool.acquire() as connection:
-                      results = await evaluate_connection(connection)
+                      results = await evaluate_connection(
+                          connection, algorithm=evaluation_algorithm_from_manifest(manifest)
+                      )
               finally:
                   await pool.close()
               Path(sys.argv[1]).write_bytes(canonical_json({"results": results}))

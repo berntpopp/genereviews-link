@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from genereview_link.corpus import computation_provenance, evaluation
+from genereview_link.corpus import computation_provenance, computation_validation, evaluation
 from genereview_link.corpus.evaluation import (
     EVALUATION_SUITE,
     EvaluationRejectedError,
@@ -20,6 +20,7 @@ from genereview_link.corpus.evaluation import (
 )
 from genereview_link.corpus.evaluation_contract import EVALUATION_SUITE_SHA256
 from genereview_link.corpus.pg_client import (
+    HISTORICAL_PG18_IMAGE,
     PG18_IMAGE,
     PgClientError,
     assert_client_server_match,
@@ -84,6 +85,7 @@ def test_computation_provenance_captures_full_runtime_at_compute_time(
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
     monkeypatch.setattr(computation_provenance, "BGE_MODEL_FILES", model_files)
+    monkeypatch.setattr(computation_validation, "BGE_MODEL_FILES", model_files)
 
     class Distribution:
         def __init__(self) -> None:
@@ -122,6 +124,25 @@ def test_computation_provenance_captures_full_runtime_at_compute_time(
     assert provenance["environment"]["installed_distributions"] == ["fixture-runtime==1.0"]
     assert provenance["database"]["client_major"] == "18"
     assert provenance["model"]["files"] == model_files
+
+    database = provenance["database"]
+    assert isinstance(database, dict)
+    database.update(
+        {
+            "client_image": HISTORICAL_PG18_IMAGE,
+            "server_version_num": "180004",
+            "server_major": "18",
+            "pgvector": "0.8.2",
+        }
+    )
+    computation_validation.validate_computation_provenance(provenance, app_git_sha="a" * 40)
+    database["pgvector"] = "0.8.7"
+    with pytest.raises(ValueError, match="PostgreSQL identity is invalid"):
+        computation_validation.validate_computation_provenance(provenance, app_git_sha="a" * 40)
+    database["pgvector"] = "0.8.2"
+    database["client_image"] = HISTORICAL_PG18_IMAGE + "-unreviewed"
+    with pytest.raises(ValueError, match="PostgreSQL identity is invalid"):
+        computation_validation.validate_computation_provenance(provenance, app_git_sha="a" * 40)
 
 
 def test_pg18_client_is_digest_pinned_and_rejects_host_major_mismatch(tmp_path: Path) -> None:

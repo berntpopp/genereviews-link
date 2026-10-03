@@ -65,6 +65,21 @@ def test_rerank_populates_dense_rank_and_rrf_score() -> None:
         assert row.dense_rank is not None
 
 
+def test_dense_only_candidate_has_no_lexical_vote() -> None:
+    lexical = _row("lexical", "summary", 1.0)
+    dense_only = _row("dense_only", "summary", 0.0)
+
+    ranked, _diag = rerank_with_embeddings(
+        [lexical, dense_only],
+        dense_scores={"lexical": 0.9, "dense_only": 0.8},
+        rrf_k=60,
+    )
+    by_id = {row.passage.passage_id: row for row in ranked}
+
+    assert by_id["dense_only"].rrf_score == 1 / 62
+    assert by_id["dense_only"].lexical_rank_position is None
+
+
 def test_no_dense_scores_fallback_populates_lexical_rank_positions() -> None:
     rows = [
         _row("third", "summary", 0.1),
