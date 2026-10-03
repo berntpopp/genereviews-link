@@ -4,6 +4,12 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.8] - 2026-10-03
+
+- Update PyJWT to 2.15.0, virtualenv to 21.7.13, sentence-transformers to 5.6.0, and the open soupsieve and hatchling targets.
+- Refresh the pinned Python 3.12 base image, GitHub Actions, and router v0.9.3 reusable container workflows.
+
+
 ## [5.2.7] - 2026-09-18
 
 - Consolidated Dependabot dependency updates (astral-sh/setup-uv v10.1.0, genefoundry-router workflows v0.9.1, github/codeql-action v4.38.0, pgvector 0.8.6-pg18, fastmcp, torch, hatchling).
