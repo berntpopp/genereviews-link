@@ -323,11 +323,18 @@ def test_content_identity_still_needs_a_prior_when_not_genesis(tmp_path: Path) -
         )
 
 
-def _prior_release_manifest(root: Path, identity: dict[str, object]) -> Path:
+def _prior_release_manifest(
+    root: Path, identity: dict[str, object], *, manifest_version: str = "3"
+) -> Path:
     """Exactly what a published release carries: `manifest.json`, nothing beside it."""
     manifest_bytes = json.dumps(
         {
-            "manifest_version": "3",
+            "manifest_version": manifest_version,
+            **(
+                {"provenance_model": "bundle-producer-and-historical-computation-v1"}
+                if manifest_version == "4"
+                else {}
+            ),
             "corpus_release_id": "2026-08-31-r1",
             "app_git_sha": "1" * 40,
             "content_identity": identity,
@@ -346,7 +353,10 @@ def _chained_capture(root: Path, capture: dict[str, object], prior_manifest: Pat
     return chained
 
 
-def test_a_chained_capture_verifies_against_a_genesis_release(tmp_path: Path) -> None:
+@pytest.mark.parametrize("manifest_version", ["3", "4"])
+def test_a_chained_capture_verifies_against_a_genesis_release(
+    tmp_path: Path, manifest_version: str
+) -> None:
     """The point of genesis: the *second* build must chain off the first.
 
     And it must do so from the previous release's published `manifest.json`
@@ -363,7 +373,9 @@ def test_a_chained_capture_verifies_against_a_genesis_release(tmp_path: Path) ->
         side_mapping_ids={"NBK9998", "NBK9999"},
         source_capture=genesis_capture,
     )
-    prior_manifest = _prior_release_manifest(root, genesis_identity)
+    prior_manifest = _prior_release_manifest(
+        root, genesis_identity, manifest_version=manifest_version
+    )
     chained = _chained_capture(root, genesis_capture, prior_manifest)
 
     loaded = load_offline_capture(

@@ -256,9 +256,10 @@ async def test_chained_snapshot_requires_the_prior_manifest(
         await _snapshot(tmp_path / "source", genesis=False)
 
 
+@pytest.mark.parametrize("manifest_version", ["3", "4"])
 @respx.mock
 async def test_chained_snapshot_derives_the_prior_from_retained_bytes(
-    respx_mock: respx.Router, tmp_path: Path
+    respx_mock: respx.Router, tmp_path: Path, manifest_version: str
 ) -> None:
     """The chain link is the previous release's published `manifest.json`, alone."""
     _mock_upstream(respx_mock)
@@ -271,7 +272,12 @@ async def test_chained_snapshot_derives_the_prior_from_retained_bytes(
     }
     manifest_bytes = json.dumps(
         {
-            "manifest_version": "3",
+            "manifest_version": manifest_version,
+            **(
+                {"provenance_model": "bundle-producer-and-historical-computation-v1"}
+                if manifest_version == "4"
+                else {}
+            ),
             "corpus_release_id": "2026-08-31-r1",
             "app_git_sha": "1" * 40,
             "content_identity": content_identity,

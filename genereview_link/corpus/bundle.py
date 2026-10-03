@@ -34,7 +34,7 @@ def _reviewed_migration_digests() -> dict[str, dict[str, str]]:
 
 @dataclass
 class BundleManifest:
-    manifest_version: str = "1"
+    manifest_version: str = "4"
     bundle_format: str = "tar.gz"
     corpus_release_id: str = ""
     corpus_version: str = ""
@@ -99,6 +99,7 @@ class BundleManifest:
     # so attribution and the research-use-only restriction travel with every byte.
     rights_notice: dict[str, object] = field(default_factory=dict)
     checksums: dict[str, str] = field(default_factory=dict)
+    provenance_model: str = "bundle-producer-and-historical-computation-v1"
 
 
 def pg_dump_to(
@@ -178,7 +179,7 @@ def write_data_only_bundle(*, work_dir: Path, output: Path, manifest: BundleMani
     shutil.copyfile(dump, target_dump)
     payload = asdict(manifest)
     payload.pop("created_at", None)
-    payload["manifest_version"] = "3"
+    payload["manifest_version"] = "4"
     payload["bundle_format"] = "postgresql-custom-data-only"
     payload["checksums"] = {"corpus.dump": sha256_file(target_dump)}
     metadata = output / "manifest.json"

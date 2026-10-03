@@ -73,10 +73,6 @@ def build_bundle(
                         if facts is None:
                             typer.echo("no active corpus version; aborting")
                             raise typer.Exit(1)
-                        if facts.app_git_sha != app_git_sha:
-                            raise ValueError(
-                                "current checkout cannot relabel an older embedding computation run"
-                            )
                         validation_manifest: dict[str, Any] = {
                             "status": "not_run",
                             "smoke_queries": [],

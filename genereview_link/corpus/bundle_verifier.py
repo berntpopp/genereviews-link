@@ -15,6 +15,7 @@ from genereview_link.corpus.bundle_integrity import (
     _sha256,
     _verify_source,
 )
+from genereview_link.corpus.bundle_provenance import computation_source_revision
 from genereview_link.corpus.computation_validation import validate_computation_provenance
 from genereview_link.corpus.pg_client import is_supported_pg_client_image
 from genereview_link.corpus.postgres_identity import is_supported_pgvector_runtime
@@ -79,16 +80,16 @@ def verify_data_only_bundle_impl(
 
     expected = BundleManifest()
     stable = set(expected.__dataclass_fields__) - {"created_at", "checksums"}
+    version = metadata.get("manifest_version")
+    if version == "3":
+        stable -= {"provenance_model"}
     if set(metadata) != stable | {"checksums"}:
         raise BundleIntegrityError("manifest.json has missing, extra, or volatile fields")
     for name in stable:
         if type(metadata[name]) is not type(getattr(expected, name)):
             raise BundleIntegrityError(f"manifest.json field has invalid type: {name}")
-    if (
-        metadata["manifest_version"] != "3"
-        or metadata["bundle_format"] != "postgresql-custom-data-only"
-    ):
-        raise BundleIntegrityError("manifest.json is not a v3 data-only bundle")
+    if version not in {"3", "4"} or metadata["bundle_format"] != "postgresql-custom-data-only":
+        raise BundleIntegrityError("manifest.json is not a reviewed data-only bundle")
     _verify_build_provenance(metadata)
     _verify_rights_notice(metadata)
     app_git_sha = metadata.get("app_git_sha")
@@ -336,7 +337,6 @@ def verify_data_only_bundle_impl(
     provenance = computation.get("provenance")
     if (
         not re.fullmatch(r"[0-9a-f]{64}", str(computation["run_id"]))
-        or computation["app_git_sha"] != app_git_sha
         or computation["expected_row_count"] != metadata["passage_count"]
         or not isinstance(provenance, dict)
         or set(provenance)
@@ -366,6 +366,18 @@ def verify_data_only_bundle_impl(
         }
     ):
         raise BundleIntegrityError("manifest.json model computation identity is invalid")
+    provenance_source = provenance.get("source")
+    computation_revision = computation_source_revision(
+        manifest_version=str(version),
+        provenance_model=metadata.get("provenance_model")
+        if isinstance(metadata.get("provenance_model"), str)
+        else None,
+        bundle_revision=str(app_git_sha),
+        computation_revision=str(computation["app_git_sha"]),
+        provenance_revision=str(provenance_source.get("app_git_sha", ""))
+        if isinstance(provenance_source, dict)
+        else "",
+    )
     ingest_run = computation["ingest_run"]
     if (
         not isinstance(ingest_run, dict)
@@ -414,7 +426,6 @@ def verify_data_only_bundle_impl(
     if (
         not isinstance(source_provenance, dict)
         or set(source_provenance) != {"app_git_sha", "builder_identity"}
-        or source_provenance["app_git_sha"] != app_git_sha
         or not isinstance(source_provenance["builder_identity"], str)
         or not source_provenance["builder_identity"]
         or not isinstance(environment, dict)
@@ -478,7 +489,7 @@ def verify_data_only_bundle_impl(
     ):
         raise BundleIntegrityError("manifest.json runtime computation provenance is invalid")
     try:
-        validate_computation_provenance(provenance, app_git_sha=str(app_git_sha))
+        validate_computation_provenance(provenance, app_git_sha=computation_revision)
         validate_computation_provenance(
             ingest_provenance,
             app_git_sha=str(ingest_run["app_git_sha"]),

@@ -54,7 +54,7 @@ it. See [deployment.md § Corpus restore](deployment.md#corpus-restore-productio
 The operator's side is two facts, both of which must be true before the first start:
 
 1. the reviewed release assets are staged in `CORPUS_SEED_DIR` on the host — for the
-   current direct (manifest-v3) pin, exactly `corpus.dump`, `manifest.json` and
+   current direct (manifest-v4) pin, exactly `corpus.dump`, `manifest.json` and
    `SHA256SUMS`, beside the reviewed `model/` directory the same init materialises — and
 2. `CORPUS_DUMP_SHA256`, `CORPUS_MANIFEST_SHA256` and `CORPUS_CHECKSUMS_SHA256` are the
    digests published with that release (the same values as `container-release.json` →
@@ -75,7 +75,7 @@ Both fail closed. An absent artifact and an absent, malformed, or **placeholder*
 verifies nothing while looking like verification is worse than no checksum.
 
 ```bash
-# On the server, once per corpus release (direct, manifest-v3 shape):
+# On the server, once per corpus release (direct, manifest-v4 shape):
 tag=corpus-data-2026-09-01-r1
 base="https://github.com/berntpopp/genereviews-link/releases/download/$tag"
 sudo install -d -m 0755 /srv/genefoundry/genereviews-seed
@@ -348,6 +348,15 @@ proven byte-for-byte against the retained prior `manifest.json`. The first build
 has nothing to point at, so it is marked explicitly: `--genesis` writes `genesis: true` /
 `prior_artifact: null` into the capture. A missing prior *without* `--genesis` is still
 refused -- the genesis case is declared, never inferred.
+
+New direct bundles use manifest v4. Its explicit
+`provenance_model: "bundle-producer-and-historical-computation-v1"` makes the top-level
+`app_git_sha` the exact clean source checkout that packages and evaluates the bundle; the
+nested ingest/embedding run revisions and their provenance continue to name the historical
+commits and locked environments that actually produced the rows and vectors. Manifest v3
+remains readable with its original single-revision binding, and either version can anchor
+the next source capture. Bundle verification checks each revision against its own
+content-addressed provenance; it never rewrites computation records.
 
 ### Packaging and publication
 
