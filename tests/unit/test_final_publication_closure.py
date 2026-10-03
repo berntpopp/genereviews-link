@@ -58,9 +58,9 @@ def test_production_seed_contract_preserves_current_pin_and_supports_direct_asse
 
     assert "CORPUS_SEED_PATH" in compose and "CORPUS_DUMP_SHA256" in compose
     assert "corpus-bundle.tar.gz)" in smoke and "corpus.dump)" in smoke
-    assert config["data"]["release_tag"] == "corpus-data-2026-09-01-r1"
+    assert config["data"]["release_tag"] == "corpus-data-2026-10-03-r1"
     assert config["data"]["digest"] == (
-        "sha256:9e76402893b51ca6597ad434aef1feb71542a03c7566e43865081fbbff3fdca2"
+        "sha256:ca358d3f7052ed97f03f4ac9a9f953b6d3d1c1eaf5faa693d4cffe1949ab0c0a"
     )
     # The fleet contract forbids unknown keys in `data`; which asset carries the digest
     # and the direct release's control-file digests are this repository's own pin.
@@ -76,10 +76,10 @@ def test_production_seed_contract_preserves_current_pin_and_supports_direct_asse
     assert seed["digest"] == config["data"]["digest"]
     assert seed["asset_name"] == "corpus.dump"
     assert seed["manifest_digest"] == (
-        "sha256:739a9e55636f2d4574fe5f714486b13ea1c8f7483d987f49f59f72170392585d"
+        "sha256:aab5049f24235cc8d143456f31a01dd2417450a36c53edad5394f84172ec7fe6"
     )
     assert seed["checksums_digest"] == (
-        "sha256:f22ff0eaaba581d5f4ead33faaa3b67b06472dfceaed261c6b6fe6b6c9b2975e"
+        "sha256:4a9b105f9f4bc00c6209713a7b68e09b62fc2ada9964b5e94db1834c69dfc2a0"
     )
     # Adopted in 5.2.4: the deployment now publishes the GeneFoundry runtime data identity
     # (v1) on /health, so the fleet controller can activate a new data release for it.

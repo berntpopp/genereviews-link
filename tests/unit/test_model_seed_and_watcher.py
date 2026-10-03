@@ -134,7 +134,7 @@ class _FakePool:
 
 _ASSET = (
     "https://github.com/berntpopp/genereviews-link/releases/download/"
-    "corpus-data-2026-09-01-r1/corpus-bundle.tar.gz"
+    "corpus-data-2026-10-03-r1/corpus.dump"
 )
 
 
@@ -163,7 +163,7 @@ async def test_the_watcher_records_a_stale_corpus_instead_of_doing_nothing() -> 
     assert len(conn.recorded) == 1, "the watcher must record every observation"
     decision, detail = conn.recorded[0]
     assert decision == DECISION_STALE
-    assert detail["latest_release_tag"] == "corpus-data-2026-09-01-r1"
+    assert detail["latest_release_tag"] == "corpus-data-2026-10-03-r1"
     assert detail["pinned_release_tag"] == "corpus-data-2026-07-13-r1"
 
 
@@ -172,7 +172,7 @@ async def test_the_watcher_records_a_current_corpus() -> None:
     async def resolver(_repo: str) -> str:
         return _ASSET
 
-    conn = await _run_watcher("2026-09-01-r1", "corpus-data-2026-09-01-r1", resolver)
+    conn = await _run_watcher("2026-10-03-r1", "corpus-data-2026-10-03-r1", resolver)
     assert conn.recorded[0][0] == DECISION_CURRENT
 
 
@@ -181,7 +181,7 @@ async def test_the_watcher_records_an_absent_corpus() -> None:
     async def resolver(_repo: str) -> str:
         return _ASSET
 
-    conn = await _run_watcher(None, "corpus-data-2026-09-01-r1", resolver)
+    conn = await _run_watcher(None, "corpus-data-2026-10-03-r1", resolver)
     assert conn.recorded[0][0] == DECISION_NO_CORPUS
 
 

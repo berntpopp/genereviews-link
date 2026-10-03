@@ -91,7 +91,7 @@ into the Postgres volume by the `genereview-corpus-restore` init sidecar:
   itself. Point `CORPUS_SEED_DIR` at a host directory already holding the exact artifact
   shape named in [`container-release.json`](../container-release.json), mounted read-only
   at `/seed`.
-- The current immutable pin is the direct release `corpus-data-2026-09-01-r1`
+- The current immutable pin is the direct release `corpus-data-2026-10-03-r1`
   (`asset_name: corpus.dump`): the seed contains exactly `corpus.dump`, `manifest.json`
   and `SHA256SUMS` — beside the reviewed `model/` directory the same init materialises —
   and `CORPUS_DUMP_SHA256`, `CORPUS_MANIFEST_SHA256` and `CORPUS_CHECKSUMS_SHA256` are
