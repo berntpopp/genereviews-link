@@ -747,9 +747,7 @@ async def test_search_empty_filtered_results_probe_unfiltered_once() -> None:
     from unittest.mock import MagicMock
 
     repo = MagicMock()
-    repo.search_passages = AsyncMock(
-        side_effect=[[], [], [_brief_row("NBK1:0001", "**hit**")]]
-    )
+    repo.search_passages = AsyncMock(side_effect=[[], [], [_brief_row("NBK1:0001", "**hit**")]])
     repo.active_embedding_table = AsyncMock(return_value="t")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
     repo._dense_candidates_filtered = AsyncMock(return_value=[])
