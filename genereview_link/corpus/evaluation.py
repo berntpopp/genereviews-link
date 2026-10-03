@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -34,7 +35,7 @@ class EvaluationRejectedError(ValueError):
     """The reviewed retrieval suite did not meet its acceptance contract."""
 
 
-def evaluation_algorithm_from_manifest(manifest: dict[str, Any]) -> str:
+def evaluation_algorithm_from_manifest(manifest: Mapping[str, object]) -> str:
     """Resolve old evidence to exact legacy replay and reject unknown algorithms."""
     evaluation = manifest.get("evaluation")
     if not isinstance(evaluation, dict):

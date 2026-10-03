@@ -6,6 +6,7 @@ import hashlib
 import math
 import re
 from pathlib import Path
+from typing import Any, cast
 
 from genereview_link.corpus.bundle_integrity import (
     BundleIntegrityError,
@@ -212,6 +213,8 @@ def verify_data_only_bundle_impl(
         raise BundleIntegrityError("manifest.json lacks a passing candidate validation")
     evaluation = metadata.get("evaluation")
     _evaluation_algorithm(evaluation)
+    # _evaluation_algorithm validates the exact closed-world evidence shape above.
+    evaluation = cast(dict[str, Any], evaluation)
     if (
         evaluation["status"] != "passed"
         or evaluation["suite"] != "tests/eval/genereviews_queries.jsonl"

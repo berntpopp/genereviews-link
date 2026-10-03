@@ -437,7 +437,12 @@ def corpus_restore() -> None:
         """
         from genereview_link.corpus.postgres_identity import require_database_pgvector_restore
 
-        source_pgvector = str(bundle.manifest.get("postgres", {}).get("pgvector_version", ""))
+        postgres_identity = bundle.manifest.get("postgres")
+        source_pgvector = (
+            str(postgres_identity.get("pgvector_version", ""))
+            if isinstance(postgres_identity, dict)
+            else ""
+        )
         try:
             await require_database_pgvector_restore(pool, source_pgvector)
         except ValueError as error:
