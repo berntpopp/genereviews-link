@@ -141,6 +141,9 @@ async def test_mcp_search_passages_accepts_q_query_and_matching_dual_query() -> 
         "BRCA1",
         "BRCA1",
         "BRCA1",
+        "BRCA1",
+        "BRCA1",
+        "BRCA1",
     ]
 
 

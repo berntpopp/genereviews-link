@@ -247,7 +247,7 @@ class TestSearchBatchRoute:
         shared_row = _make_lexical_row("NBK1247:0001", "management", "shared passage")
 
         # Both specs return the same passage
-        app = await app_factory([[shared_row], [shared_row]])
+        app = await app_factory([[shared_row], [shared_row], [shared_row], [shared_row]])
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
             resp = await c.post(

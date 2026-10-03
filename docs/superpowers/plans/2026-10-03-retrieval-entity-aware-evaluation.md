@@ -1,5 +1,7 @@
 # GeneReviews Retrieval Entity and Evaluation Plan
 
+> Historical record — This plan captures the approved design and evidence for the 2026-10-03 retrieval repair.
+
 **Goal:** Correct measurable retrieval issues without changing the frozen corpus acceptance suite or weakening its floors, and report ranking quality through the production hybrid path.
 
 **Architecture:** Preserve exact replay for historical manifests with no evaluation algorithm. New manifests declare `primary-gene-aware-lexical-v2`; its lexical candidate ranking is shared with the API's lexical mode. Production `/passages/search?rerank=rrf` remains separately measured with real BGE query embeddings on disposable prior/candidate databases. Add conservative ranking context for one exact, unambiguous gene symbol, preserve explicit `gene=` filtering, and retain cross-chapter results. Correct only independently demonstrated RRF defects.

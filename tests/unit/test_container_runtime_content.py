@@ -18,6 +18,7 @@ RUNTIME_CORPUS_FILES = (
     "evaluation_contract.py",
     "freshness.py",
     "jsonb.py",
+    "postgres_identity.py",
     "readiness.py",
     "semantic_identity.py",
 )
