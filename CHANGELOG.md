@@ -4,6 +4,15 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+- Keep explicit `gene=` filtering unchanged while using indexed chapter gene metadata to
+  improve unambiguous single-gene queries; dense-only results no longer receive a synthetic
+  lexical vote in reciprocal-rank fusion.
+- Version corpus evaluation semantics. Old manifests replay the original lexical evaluator;
+  new manifests identify the primary-gene-aware lexical evaluator explicitly.
+- Support verified corpus restore from pgvector 0.8.2 onto the current 0.8.6 PostgreSQL 18
+  image while preserving the original embedding-computation provenance. New bundles record
+  their actual runtime extension version; downgrades and unreviewed versions remain refused.
+
 ## [5.2.8] - 2026-10-03
 
 - Update PyJWT to 2.15.0, virtualenv to 21.7.13, sentence-transformers to 5.6.0, and the open soupsieve and hatchling targets.

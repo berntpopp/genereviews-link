@@ -151,6 +151,12 @@ def _rerank_key(row: LexicalPassageRow) -> tuple[float, int, str, str]:
     return (-row.lexical_rank, _section_key(row), row.passage.nbk_id, row.passage.passage_id)
 
 
+def _lexical_key(row: LexicalPassageRow) -> tuple[float, int, str, str]:
+    """Rank lexical-only results with the same primary-gene relevance multiplier."""
+    score = row.lexical_rank * (PRIMARY_GENE_BOOST if row.primary_gene_match else 1.0)
+    return (-score, _section_key(row), row.passage.nbk_id, row.passage.passage_id)
+
+
 def rerank_with_embeddings(
     rows: Sequence[LexicalPassageRow],
     dense_scores: Mapping[str, float],
@@ -169,14 +175,15 @@ def rerank_with_embeddings(
         diag.fallback_reason = "no_candidates"
         return [], diag
 
-    lex_sorted = sorted(rows, key=_rerank_key)
+    lexical_rows = [row for row in rows if row.lexical_rank > 0]
+    lex_sorted = sorted(lexical_rows, key=_lexical_key if not dense_scores else _rerank_key)
     lex_rank = {r.passage.passage_id: i + 1 for i, r in enumerate(lex_sorted)}
     lex_positioned = [
         dataclasses.replace(
             r,
-            lexical_rank_position=lex_rank[r.passage.passage_id],
+            lexical_rank_position=lex_rank.get(r.passage.passage_id),
         )
-        for r in lex_sorted
+        for r in sorted(rows, key=_lexical_key if not dense_scores else _rerank_key)
     ]
 
     if not dense_scores:
@@ -199,7 +206,8 @@ def rerank_with_embeddings(
     dense_rank = {r.passage.passage_id: i + 1 for i, r in enumerate(dense_sorted)}
 
     def rrf(r: LexicalPassageRow) -> float:
-        score = 1.0 / (rrf_k + lex_rank[r.passage.passage_id])
+        lexical_position = lex_rank.get(r.passage.passage_id)
+        score = 1.0 / (rrf_k + lexical_position) if lexical_position is not None else 0.0
         if r.passage.passage_id in dense_rank:
             score += 1.0 / (rrf_k + dense_rank[r.passage.passage_id])
         return score
@@ -217,7 +225,7 @@ def rerank_with_embeddings(
         scored_evidence.append(
             dataclasses.replace(
                 r,
-                lexical_rank_position=lex_rank[r.passage.passage_id],
+                lexical_rank_position=lex_rank.get(r.passage.passage_id),
                 dense_rank=dense_rank.get(r.passage.passage_id),
                 rrf_score=rrf_score,
                 adjusted_score=adjusted_score,

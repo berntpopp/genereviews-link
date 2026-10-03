@@ -83,6 +83,7 @@ class BundleManifest:
             "suite": "tests/eval/genereviews_queries.jsonl",
             "suite_sha256": "",
             "model_name": "BAAI/bge-small-en-v1.5",
+            "algorithm": "primary-gene-aware-lexical-v2",
             "results": {},
             "result_sha256": "",
         }

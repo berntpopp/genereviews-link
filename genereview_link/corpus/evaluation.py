@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,13 +17,33 @@ from genereview_link.corpus.evaluation_contract import (
     MIN_MRR_AT_10,
     MIN_SECTION_PRECISION_AT_5,
 )
+from genereview_link.retrieval.lexical_ranking import (
+    augment_primary_gene_candidates,
+    rank_lexical_candidates,
+)
 from genereview_link.retrieval.repository import GeneReviewRepository
 
 EVALUATION_SUITE = Path(__file__).with_name("evaluation-suite.txt")
+LEGACY_EVALUATION_ALGORITHM = "legacy-lexical-v1"
+CURRENT_EVALUATION_ALGORITHM = "primary-gene-aware-lexical-v2"
+SUPPORTED_EVALUATION_ALGORITHMS = frozenset(
+    {LEGACY_EVALUATION_ALGORITHM, CURRENT_EVALUATION_ALGORITHM}
+)
 
 
 class EvaluationRejectedError(ValueError):
     """The reviewed retrieval suite did not meet its acceptance contract."""
+
+
+def evaluation_algorithm_from_manifest(manifest: Mapping[str, object]) -> str:
+    """Resolve old evidence to exact legacy replay and reject unknown algorithms."""
+    evaluation = manifest.get("evaluation")
+    if not isinstance(evaluation, dict):
+        raise EvaluationRejectedError("manifest lacks evaluation metadata")
+    algorithm = evaluation.get("algorithm", LEGACY_EVALUATION_ALGORITHM)
+    if not isinstance(algorithm, str) or algorithm not in SUPPORTED_EVALUATION_ALGORITHMS:
+        raise EvaluationRejectedError(f"unsupported evaluation algorithm: {algorithm}")
+    return algorithm
 
 
 def assert_evaluation_accepted(
@@ -67,8 +88,19 @@ def canonical_json(value: object) -> bytes:
     return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
-async def evaluate_connection(connection: Any) -> dict[str, object]:
-    """Run the exact suite through the caller's locked repeatable-read connection."""
+async def evaluate_connection(
+    connection: Any,
+    *,
+    algorithm: str = CURRENT_EVALUATION_ALGORITHM,
+) -> dict[str, object]:
+    """Run a named evaluation algorithm on the caller's locked snapshot.
+
+    Published manifests predating an algorithm field are replayed with the exact
+    legacy raw-lexical path. New bundle builds explicitly select the current
+    primary-gene-aware lexical behavior shared with the API.
+    """
+    if algorithm not in SUPPORTED_EVALUATION_ALGORITHMS:
+        raise EvaluationRejectedError(f"unsupported evaluation algorithm: {algorithm}")
     suite_bytes = EVALUATION_SUITE.read_bytes()
     if hashlib.sha256(suite_bytes).hexdigest() != EVALUATION_SUITE_SHA256:
         raise EvaluationRejectedError("reviewed evaluation suite bytes do not match their SHA-256")
@@ -82,7 +114,15 @@ async def evaluate_connection(connection: Any) -> dict[str, object]:
         if not line.strip():
             continue
         query = json.loads(line)
-        results = await repository.search_passages(query["query"], limit=10)
+        if algorithm == LEGACY_EVALUATION_ALGORITHM:
+            results = await repository.search_passages(query["query"], limit=10)
+        else:
+            candidates = await repository.search_passages(query["query"], limit=200)
+            candidates = await augment_primary_gene_candidates(
+                repository, candidates, query["query"], limit=200
+            )
+            results = rank_lexical_candidates(candidates, query["query"])
+        results = results[:10]
         total += 1
         if results:
             covered += 1
@@ -128,12 +168,16 @@ def build_evaluation_evidence(
     corpus_identity: dict[str, object],
     export_snapshot: str,
     dump_sha256: str,
+    algorithm: str = CURRENT_EVALUATION_ALGORITHM,
 ) -> dict[str, object]:
+    if algorithm not in SUPPORTED_EVALUATION_ALGORITHMS:
+        raise EvaluationRejectedError(f"unsupported evaluation algorithm: {algorithm}")
     return {
         "status": "passed",
         "suite": EVALUATION_SUITE_RELATIVE,
         "suite_sha256": EVALUATION_SUITE_SHA256,
         "model_name": "BAAI/bge-small-en-v1.5",
+        "algorithm": algorithm,
         "corpus_identity": corpus_identity,
         "export_snapshot": export_snapshot,
         "dump_sha256": dump_sha256,
@@ -143,9 +187,13 @@ def build_evaluation_evidence(
 
 
 __all__ = [
+    "CURRENT_EVALUATION_ALGORITHM",
+    "LEGACY_EVALUATION_ALGORITHM",
+    "SUPPORTED_EVALUATION_ALGORITHMS",
     "EvaluationRejectedError",
     "assert_evaluation_accepted",
     "build_evaluation_evidence",
     "canonical_json",
     "evaluate_connection",
+    "evaluation_algorithm_from_manifest",
 ]

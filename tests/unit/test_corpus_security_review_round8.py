@@ -241,8 +241,9 @@ def test_prefixed_legacy_digest_is_normalized_consistently(tmp_path: Path) -> No
 
 def test_ingest_provenance_uses_the_exact_reviewed_runtime_contract() -> None:
     verifier = (ROOT / "genereview_link/corpus/bundle_verifier.py").read_text()
+    provenance = (ROOT / "genereview_link/corpus/computation_provenance.py").read_text()
     assert 'startswith("pgvector/pgvector' not in verifier
-    assert "PG18_IMAGE" in verifier
+    assert '"client_image": PG18_IMAGE' in provenance
     assert "ingest_provenance" in verifier and "validate_computation_provenance" in verifier
 
 

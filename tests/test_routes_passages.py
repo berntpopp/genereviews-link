@@ -747,7 +747,7 @@ async def test_search_empty_filtered_results_probe_unfiltered_once() -> None:
     from unittest.mock import MagicMock
 
     repo = MagicMock()
-    repo.search_passages = AsyncMock(side_effect=[[], [_brief_row("NBK1:0001", "**hit**")]])
+    repo.search_passages = AsyncMock(side_effect=[[], [], [_brief_row("NBK1:0001", "**hit**")]])
     repo.active_embedding_table = AsyncMock(return_value="t")
     repo.dense_scores_for_passages = AsyncMock(return_value={})
     repo._dense_candidates_filtered = AsyncMock(return_value=[])
@@ -767,9 +767,11 @@ async def test_search_empty_filtered_results_probe_unfiltered_once() -> None:
     assert diag["lexical_candidate_count"] == 0
     assert diag["unfiltered_lexical_count"] == 1
     assert "section-filter-drops-all" in diag["suggestions"]
-    assert repo.search_passages.call_count == 2
-    first_call, second_call = repo.search_passages.call_args_list
+    assert repo.search_passages.call_count == 3
+    first_call, candidate_call, second_call = repo.search_passages.call_args_list
     assert first_call.kwargs["sections"] == ["management"]
+    assert candidate_call.kwargs["sections"] == ["management"]
+    assert candidate_call.kwargs["gene_symbol"] == "BRCA1"
     assert second_call.kwargs["gene_symbol"] is None
     assert second_call.kwargs["nbk_id"] is None
     assert second_call.kwargs["sections"] is None
@@ -788,7 +790,9 @@ async def test_search_nonempty_filtered_results_do_not_probe_unfiltered() -> Non
         )
 
     assert resp.status_code == 200
-    assert repo.search_passages.call_count == 1
+    assert repo.search_passages.call_count == 2
+    _, candidate_call = repo.search_passages.call_args_list
+    assert candidate_call.kwargs["gene_symbol"] == "BRCA1"
 
 
 @pytest.mark.asyncio

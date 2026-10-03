@@ -7,7 +7,6 @@ boot). Set GENEREVIEW_EAGER_LOAD_BGE=true to use the real SentenceTransformer.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import re
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Literal, cast, get_args
@@ -36,6 +35,11 @@ from genereview_link.models.genereview_models import (
 )
 from genereview_link.models.sections import SECTION_NAMES, SectionName, canonicalize_nbk_id
 from genereview_link.retrieval.embeddings import EmbeddingProvider
+from genereview_link.retrieval.lexical_ranking import (
+    augment_primary_gene_candidates,
+    rank_lexical_candidates,
+)
+from genereview_link.retrieval.query_gene import apply_query_gene_context
 from genereview_link.retrieval.repository import GeneReviewRepository, LexicalPassageRow, PassageRow
 from genereview_link.retrieval.rerank import (
     SECTION_PRIORITY,
@@ -417,6 +421,19 @@ async def search_passages(
             )
         )
         lex_rows, dense_rows = await asyncio.gather(lexical_task, dense_task)
+        lex_rows = await augment_primary_gene_candidates(
+            repo,
+            lex_rows,
+            q,
+            explicit_gene=gene,
+            nbk_id=nbk_id,
+            sections=list(sections_tuple) if sections_tuple else None,
+            heading_path_contains=heading_path_contains,
+            brief=(mode == "brief"),
+            snippet_max_fragments=snippet_max_fragments,
+            snippet_max_words=snippet_max_words,
+            limit=k_parallel,
+        )
 
         # Build dense_scores dict from dense candidates.
         dense_scores = {
@@ -437,7 +454,6 @@ async def search_passages(
 
         # Build LexicalPassageRow objects for dense-only candidates.
         # These have zero lexical scores so they compete only via dense rank in RRF.
-        # Set primary_gene_match=True when the queried gene is in primary_gene_symbols.
         dense_only_rows: list[LexicalPassageRow] = [
             LexicalPassageRow(
                 passage=p,
@@ -447,22 +463,13 @@ async def search_passages(
                 recall_overlap_count=0,
                 lexical_rank=0.0,
                 snippet=None,
-                primary_gene_match=bool(gene and gene in p.primary_gene_symbols),
             )
             for pid in dense_only_ids
             if (p := dense_only_passages.get(pid)) is not None
         ]
 
-        # Annotate lexical rows with primary_gene_match for ranker boost.
-        lex_rows = [
-            dataclasses.replace(
-                r,
-                primary_gene_match=bool(gene and gene in r.passage.primary_gene_symbols),
-            )
-            for r in lex_rows
-        ]
-
         lex = list(lex_rows) + dense_only_rows
+        lex = apply_query_gene_context(lex, q, explicit_gene=gene)
 
     else:
         raw_lex = await repo.search_passages(
@@ -471,22 +478,32 @@ async def search_passages(
             nbk_id=nbk_id,
             sections=list(sections_tuple) if sections_tuple else None,
             heading_path_contains=heading_path_contains,
-            limit=max(limit * 3, 50),
+            limit=k_parallel,
             brief=(mode == "brief"),
             snippet_max_fragments=snippet_max_fragments,
             snippet_max_words=snippet_max_words,
         )
-        lex = [
-            dataclasses.replace(
-                r,
-                primary_gene_match=bool(gene and gene in r.passage.primary_gene_symbols),
+        if effective_rerank == "lexical":
+            raw_lex = await augment_primary_gene_candidates(
+                repo,
+                raw_lex,
+                q,
+                explicit_gene=gene,
+                nbk_id=nbk_id,
+                sections=list(sections_tuple) if sections_tuple else None,
+                heading_path_contains=heading_path_contains,
+                brief=(mode == "brief"),
+                snippet_max_fragments=snippet_max_fragments,
+                snippet_max_words=snippet_max_words,
+                limit=k_parallel,
             )
-            for r in raw_lex
-        ]
+        lex = apply_query_gene_context(raw_lex, q, explicit_gene=gene)
 
     if effective_rerank == "off":
         # Truly raw lexical order from the repo (no section_priority tiebreak).
         ranked = list(lex)
+    elif effective_rerank == "lexical":
+        ranked = rank_lexical_candidates(lex, q, explicit_gene=gene)
     else:
         ranked, _diag = rerank_with_embeddings(lex, dense_scores, query_intents=query_intents)
     ranked = ranked[:limit]

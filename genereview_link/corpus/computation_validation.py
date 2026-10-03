@@ -6,7 +6,8 @@ import hashlib
 import json
 import re
 
-from genereview_link.corpus.pg_client import PG18_IMAGE
+from genereview_link.corpus.pg_client import is_supported_pg_client_image
+from genereview_link.corpus.postgres_identity import is_supported_pgvector_runtime
 from genereview_link.retrieval.model_identity import (
     BGE_MODEL_FILES,
     BGE_MODEL_NAME,
@@ -101,10 +102,10 @@ def validate_computation_provenance(
         not isinstance(database, dict)
         or set(database)
         != {"client_image", "client_major", "server_version_num", "server_major", "pgvector"}
-        or database["client_image"] != PG18_IMAGE
+        or not is_supported_pg_client_image(database["client_image"])
         or database["client_major"] != "18"
         or database["server_major"] != "18"
-        or database["pgvector"] != "0.8.2"
+        or not is_supported_pgvector_runtime(database["pgvector"])
         or not re.fullmatch(r"18[0-9]{4}", str(database["server_version_num"]))
     ):
         raise ValueError("computation PostgreSQL identity is invalid")

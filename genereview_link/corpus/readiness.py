@@ -9,7 +9,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from genereview_link.corpus.computation_runs import load_active_computation
-from genereview_link.corpus.evaluation import canonical_json, evaluate_connection
+from genereview_link.corpus.evaluation import (
+    canonical_json,
+    evaluate_connection,
+    evaluation_algorithm_from_manifest,
+)
 from genereview_link.corpus.semantic_identity import collect_content_identity
 from genereview_link.db.locks import CORPUS_WRITE_LOCK_KEY
 
@@ -219,7 +223,9 @@ async def write_release_readiness(
             content_identity=content_identity,
             computation=computation,
         )
-        metrics = await evaluate_connection(connection)
+        metrics = await evaluate_connection(
+            connection, algorithm=evaluation_algorithm_from_manifest(manifest)
+        )
         query_digest = hashlib.sha256(canonical_json(metrics)).hexdigest()
         payload = build_readiness_payload(
             manifest,

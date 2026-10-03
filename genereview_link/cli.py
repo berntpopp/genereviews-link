@@ -435,6 +435,21 @@ def corpus_restore() -> None:
         write it unless the artifact manifest's corpus identity equals the rows that are
         really in the database. Configuration alone can never produce this row.
         """
+        from genereview_link.corpus.postgres_identity import require_database_pgvector_restore
+
+        postgres_identity = bundle.manifest.get("postgres")
+        source_pgvector = (
+            str(postgres_identity.get("pgvector_version", ""))
+            if isinstance(postgres_identity, dict)
+            else ""
+        )
+        try:
+            await require_database_pgvector_restore(pool, source_pgvector)
+        except ValueError as error:
+            raise ReadinessError(
+                "corpus pgvector source/runtime pair is not a reviewed restore path: "
+                f"{source_pgvector!r} ({error})"
+            ) from error
         digest = bundle.dump_sha256 if seed_path.is_dir() else sha256_file(seed_path)
         identity = await record_data_identity(
             pool,

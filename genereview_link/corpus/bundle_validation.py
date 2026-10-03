@@ -9,6 +9,7 @@ from typing import Any
 import asyncpg
 
 from genereview_link.corpus.jsonb import JsonbColumnError, json_object
+from genereview_link.corpus.postgres_identity import is_supported_pgvector_runtime
 from genereview_link.corpus.schema_identity import (
     EXPECTED_CONTROL_MIGRATIONS,
     EXPECTED_DATA_MIGRATIONS,
@@ -99,8 +100,8 @@ async def validate_database_ready(
         )
         if actual_pg_major != "18":
             errors.append(f"PostgreSQL major {actual_pg_major} is not the reviewed major 18")
-        if actual_pgvector != "0.8.2":
-            errors.append(f"pgvector {actual_pgvector!r} is not the reviewed version 0.8.2")
+        if not is_supported_pgvector_runtime(actual_pgvector):
+            errors.append(f"pgvector {actual_pgvector!r} is not a reviewed runtime version")
         active_corpus = await conn.fetchrow(
             "select version, source_capture, ingest_run_id, embedding_run_id "
             "from public.genereview_corpus_version where is_active"
