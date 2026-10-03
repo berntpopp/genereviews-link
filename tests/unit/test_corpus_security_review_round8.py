@@ -47,6 +47,7 @@ def test_legacy_restore_is_explicitly_compatible_but_never_controller_ready() ->
     assert "seed_identity_mode" in restore
     assert "legacy" in cli and "verified-v1" in cli
     assert "write_release_readiness" in cli and "manifest_version" in cli
+    assert 'bundle.manifest.get("manifest_version") not in {"3", "4"}' in cli
     assert seed_identity_mode("sha256:" + "a" * 64, "", "", "") == "legacy"
     assert seed_identity_mode("", "b" * 64, "c" * 64, "d" * 64) == "direct"
     with pytest.raises(ArchivePolicyError, match="incomplete"):

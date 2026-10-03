@@ -551,7 +551,7 @@ class TestBundleManifestModel:
         data: dict[str, Any] = asdict(m)
         assert data["corpus_version"] == "2026-04-01"
         assert data["chapter_count"] == 842
-        assert data["manifest_version"] == "1"
+        assert data["manifest_version"] == "4"
         assert data["bundle_format"] == "tar.gz"
 
 

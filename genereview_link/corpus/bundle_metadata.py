@@ -39,7 +39,8 @@ class BundleDatabaseFacts:
     source_capture: dict[str, object]
 
     @property
-    def app_git_sha(self) -> str:
+    def computation_app_git_sha(self) -> str:
+        """Return the immutable run revision, not the bundle producer revision."""
         return str(self.computation["app_git_sha"])
 
     @property

@@ -281,7 +281,12 @@ jobs:
             "$RUNNER_TEMP/active_source_identity.json" >/dev/null
           model_revision="$(jq -er '.computation.provenance.model.revision' "$VERIFY_DIR/manifest.json")"
           test "$(psql "$DATABASE_URL" -At -v ON_ERROR_STOP=1 -c "select count(distinct model_revision)=1 and min(model_revision)='$model_revision' from genereview.genereview_embeddings_bge384")" = t
-          test "$(sha256sum uv.lock | cut -d' ' -f1)" = "$(jq -er '.computation.provenance.uv_lock_sha256' "$VERIFY_DIR/manifest.json")"
+          computation_sha="$(jq -er '.computation.app_git_sha' "$VERIFY_DIR/manifest.json")"
+          [[ "$computation_sha" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags --depth=1 origin "$computation_sha"
+          git show "$computation_sha:uv.lock" > "$RUNNER_TEMP/computation-uv.lock"
+          test "$(sha256sum "$RUNNER_TEMP/computation-uv.lock" | cut -d' ' -f1)" = \
+            "$(jq -er '.computation.provenance.uv_lock_sha256' "$VERIFY_DIR/manifest.json")"
           DATABASE_URL="$DATABASE_URL" uv run python - "$VERIFY_DIR/manifest.json" <<'PY'
           import asyncio, json, sys
           from genereview_link.db.pool import create_pool

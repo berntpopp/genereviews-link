@@ -97,6 +97,9 @@ def test_verifier_rederives_every_manifest_claim_from_the_restored_database() ->
     assert "active_source_identity" in scripts
     assert "model_revision" in scripts
     assert "side_data" in scripts
+    assert "computation_sha=\"$(jq -er '.computation.app_git_sha'" in scripts
+    assert 'git show "$computation_sha:uv.lock"' in scripts
+    assert 'sha256sum "$RUNNER_TEMP/computation-uv.lock"' in scripts
     assert "collect_content_identity" in scripts
     assert "load_active_computation" in scripts
     assert "evaluate_connection" in scripts

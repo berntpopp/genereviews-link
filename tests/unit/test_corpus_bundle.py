@@ -32,7 +32,7 @@ def test_sha256_file(tmp_path: Path) -> None:
 
 def test_bundle_manifest_defaults() -> None:
     m = BundleManifest()
-    assert m.manifest_version == "1"
+    assert m.manifest_version == "4"
     assert m.bundle_format == "tar.gz"
     assert m.embedding["dimension"] == 384
     assert m.postgres["major_version"] == "18"
@@ -130,6 +130,8 @@ def test_data_only_bundle_has_canonical_metadata_and_exact_checksum_set(tmp_path
     }
     metadata = json.loads((result / "manifest.json").read_text())
     assert "created_at" not in metadata
+    assert metadata["manifest_version"] == "4"
+    assert metadata["provenance_model"] == "bundle-producer-and-historical-computation-v1"
     assert metadata["bundle_format"] == "postgresql-custom-data-only"
     assert metadata["checksums"] == {"corpus.dump": hashlib.sha256(b"data-only-pgdump").hexdigest()}
     assert (result / "SHA256SUMS").read_text() == (

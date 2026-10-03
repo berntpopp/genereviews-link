@@ -318,7 +318,12 @@ def _validate_prior_artifact(prior: object, *, prior_manifest: Path) -> None:
     }
     if (
         not isinstance(prior_record, dict)
-        or prior_record.get("manifest_version") != "3"
+        or prior_record.get("manifest_version") not in {"3", "4"}
+        or (
+            prior_record.get("manifest_version") == "4"
+            and prior_record.get("provenance_model")
+            != "bundle-producer-and-historical-computation-v1"
+        )
         or prior_record.get("corpus_release_id") != prior["corpus_release_id"]
         or prior_record.get("app_git_sha") != prior["app_git_sha"]
         or not isinstance(prior_content, Mapping)

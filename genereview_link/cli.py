@@ -532,8 +532,10 @@ def corpus_restore() -> None:
             if not restored:
                 raise ArchivePolicyError("restore completed with no active corpus version")
             if identity_mode == "direct":
-                if bundle.manifest.get("manifest_version") != "3":
-                    raise ReadinessError("direct corpus release requires a manifest-v3 identity")
+                if bundle.manifest.get("manifest_version") not in {"3", "4"}:
+                    raise ReadinessError(
+                        "direct corpus release requires a reviewed manifest identity"
+                    )
                 await write_release_readiness(
                     pool,
                     bundle.manifest,

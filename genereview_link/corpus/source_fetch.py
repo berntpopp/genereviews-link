@@ -210,8 +210,13 @@ def prior_artifact_from(prior_manifest: Path) -> dict[str, object]:
         manifest = load_strict_json(manifest_bytes, max_bytes=MAX_CONTROL_BYTES)
     except StrictJsonError as error:
         raise SourceFetchError("prior manifest is not valid JSON") from error
-    if not isinstance(manifest, dict) or manifest.get("manifest_version") != "3":
-        raise SourceFetchError("prior manifest is not a manifest-v3 corpus release")
+    if not isinstance(manifest, dict) or manifest.get("manifest_version") not in {"3", "4"}:
+        raise SourceFetchError("prior manifest is not a reviewed corpus release")
+    if (
+        manifest["manifest_version"] == "4"
+        and manifest.get("provenance_model") != "bundle-producer-and-historical-computation-v1"
+    ):
+        raise SourceFetchError("prior manifest provenance model is unsupported")
     content = manifest.get("content_identity")
     if not isinstance(content, Mapping):
         raise SourceFetchError("prior manifest lacks a logical content identity")

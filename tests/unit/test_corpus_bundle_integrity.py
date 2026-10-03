@@ -149,13 +149,13 @@ def test_a_manifest_field_of_the_wrong_type_is_refused(tmp_path: Path) -> None:
         verify_data_only_bundle(bundle)
 
 
-def test_only_a_v3_data_only_manifest_is_accepted(tmp_path: Path) -> None:
+def test_manifest_must_use_a_reviewed_data_only_shape(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
     payload = json.loads((bundle / "manifest.json").read_text())
     payload["bundle_format"] = "tar.gz"
     _reseal(bundle, payload)
 
-    with pytest.raises(BundleIntegrityError, match="not a v3 data-only bundle"):
+    with pytest.raises(BundleIntegrityError, match="not a reviewed data-only bundle"):
         verify_data_only_bundle(bundle)
 
 

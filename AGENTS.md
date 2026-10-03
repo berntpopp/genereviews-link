@@ -175,7 +175,7 @@ baked-in uid/gid (`docker/Dockerfile`: `groupadd --gid 999 app` / `useradd --uid
   `genereview_link/db/restore.py`). Two env keys in the server's `.env.docker` point a
   deployment at that published bundle: `CORPUS_RELEASE_TAG` (the exact release tag) and
   `CORPUS_BUNDLE_SHA256` (the legacy bundle digest published with it — a future
-  direct/manifest-v3 release instead pins `CORPUS_DUMP_SHA256` + `CORPUS_MANIFEST_SHA256` +
+  direct/manifest-v4 release instead pins `CORPUS_DUMP_SHA256` + `CORPUS_MANIFEST_SHA256` +
   `CORPUS_CHECKSUMS_SHA256`). Both facts are also recorded in `container-release.json`
   (`data.release_tag`, `data.digest`) so CI and the fleet controller agree on which corpus
   is pinned. See [docs/deployment.md § Corpus restore](docs/deployment.md#corpus-restore-production)

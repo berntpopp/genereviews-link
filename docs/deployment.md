@@ -98,7 +98,7 @@ into the Postgres volume by the `genereview-corpus-restore` init sidecar:
   required, with `CORPUS_SEED_PATH=/seed`. A legacy single-tarball pin
   (`corpus-data-2026-07-13-r1` and earlier) uses `CORPUS_BUNDLE_SHA256` instead. No
   source-only change may point production at unpublished assets.
-- Both shapes verify every byte before restore. Only a manifest-v3 direct release may write the
+- Both shapes verify every byte before restore. Only a reviewed manifest-v3/v4 direct release may write the
   readiness record, which identifies the verified inner `corpus.dump` and the configured release
   tag, manifest digest, and checksums digest. Every later start must match that complete direct tuple;
   changing any configured direct asset or tag fails closed instead of accepting stale readiness.
