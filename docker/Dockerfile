@@ -2,7 +2,7 @@
 
 # Exact client binaries for data-only dump/restore compatibility. The same immutable
 # PostgreSQL 18/pgvector image is used by corpus build and verification workflows.
-FROM pgvector/pgvector:0.8.6-pg18@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a AS pg18-client
+FROM pgvector/pgvector:0.8.7-pg18@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11 AS pg18-client
 
 # --- Builder Stage ---
 FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016 AS builder
