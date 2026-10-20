@@ -178,6 +178,12 @@ RUN rm -rf /opt/venv/lib/python3.14/site-packages/onnxruntime/datasets \
            /usr/lib/x86_64-linux-gnu/perl/5.40.1/Data \
            /usr/lib/x86_64-linux-gnu/perl/5.40.1/auto/Data \
            /usr/local/lib/python3.14/ensurepip \
+           /usr/local/lib/python3.14/site-packages/pip \
+           /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
+           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.14 \
+           /opt/venv/lib/python3.14/site-packages/pip \
+           /opt/venv/lib/python3.14/site-packages/pip-*.dist-info \
+           /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.14 \
            /usr/share/man \
            /usr/share/postgresql/*/man \
            /root/.cache/pip \
