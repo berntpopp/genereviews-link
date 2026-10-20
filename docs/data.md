@@ -138,17 +138,20 @@ the **same** model. The corpus is embedded with `BAAI/bge-small-en-v1.5` (revisi
 
 ### PostgreSQL and corpus bundle identity
 
-The serving database runs PostgreSQL 18. The pinned pgvector image currently installs
-extension 0.8.6 on a new volume. A corpus bundle exported with runtime extension 0.8.2 can
-be restored onto 0.8.6; a bundle exported on 0.8.6 cannot be restored onto 0.8.2. The
-restore path checks this direction before recording runtime data identity. Bundle metadata
+The serving database runs PostgreSQL 18. The pinned pgvector image (`0.8.7-pg18`, the same
+digest for the server sidecar, the in-image client tools, the client wrapper and the
+verification workflow -- one guard test keeps them identical) installs extension 0.8.7 on a
+new volume; an existing volume keeps its recorded extension version until
+`ALTER EXTENSION vector UPDATE`. Restore is forward-only: a bundle exported on 0.8.2 or
+0.8.6 can be restored onto 0.8.6 or 0.8.7 (0.8.2 also onto 0.8.2), never onto an older
+runtime. The restore path checks this direction before recording runtime data identity. Bundle metadata
 records the actual extension present at export time.
 
 Embedding computation provenance is separate: it records the PostgreSQL client image,
 server version, and pgvector version used when the corpus was ingested or embedded. Those
-historical facts remain unchanged after a data-only restore. The exact prior 0.8.2 client
-digest is retained for verification of the published September bundle; new runs use the
-current digest-pinned 0.8.6 PostgreSQL 18 client. Both client images are PostgreSQL 18
+historical facts remain unchanged after a data-only restore. The exact prior 0.8.2 and 0.8.6
+client digests are retained for verification of the published September and October bundles;
+new runs use the current digest-pinned 0.8.7 PostgreSQL 18 client. All three client images are PostgreSQL 18
 tools and may connect to either reviewed PostgreSQL 18 server runtime.
 
 ### How the model reaches the container

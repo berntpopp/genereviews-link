@@ -4,6 +4,19 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.11] - 2026-10-20
+
+### Fixed
+
+- Aligned every pgvector reference on the dump/restore path to `pgvector/pgvector:0.8.7-pg18`
+  (`sha256:2358fcba…`): the deployed PostgreSQL sidecar (`docker/docker-compose.yml`,
+  `container-release.json` deployed sidecars), the corpus verification workflow, the PG18
+  client wrapper and `pg_client.PG18_IMAGE`. 5.2.10 moved only the Dockerfile client stage.
+- Restore compatibility now accepts the 0.8.7 runtime (forward-only: 0.8.2/0.8.6 bundles
+  restore onto 0.8.7, never the reverse). The published `corpus-data-2026-10-03-r1` bundle
+  (exported on 0.8.6) stays valid; its 0.8.6 client digest remains a reviewed identity.
+- New guard test fails when the client and sidecar pgvector digests diverge.
+
 ## [5.2.10] - 2026-10-20
 
 ### Security
