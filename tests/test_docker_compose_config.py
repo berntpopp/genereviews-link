@@ -197,7 +197,7 @@ def test_container_release_json_declares_the_deployed_overlay() -> None:
     sidecars = {sidecar["name"]: sidecar["image"] for sidecar in service["deployed_sidecars"]}
     assert sidecars["postgres"] == (
         "docker.io/pgvector/pgvector@"
-        "sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a"
+        "sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11"
     )
 
 
@@ -216,3 +216,28 @@ def test_deployed_overlay_every_service_declares_a_numeric_user() -> None:
 
     for name, service in config["services"].items():
         assert numeric_user.match(str(service.get("user"))), f"{name} has no numeric user"
+
+
+def test_pgvector_client_and_server_images_are_one_pin() -> None:
+    """Every dump/restore participant must run the same pgvector image digest.
+
+    Dependabot bumps only the Dockerfile; this fails until the sidecar, workflow, client
+    wrapper and reviewed client identity move with it.
+    """
+    from genereview_link.corpus.pg_client import PG18_IMAGE
+
+    sources = [
+        "docker/Dockerfile",
+        "docker/docker-compose.yml",
+        "container-release.json",
+        ".github/workflows/verify-corpus-bundle.yml",
+        "scripts/pg18-client",
+    ]
+    digests = {
+        source: set(re.findall(r"pgvector/pgvector[^@\s\"']*@(sha256:[0-9a-f]{64})", text))
+        for source in sources
+        for text in [(REPO_ROOT / source).read_text()]
+    }
+    digests["pg_client.PG18_IMAGE"] = {PG18_IMAGE.split("@", 1)[1]}
+    assert all(len(found) == 1 for found in digests.values()), digests
+    assert len(set().union(*digests.values())) == 1, digests
