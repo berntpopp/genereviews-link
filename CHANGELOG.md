@@ -4,6 +4,12 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.14] - 2026-10-20
+
+### Security
+
+- certifi 2026.10.19: drops emSign root CAs whose intermediate CA keys were compromised (critical).
+
 ## [5.2.13] - 2026-10-20
 
 ### Changed
