@@ -4,6 +4,19 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.10] - 2026-10-20
+
+### Security
+
+- Upgrade `mcp` 1.29.0 to 1.30.0 to fix the open Dependabot alert on `mcp` (first patched version 1.30.0).
+- Upgrade transitive `fsspec` 2026.4.0 to 2026.9.0 to clear the Trivy HIGH finding CVE-2026-104851 that fails the container image gate (fixed in 2026.6.0).
+
+### Changed
+
+- Consolidated Dependabot updates: `pgvector/pgvector` 0.8.7-pg18 (PG18 client image), `hatchling` 1.32.4,
+  `astral-sh/setup-uv` v10.3.0, `github/codeql-action` v4.38.3.
+- Re-pinned the reusable container CI/release workflows to `genefoundry-router` v0.10.4.
+
 ## [5.2.9] - 2026-10-03
 
 - Adopt the immutable GeneReviews corpus release `corpus-data-2026-10-03-r1` with v4 producer/computation provenance.
