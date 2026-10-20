@@ -4,8 +4,11 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.13] - 2026-10-20
+
 ### Changed
 
+- Runtime moves from Python 3.12 to 3.14 (container base image, `container-release.json` allowlist paths); pip is removed from the runtime image.
 - Unify on Python 3.14 (requires-python, tooling, CI single-version matrix, router reusable workflows v0.10.5); cancel superseded PR runs; Dependabot no longer proposes Python minor jumps.
 
 ## [5.2.12] - 2026-10-20
