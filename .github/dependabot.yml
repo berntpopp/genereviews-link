@@ -40,3 +40,6 @@ updates:
       # cannot see. A sidecar image change needs a reviewed deploy-controller exception, so it
       # moves by hand, all references at once (guard: test_pgvector_client_and_server_images_are_one_pin).
       - dependency-name: "pgvector/pgvector"
+      # Python minor upgrades are a deliberate fleet migration (all repos move together).
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

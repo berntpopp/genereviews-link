@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_release_dependencies_use_reviewed_immutable_pins() -> None:
     assert (
-        "python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016"
+        "python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4"
         in (ROOT / "docker/Dockerfile").read_text()
     )
     assert "apt-get upgrade -y" in (ROOT / "docker/Dockerfile").read_text()
@@ -16,11 +16,11 @@ def test_release_dependencies_use_reviewed_immutable_pins() -> None:
         in (ROOT / ".github/workflows/ci.yml").read_text()
     )
     assert (
-        "_container-ci.yml@88b565f1b6047f47fd58138cbf041994bb137c03"
+        "_container-ci.yml@e8931f0114bba3568517d1c7b1f990bea2be31af"
         in (ROOT / ".github/workflows/container-ci.yml").read_text()
     )
     assert (
-        "_container-release.yml@88b565f1b6047f47fd58138cbf041994bb137c03"
+        "_container-release.yml@e8931f0114bba3568517d1c7b1f990bea2be31af"
         in (ROOT / ".github/workflows/container-release.yml").read_text()
     )
     assert (

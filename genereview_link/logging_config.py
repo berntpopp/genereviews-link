@@ -253,7 +253,7 @@ class PerformanceLogger:
         self.operation = operation
         self.start_time: float | None = None
 
-    def __enter__(self) -> "PerformanceLogger":
+    def __enter__(self) -> PerformanceLogger:
         """Enter the context and start timing."""
         self.start_time = time.time()
         self.logger.debug("Operation started")

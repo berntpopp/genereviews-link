@@ -172,7 +172,7 @@ def _load_manifest(path: Path) -> dict[str, object]:
         return {}
     try:
         value = load_strict_json(path.read_bytes(), max_bytes=MAX_CONTROL_BYTES)
-    except (StrictJsonError, OSError):
+    except StrictJsonError, OSError:
         return {}
     if not isinstance(value, dict) or value.get("format") != SNAPSHOT_FORMAT:
         return {}

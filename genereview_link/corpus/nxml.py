@@ -313,7 +313,7 @@ def _parse_pub_date(el: etree._Element | None) -> date | None:
         m = int(_text(el.find("month")) or "1")
         d = int(_text(el.find("day")) or "1")
         return date(y, m, d)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None
 
 
@@ -399,7 +399,7 @@ def _walk_section(
     max_tokens: int,
     overlap_tokens: int,
     audit: ChapterIngestAudit,
-) -> Generator[tuple[list[PassageRecord], int, int], None, None]:
+) -> Generator[tuple[list[PassageRecord], int, int]]:
     """Recursive section walker.
 
     Yields (passages_for_this_call, next_global_chunk, next_table_ordinal).

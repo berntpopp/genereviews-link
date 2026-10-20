@@ -5,7 +5,7 @@
 FROM pgvector/pgvector:0.8.6-pg18@sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a AS pg18-client
 
 # --- Builder Stage ---
-FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016 AS builder
+FROM python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4 AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -33,7 +33,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.7@sha256:1e26f9a868360eeb32500a35e05787ffff
 RUN uv sync --frozen --no-dev --active --extra cpu
 
 # --- Prepared Stage ---
-FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016 AS prepared
+FROM python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4 AS prepared
 
 # Keep the PostgreSQL client ABI, binaries, and versioned runtime data together with the
 # exact digest-pinned PG18/pgvector build stage.  Production must not resolve a mutable
@@ -135,55 +135,61 @@ RUN /usr/local/bin/python -m pip install --no-cache-dir pip==26.1 && \
 # codec. The full corpus package is offline build/publisher tooling and is not admitted to
 # the public image. A small exact subset is retained below for the no-egress direct-restore
 # readiness proof; every retained path is reviewed in container-release.json.
-RUN rm -rf /opt/venv/lib/python3.12/site-packages/onnxruntime/datasets \
-           /opt/venv/lib/python3.12/site-packages/onnxruntime/transformers \
-           /opt/venv/lib/python3.12/site-packages/onnxruntime/quantization \
-           /opt/venv/lib/python3.12/site-packages/nvidia \
-           /opt/venv/lib/python3.12/site-packages/nvidia_*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/triton \
-           /opt/venv/lib/python3.12/site-packages/triton-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/cuda \
-           /opt/venv/lib/python3.12/site-packages/cuda_*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/functorch \
-           /opt/venv/lib/python3.12/site-packages/hf_xet \
-           /opt/venv/lib/python3.12/site-packages/hf_xet-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/huggingface_hub \
-           /opt/venv/lib/python3.12/site-packages/huggingface_hub-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/joblib \
-           /opt/venv/lib/python3.12/site-packages/joblib-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/mpmath \
-           /opt/venv/lib/python3.12/site-packages/mpmath-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/networkx \
-           /opt/venv/lib/python3.12/site-packages/networkx-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/safetensors \
-           /opt/venv/lib/python3.12/site-packages/safetensors-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/scipy \
-           /opt/venv/lib/python3.12/site-packages/scipy-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/scipy.libs \
-           /opt/venv/lib/python3.12/site-packages/sentence_transformers \
-           /opt/venv/lib/python3.12/site-packages/sentence_transformers-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/sklearn \
-           /opt/venv/lib/python3.12/site-packages/scikit_learn-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/sympy \
-           /opt/venv/lib/python3.12/site-packages/sympy-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/threadpoolctl.py \
-           /opt/venv/lib/python3.12/site-packages/threadpoolctl-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/torch \
-           /opt/venv/lib/python3.12/site-packages/torch-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/torchgen \
-           /opt/venv/lib/python3.12/site-packages/transformers \
-           /opt/venv/lib/python3.12/site-packages/transformers-*.dist-info \
-           /opt/venv/lib/python3.12/site-packages/docutils/writers/odf_odt \
-           /opt/venv/lib/python3.12/site-packages/pkg_resources/tests \
+RUN rm -rf /opt/venv/lib/python3.14/site-packages/onnxruntime/datasets \
+           /opt/venv/lib/python3.14/site-packages/onnxruntime/transformers \
+           /opt/venv/lib/python3.14/site-packages/onnxruntime/quantization \
+           /opt/venv/lib/python3.14/site-packages/nvidia \
+           /opt/venv/lib/python3.14/site-packages/nvidia_*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/triton \
+           /opt/venv/lib/python3.14/site-packages/triton-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/cuda \
+           /opt/venv/lib/python3.14/site-packages/cuda_*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/functorch \
+           /opt/venv/lib/python3.14/site-packages/hf_xet \
+           /opt/venv/lib/python3.14/site-packages/hf_xet-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/huggingface_hub \
+           /opt/venv/lib/python3.14/site-packages/huggingface_hub-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/joblib \
+           /opt/venv/lib/python3.14/site-packages/joblib-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/mpmath \
+           /opt/venv/lib/python3.14/site-packages/mpmath-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/networkx \
+           /opt/venv/lib/python3.14/site-packages/networkx-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/safetensors \
+           /opt/venv/lib/python3.14/site-packages/safetensors-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/scipy \
+           /opt/venv/lib/python3.14/site-packages/scipy-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/scipy.libs \
+           /opt/venv/lib/python3.14/site-packages/sentence_transformers \
+           /opt/venv/lib/python3.14/site-packages/sentence_transformers-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/sklearn \
+           /opt/venv/lib/python3.14/site-packages/scikit_learn-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/sympy \
+           /opt/venv/lib/python3.14/site-packages/sympy-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/threadpoolctl.py \
+           /opt/venv/lib/python3.14/site-packages/threadpoolctl-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/torch \
+           /opt/venv/lib/python3.14/site-packages/torch-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/torchgen \
+           /opt/venv/lib/python3.14/site-packages/transformers \
+           /opt/venv/lib/python3.14/site-packages/transformers-*.dist-info \
+           /opt/venv/lib/python3.14/site-packages/docutils/writers/odf_odt \
+           /opt/venv/lib/python3.14/site-packages/pkg_resources/tests \
            /usr/lib/x86_64-linux-gnu/perl/5.40.1/Data \
            /usr/lib/x86_64-linux-gnu/perl/5.40.1/auto/Data \
-           /usr/local/lib/python3.12/ensurepip \
+           /usr/local/lib/python3.14/ensurepip \
+           /usr/local/lib/python3.14/site-packages/pip \
+           /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
+           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.14 \
+           /opt/venv/lib/python3.14/site-packages/pip \
+           /opt/venv/lib/python3.14/site-packages/pip-*.dist-info \
+           /opt/venv/bin/pip /opt/venv/bin/pip3 /opt/venv/bin/pip3.14 \
            /usr/share/man \
            /usr/share/postgresql/*/man \
            /root/.cache/pip \
-    && find /opt/venv/lib/python3.12/site-packages/numpy -type d -name tests -prune -exec rm -rf '{}' + \
+    && find /opt/venv/lib/python3.14/site-packages/numpy -type d -name tests -prune -exec rm -rf '{}' + \
     && rm -rf /home/app/web/genereview_link \
-    && package_root="/opt/venv/lib/python3.12/site-packages/genereview_link" \
+    && package_root="/opt/venv/lib/python3.14/site-packages/genereview_link" \
     && LC_ALL=C sort /tmp/runtime-prune-paths.txt > /tmp/runtime-prune-paths.sorted \
     && cmp -s /tmp/runtime-prune-paths.txt /tmp/runtime-prune-paths.sorted \
     && while IFS= read -r relative; do \
@@ -193,7 +199,7 @@ RUN rm -rf /opt/venv/lib/python3.12/site-packages/onnxruntime/datasets \
        done < /tmp/runtime-prune-paths.txt \
     && while IFS= read -r relative; do test ! -e "$package_root/$relative"; done \
          < /tmp/runtime-prune-paths.txt \
-    && corpus_root="/opt/venv/lib/python3.12/site-packages/genereview_link/corpus" \
+    && corpus_root="/opt/venv/lib/python3.14/site-packages/genereview_link/corpus" \
     && LC_ALL=C sort /tmp/runtime-corpus-files.txt > /tmp/runtime-corpus-files.sorted \
     && cmp -s /tmp/runtime-corpus-files.txt /tmp/runtime-corpus-files.sorted \
     && while IFS= read -r relative; do test -n "$relative" && test -f "$corpus_root/$relative"; done \
@@ -209,7 +215,7 @@ RUN rm -rf /opt/venv/lib/python3.12/site-packages/onnxruntime/datasets \
     && rm -f /tmp/runtime-corpus-files.txt /tmp/runtime-corpus-files.sorted \
          /tmp/all-corpus-files.txt /tmp/admitted-corpus-files.txt \
          /tmp/runtime-prune-paths.txt /tmp/runtime-prune-paths.sorted \
-    && find /usr/local/lib/python3.12 /opt/venv /home/app/web -type d -name __pycache__ -prune -exec rm -rf '{}' +
+    && find /usr/local/lib/python3.14 /opt/venv /home/app/web -type d -name __pycache__ -prune -exec rm -rf '{}' +
 
 RUN find / -xdev -perm /6000 -exec chmod a-s '{}' + \
     && test -z "$(find / -xdev -perm /6000 -print -quit)"

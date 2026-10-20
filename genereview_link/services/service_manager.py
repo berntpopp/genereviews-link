@@ -4,7 +4,6 @@ import asyncio
 import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Optional
 
 from genereview_link.api.client_manager import get_client_manager
 from genereview_link.logging_config import get_logger
@@ -16,10 +15,10 @@ logger = get_logger(__name__)
 class ServiceManager:
     """Singleton manager for GeneReviewService instances with proper lifecycle management."""
 
-    _instance: Optional["ServiceManager"] = None
+    _instance: ServiceManager | None = None
     _lock = threading.Lock()
 
-    def __new__(cls) -> "ServiceManager":
+    def __new__(cls) -> ServiceManager:
         """Create or return the singleton instance."""
         if cls._instance is None:
             with cls._lock:
@@ -52,7 +51,7 @@ class ServiceManager:
         return self._service
 
     @asynccontextmanager
-    async def get_service_context(self) -> AsyncGenerator[GeneReviewService, None]:
+    async def get_service_context(self) -> AsyncGenerator[GeneReviewService]:
         """Context manager for getting service (for dependency injection)."""
         service = await self.get_service()
         try:
@@ -74,7 +73,7 @@ class ServiceManager:
 _service_manager: ServiceManager | None = None
 
 
-async def get_managed_service() -> AsyncGenerator[GeneReviewService, None]:
+async def get_managed_service() -> AsyncGenerator[GeneReviewService]:
     """Get managed service dependency for FastAPI."""
     service_manager = await get_service_manager()
     async with service_manager.get_service_context() as service:

@@ -124,7 +124,7 @@ class UnifiedServerManager:
         self._current_transport = "unknown"
 
     @asynccontextmanager
-    async def lifespan(self, app: FastAPI) -> AsyncGenerator[None, None]:
+    async def lifespan(self, app: FastAPI) -> AsyncGenerator[None]:
         """Manage application lifecycle for startup and shutdown."""
         await _initialize_state(app)
         try:
@@ -431,7 +431,7 @@ class UnifiedServerManager:
         original_lifespan = self.app.router.lifespan_context
 
         @asynccontextmanager
-        async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+        async def combined_lifespan(app: FastAPI) -> AsyncGenerator[None]:
             async with mcp_app.lifespan(app), original_lifespan(app):
                 yield
 

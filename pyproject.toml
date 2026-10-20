@@ -9,7 +9,7 @@ description = "A unified server providing REST API and MCP interfaces for NCBI G
 readme = "README.md"
 authors = [{ name = "Bernt Popp", email = "bernt.popp@charite.de" }]
 license = { text = "MIT" }
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -17,7 +17,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -127,7 +127,7 @@ packages = ["genereview_link"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py314"
 
 [tool.ruff.lint]
 extend-select = [
@@ -153,12 +153,14 @@ ignore = [
 quote-style = "double"
 indent-style = "space"
 line-ending = "lf"
+# Vendored byte-identical from genefoundry-router; its re-vendor is a separate rollout.
+exclude = ["tests/conformance/behaviour.py"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*" = ["S101", "T20"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
