@@ -4,20 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-SUPPORTED_PGVECTOR_RUNTIME_VERSIONS = frozenset({"0.8.2", "0.8.6", "0.8.7"})
+SUPPORTED_PGVECTOR_RUNTIME_VERSIONS = frozenset({"0.8.2", "0.8.6"})
 
-# Restore is forward-only: a bundle may restore onto the same or a newer reviewed runtime
-# (the 0.8.7 server image creates 0.8.7 on a new volume; an existing volume keeps 0.8.6
-# until `ALTER EXTENSION vector UPDATE`). Never onto an older one.
+# A corpus recorded under 0.8.2 can be restored by the current 0.8.6 server image.
+# A bundle emitted under 0.8.6 must not be restored onto the older 0.8.2 runtime.
 SUPPORTED_PGVECTOR_RESTORE_PAIRS = frozenset(
-    {
-        ("0.8.2", "0.8.2"),
-        ("0.8.2", "0.8.6"),
-        ("0.8.2", "0.8.7"),
-        ("0.8.6", "0.8.6"),
-        ("0.8.6", "0.8.7"),
-        ("0.8.7", "0.8.7"),
-    }
+    {("0.8.2", "0.8.2"), ("0.8.2", "0.8.6"), ("0.8.6", "0.8.6")}
 )
 
 

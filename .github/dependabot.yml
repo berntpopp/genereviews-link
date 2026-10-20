@@ -34,3 +34,9 @@ updates:
     labels:
       - "dependencies"
       - "docker"
+    ignore:
+      # The pgvector image is one pin shared by the Dockerfile client stage and the deployed
+      # Postgres sidecar (compose, container-release.json, scripts, workflow), which Dependabot
+      # cannot see. A sidecar image change needs a reviewed deploy-controller exception, so it
+      # moves by hand, all references at once (guard: test_pgvector_client_and_server_images_are_one_pin).
+      - dependency-name: "pgvector/pgvector"

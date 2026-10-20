@@ -136,7 +136,7 @@ def test_computation_provenance_captures_full_runtime_at_compute_time(
         }
     )
     computation_validation.validate_computation_provenance(provenance, app_git_sha="a" * 40)
-    database["pgvector"] = "0.8.8"
+    database["pgvector"] = "0.8.7"
     with pytest.raises(ValueError, match="PostgreSQL identity is invalid"):
         computation_validation.validate_computation_provenance(provenance, app_git_sha="a" * 40)
     database["pgvector"] = "0.8.2"
