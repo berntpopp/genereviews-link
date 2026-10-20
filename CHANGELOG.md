@@ -4,6 +4,19 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.12] - 2026-10-20
+
+### Fixed
+
+- Reverted the pgvector 0.8.7 move from 5.2.11: the deploy controller requires a separately
+  reviewed exception for any Postgres sidecar image change, and 0.8.7 only fixes IVFFlat
+  index builds and an `avg` edge case (this service uses HNSW only). The Dockerfile PG18
+  client stage, the deployed sidecar, the verification workflow, the client wrapper and
+  `pg_client.PG18_IMAGE` are now all the same `pgvector/pgvector:0.8.6-pg18@sha256:2ba9ca5f…`,
+  and the restore-compat set is back to its reviewed 0.8.2/0.8.6 pairs.
+- Dependabot ignores `pgvector/pgvector`; the guard test
+  `test_pgvector_client_and_server_images_are_one_pin` keeps every reference identical.
+
 ## [5.2.11] - 2026-10-20
 
 ### Fixed

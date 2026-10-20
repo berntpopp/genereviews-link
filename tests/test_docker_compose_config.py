@@ -197,7 +197,7 @@ def test_container_release_json_declares_the_deployed_overlay() -> None:
     sidecars = {sidecar["name"]: sidecar["image"] for sidecar in service["deployed_sidecars"]}
     assert sidecars["postgres"] == (
         "docker.io/pgvector/pgvector@"
-        "sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11"
+        "sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a"
     )
 
 
@@ -221,8 +221,8 @@ def test_deployed_overlay_every_service_declares_a_numeric_user() -> None:
 def test_pgvector_client_and_server_images_are_one_pin() -> None:
     """Every dump/restore participant must run the same pgvector image digest.
 
-    Dependabot bumps only the Dockerfile; this fails until the sidecar, workflow, client
-    wrapper and reviewed client identity move with it.
+    Dependabot could only ever bump the Dockerfile (it now ignores pgvector); any manual
+    bump must move the sidecar, workflow, client wrapper and reviewed client identity too.
     """
     from genereview_link.corpus.pg_client import PG18_IMAGE
 

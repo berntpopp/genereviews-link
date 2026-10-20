@@ -4,7 +4,6 @@ import pytest
 
 from genereview_link.corpus.pg_client import (
     PG18_IMAGE,
-    PREVIOUS_PG18_IMAGE,
     is_supported_pg_client_image,
 )
 from genereview_link.corpus.postgres_identity import (
@@ -20,7 +19,7 @@ OLD_CLIENT_IMAGE = (
 )
 
 
-@pytest.mark.parametrize("image", [PG18_IMAGE, PREVIOUS_PG18_IMAGE, OLD_CLIENT_IMAGE])
+@pytest.mark.parametrize("image", [PG18_IMAGE, OLD_CLIENT_IMAGE])
 def test_only_current_and_exact_historical_client_images_are_supported(image: str) -> None:
     assert is_supported_pg_client_image(image)
 
@@ -30,7 +29,7 @@ def test_unpinned_or_unreviewed_client_images_are_rejected() -> None:
     assert not is_supported_pg_client_image("pgvector/pgvector:0.8.2-pg18@sha256:" + "0" * 64)
 
 
-@pytest.mark.parametrize("version", ["0.8.2", "0.8.6", "0.8.7"])
+@pytest.mark.parametrize("version", ["0.8.2", "0.8.6"])
 def test_only_reviewed_postgres_extension_runtime_versions_are_supported(version: str) -> None:
     assert is_supported_pgvector_runtime(version)
 
@@ -40,9 +39,7 @@ def test_cold_restore_contract_is_directional_and_closed_world() -> None:
     assert is_supported_pgvector_restore("0.8.2", "0.8.6")
     assert is_supported_pgvector_restore("0.8.6", "0.8.6")
     assert not is_supported_pgvector_restore("0.8.6", "0.8.2")
-    assert is_supported_pgvector_restore("0.8.6", "0.8.7")
-    assert not is_supported_pgvector_restore("0.8.7", "0.8.6")
-    assert not is_supported_pgvector_restore("0.8.7", "0.8.8")
+    assert not is_supported_pgvector_restore("0.8.2", "0.8.7")
 
 
 def test_unsupported_restore_pair_raises_before_caller_can_publish_identity() -> None:

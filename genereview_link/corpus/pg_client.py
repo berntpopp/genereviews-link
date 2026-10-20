@@ -7,12 +7,6 @@ import re
 from pathlib import Path
 
 PG18_IMAGE = (
-    "pgvector/pgvector:0.8.7-pg18@"
-    "sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11"
-)
-# Exact client image recorded by the published 2026-10-03-r1 bundle's computation chain;
-# accepted for verification/replay only.
-PREVIOUS_PG18_IMAGE = (
     "pgvector/pgvector:0.8.6-pg18@"
     "sha256:2ba9ca5f2e7daa0f0e7723cba1ee9167bab54efd3640516a44ac1a928dd67e7a"
 )
@@ -22,7 +16,7 @@ HISTORICAL_PG18_IMAGE = (
     "pgvector/pgvector:0.8.2-pg18@"
     "sha256:42e7f6b4e1eceb02ff14e3e6bc6108bbe259abbe83879dc1845d0da1ddeb555d"
 )
-SUPPORTED_PG18_CLIENT_IMAGES = frozenset({PG18_IMAGE, PREVIOUS_PG18_IMAGE, HISTORICAL_PG18_IMAGE})
+SUPPORTED_PG18_CLIENT_IMAGES = frozenset({PG18_IMAGE, HISTORICAL_PG18_IMAGE})
 PG_TOOLS = frozenset({"pg_dump", "pg_restore", "psql", "pg_isready"})
 
 
@@ -70,7 +64,6 @@ def assert_client_server_match(client_version: str, server_version_num: str) -> 
 __all__ = [
     "HISTORICAL_PG18_IMAGE",
     "PG18_IMAGE",
-    "PREVIOUS_PG18_IMAGE",
     "SUPPORTED_PG18_CLIENT_IMAGES",
     "PgClientError",
     "assert_client_server_match",
