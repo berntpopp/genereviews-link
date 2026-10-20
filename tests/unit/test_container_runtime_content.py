@@ -22,7 +22,7 @@ RUNTIME_CORPUS_FILES = (
     "readiness.py",
     "semantic_identity.py",
 )
-INSTALLED_CORPUS_PREFIX = "opt/venv/lib/python3.12/site-packages/genereview_link/corpus/"
+INSTALLED_CORPUS_PREFIX = "opt/venv/lib/python3.14/site-packages/genereview_link/corpus/"
 PROHIBITED_RUNTIME_PATHS = (
     "download_admission.py",
     "download_guard.py",

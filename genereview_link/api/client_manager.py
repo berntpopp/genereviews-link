@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
-from typing import Any, Optional
+from typing import Any
 
 from genereview_link.api.eutils_client import EutilsClient
 from genereview_link.config import settings
@@ -131,7 +131,7 @@ class DistributedRateLimiter:
         try:
             with open(self.shared_state_file) as f:
                 return float(f.read().strip())
-        except (FileNotFoundError, ValueError):
+        except FileNotFoundError, ValueError:
             return 0.0
 
     def _write_shared_state(self, timestamp: float) -> None:
@@ -153,10 +153,10 @@ class DistributedRateLimiter:
 class ClientManager:
     """Singleton manager for EutilsClient instances with proper lifecycle management."""
 
-    _instance: Optional["ClientManager"] = None
+    _instance: ClientManager | None = None
     _lock = threading.Lock()
 
-    def __new__(cls) -> "ClientManager":
+    def __new__(cls) -> ClientManager:
         """Create or return the singleton instance."""
         if cls._instance is None:
             with cls._lock:
@@ -212,7 +212,7 @@ class ClientManager:
         return self._client
 
     @asynccontextmanager
-    async def get_client_context(self) -> AsyncGenerator[EutilsClient, None]:
+    async def get_client_context(self) -> AsyncGenerator[EutilsClient]:
         """Context manager for getting client (for dependency injection)."""
         client = await self.get_client()
         try:
@@ -283,7 +283,7 @@ class ClientManager:
 _client_manager: ClientManager | None = None
 
 
-async def get_managed_client() -> AsyncGenerator[EutilsClient, None]:
+async def get_managed_client() -> AsyncGenerator[EutilsClient]:
     """Get managed client dependency for FastAPI."""
     client_manager = await get_client_manager()
     async with client_manager.get_client_context() as client:

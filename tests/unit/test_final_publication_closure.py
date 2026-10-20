@@ -310,7 +310,7 @@ def test_release_image_allowlist_contains_current_embedding_identity_migration()
     release = json.loads((ROOT / "container-release.json").read_bytes())
 
     assert (
-        "opt/venv/lib/python3.12/site-packages/genereview_link/db/migrations/data/"
+        "opt/venv/lib/python3.14/site-packages/genereview_link/db/migrations/data/"
         "0007_embedding_run_identity.sql"
     ) in release["data"]["image_allowlist"]
 

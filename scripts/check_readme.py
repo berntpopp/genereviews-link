@@ -19,6 +19,7 @@ Exits non-zero on any violation.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -62,20 +63,28 @@ GENERATED_BLOCK = re.compile(
 )
 
 
-def repo_slug() -> str:
-    """Return the canonical GitHub repository, even from an isolated worktree."""
+def _origin_slug(root: Path) -> str | None:
+    """Return the repository name from ``origin``, even in a named worktree."""
+    git = shutil.which("git")
+    if git is None:
+        return None
     try:
-        remote = subprocess.run(  # noqa: S603 -- literal git command, no shell
-            ["git", "config", "--get", "remote.origin.url"],
-            cwd=ROOT,
-            check=True,
+        result = subprocess.run(  # noqa: S603 -- fixed git argv; root is this checkout
+            [git, "-C", str(root), "remote", "get-url", "origin"],
             capture_output=True,
+            check=False,
             text=True,
-        ).stdout.strip()
-    except (OSError, subprocess.CalledProcessError):
-        return ROOT.name
-    slug = remote.rstrip("/").removesuffix(".git").rsplit("/", maxsplit=1)[-1]
-    return slug.rsplit(":", maxsplit=1)[-1] or ROOT.name
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    slug = result.stdout.strip().rstrip("/").removesuffix(".git").rsplit("/", 1)[-1]
+    return slug if re.fullmatch(r"[A-Za-z0-9_.-]+", slug) else None
+
+
+def repo_slug() -> str:
+    return _origin_slug(ROOT) or ROOT.name
 
 
 def is_router() -> bool:
@@ -99,8 +108,8 @@ def expected_badges(slug: str) -> list[tuple[str, str]]:
     gate_label = "Security" if is_router() else "Conformance"
     return [
         (
-            "Python 3.12+",
-            "[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB"
+            "Python 3.14+",
+            "[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-3776AB"
             "?logo=python&logoColor=white)](https://www.python.org/)",
         ),
         ("CI", _workflow_badge("CI", slug, "ci.yml")),

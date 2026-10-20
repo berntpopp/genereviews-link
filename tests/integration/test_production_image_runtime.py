@@ -36,7 +36,7 @@ def test_production_image_imports_installed_application_and_corpus() -> None:
         (
             "import pathlib,genereview_link,genereview_link.corpus,genereview_link.db.restore;"
             "import genereview_link.corpus.readiness;"
-            "root=pathlib.Path('/opt/venv/lib/python3.12/site-packages').resolve();"
+            "root=pathlib.Path('/opt/venv/lib/python3.14/site-packages').resolve();"
             "paths=[pathlib.Path(x.__file__).resolve() for x in "
             "(genereview_link,genereview_link.corpus,genereview_link.corpus.readiness,"
             "genereview_link.db.restore)];"

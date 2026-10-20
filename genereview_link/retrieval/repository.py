@@ -969,7 +969,7 @@ def _note_for_empty_section(section: str, nbk_id: str) -> str | None:
 def _record_get(row: asyncpg.Record, key: str, default: Any = None) -> Any:
     try:
         return row[key]
-    except (KeyError, IndexError):
+    except KeyError, IndexError:
         return default
 
 
