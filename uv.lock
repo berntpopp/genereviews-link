@@ -1,14 +1,14 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
 resolution-markers = [
     "python_full_version >= '3.15' and extra != 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130'",
-    "python_full_version < '3.15' and extra != 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130'",
     "python_full_version >= '3.15' and sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra != 'extra-16-genereviews-link-cu130'",
-    "python_full_version < '3.15' and sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra != 'extra-16-genereviews-link-cu130'",
     "python_full_version >= '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra != 'extra-16-genereviews-link-cu130'",
-    "python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra != 'extra-16-genereviews-link-cu130'",
     "python_full_version >= '3.15' and extra != 'extra-16-genereviews-link-cpu' and extra != 'extra-16-genereviews-link-cu130'",
+    "python_full_version < '3.15' and extra != 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130'",
+    "python_full_version < '3.15' and sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra != 'extra-16-genereviews-link-cu130'",
+    "python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra != 'extra-16-genereviews-link-cu130'",
     "python_full_version < '3.15' and extra != 'extra-16-genereviews-link-cpu' and extra != 'extra-16-genereviews-link-cu130'",
 ]
 conflicts = [[
@@ -195,7 +195,7 @@ name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz", hash = "sha256:44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529", size = 523588, upload-time = "2025-09-08T23:24:04.541Z" }
 wheels = [
@@ -237,7 +237,7 @@ name = "click"
 version = "8.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/bb/63/f9e1ea081ce35720d8b92acde70daaedace594dc93b693c869e0d5910718/click-8.3.3.tar.gz", hash = "sha256:398329ad4837b2ff7cbe1dd166a4c0f8900c3ca3a218de04466f38f6497f18a2", size = 328061, upload-time = "2026-04-22T15:11:27.506Z" }
 wheels = [
@@ -297,7 +297,7 @@ name = "cryptography"
 version = "50.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/de/41/6cbdcf9142d00fe82836fbb51e503e58088575cf7a0fe1dbff6695bf0840/cryptography-50.0.0.tar.gz", hash = "sha256:eeac2acb5a20ed25e0ad6d1df9891a520b78b404266b6d11778f25d5d691a6c9", size = 880201, upload-time = "2026-07-31T14:25:10.11Z" }
 wheels = [
@@ -376,43 +376,43 @@ wheels = [
 
 [package.optional-dependencies]
 cublas = [
-    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-cuda-runtime", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-cufft", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 cufile = [
-    { name = "nvidia-cufile", marker = "(platform_machine != 'aarch64' and platform_machine != 'x86_64' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-cufile", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-cuda-cupti", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-curand", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 cusolver = [
-    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "nvidia-cusolver", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-cublas", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-cusolver", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-cusparse", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-nvjitlink", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-cuda-nvrtc", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and sys_platform != 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "nvidia-nvtx", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (platform_machine == 'AMD64' and sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 
 [[package]]
@@ -441,11 +441,11 @@ wheels = [
 
 [[package]]
 name = "distlib"
-version = "0.4.0"
+version = "0.4.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/96/8e/709914eb2b5749865801041647dc7f4e6d00b549cfe88b65ca192995f07c/distlib-0.4.0.tar.gz", hash = "sha256:feec40075be03a04501a973d81f633735b4b69f98b05450592310c0f401a4e0d", size = 614605, upload-time = "2025-07-17T16:52:00.465Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/68/bc/d36966de7304047a1001a7559fbf266c464bb5d8cc85464536ef8c9bcc32/distlib-0.4.4.tar.gz", hash = "sha256:ca4175b4ac7f71223cc30ed7248c45d2b38c2439d8ee6e498ab67ed63cf3508d", size = 621304, upload-time = "2026-10-16T13:56:34.203Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/6b/e0547afaf41bf2c42e52430072fa5658766e3d65bd4b03a563d1b6336f57/distlib-0.4.0-py2.py3-none-any.whl", hash = "sha256:9659f7d87e46584a30b5780e43ac7a2143098441670ff0a49d5f9034c54a6c16", size = 469047, upload-time = "2025-07-17T16:51:58.613Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/2b/238f02a4927fa2e27aa995371d240a468b52e42eae44a678434aff736b38/distlib-0.4.4-py2.py3-none-any.whl", hash = "sha256:cf09d55b1e85a89576b036aeb71550bfd68320f3f21761ca329eadadad918638", size = 472099, upload-time = "2026-10-16T13:56:32.053Z" },
 ]
 
 [[package]]
@@ -647,8 +647,8 @@ dependencies = [
 cpu = [
     { name = "sentence-transformers" },
     { name = "tokenizers" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version < '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu')" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
     { name = "transformers" },
 ]
 cu130 = [
@@ -861,7 +861,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
     { name = "fsspec" },
-    { name = "hf-xet", marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "hf-xet", marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
     { name = "httpx" },
     { name = "packaging" },
     { name = "pyyaml" },
@@ -1046,9 +1046,9 @@ dependencies = [
     { name = "jaraco-classes" },
     { name = "jaraco-context" },
     { name = "jaraco-functools" },
-    { name = "jeepney", marker = "sys_platform == 'linux' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "pywin32-ctypes", marker = "sys_platform == 'win32' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "secretstorage", marker = "sys_platform == 'linux' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "jeepney", marker = "sys_platform == 'linux'" },
+    { name = "pywin32-ctypes", marker = "sys_platform == 'win32'" },
+    { name = "secretstorage", marker = "sys_platform == 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/43/4b/674af6ef2f97d56f0ab5153bf0bfa28ccb6c3ed4d1babf4305449668807b/keyring-25.7.0.tar.gz", hash = "sha256:fe01bd85eb3f8fb3dd0405defdeac9a5b4f6f0439edbb3149577f244a2e8245b", size = 63516, upload-time = "2025-11-16T16:26:09.482Z" }
 wheels = [
@@ -1188,12 +1188,12 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
-    { name = "pywin32", marker = "sys_platform == 'win32' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "sse-starlette" },
     { name = "starlette" },
     { name = "typing-extensions" },
     { name = "typing-inspection" },
-    { name = "uvicorn", marker = "sys_platform != 'emscripten' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ba/93/0142dc84a666daf8ad51a34268f34c12fd6fda4f3810c4be2504eecc8212/mcp-1.30.0.tar.gz", hash = "sha256:445414625fce5c295faa505bb11bacece661ab6f4028d57c935db57820b7a3e4", size = 680511, upload-time = "2026-09-07T14:34:15.845Z" }
 wheels = [
@@ -1238,7 +1238,7 @@ name = "mypy"
 version = "1.20.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "librt", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "librt", marker = "platform_python_implementation != 'PyPy'" },
     { name = "mypy-extensions" },
     { name = "pathspec" },
     { name = "typing-extensions" },
@@ -1552,11 +1552,11 @@ wheels = [
 
 [[package]]
 name = "packaging"
-version = "26.2"
+version = "26.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d7/f1/e7a6dd94a8d4a5626c03e4e99c87f241ba9e350cd9e6d75123f992427270/packaging-26.2.tar.gz", hash = "sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661", size = 228134, upload-time = "2026-04-24T20:15:23.917Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/fa/3944b40b07da9ce895c0e6303a5ab7d53da063554f534556b134a54d6093/packaging-26.3.tar.gz", hash = "sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79", size = 313412, upload-time = "2026-08-04T18:15:28.737Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl", hash = "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e", size = 100195, upload-time = "2026-04-24T20:15:22.081Z" },
+    { url = "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl", hash = "sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c", size = 129956, upload-time = "2026-08-04T18:15:27.159Z" },
 ]
 
 [[package]]
@@ -1815,7 +1815,7 @@ name = "pytest"
 version = "9.0.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
     { name = "iniconfig" },
     { name = "packaging" },
     { name = "pluggy" },
@@ -2221,8 +2221,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "sys_platform != 'darwin' or extra != 'extra-16-genereviews-link-cpu' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "jeepney", marker = "sys_platform != 'darwin' or extra != 'extra-16-genereviews-link-cpu' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -2238,8 +2238,8 @@ dependencies = [
     { name = "numpy" },
     { name = "scikit-learn" },
     { name = "scipy" },
-    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version < '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu')" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
     { name = "torch", version = "2.13.0+cu130", source = { registry = "https://download.pytorch.org/whl/cu130" }, marker = "extra == 'extra-16-genereviews-link-cu130'" },
     { name = "tqdm" },
     { name = "transformers" },
@@ -2375,13 +2375,13 @@ resolution-markers = [
     "python_full_version < '3.15' and sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "fsspec", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "jinja2", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "networkx", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "setuptools", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "sympy", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
-    { name = "typing-extensions", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "filelock", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "fsspec", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "jinja2", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "networkx", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "setuptools", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "sympy", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "typing-extensions", marker = "(python_full_version < '3.15' and sys_platform == 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.13.0-cp314-cp314-macosx_14_0_arm64.whl", hash = "sha256:d849b390e07d8d333ce8ecaf91b273c656c598379a19c9acf1318a883f6b391c", upload-time = "2026-07-08T12:26:28Z" },
@@ -2394,17 +2394,17 @@ version = "2.13.0+cpu"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform != 'darwin'",
-    "python_full_version < '3.15' and sys_platform != 'darwin'",
     "python_full_version >= '3.15' and sys_platform == 'darwin'",
+    "python_full_version < '3.15' and sys_platform != 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version < '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu')" },
-    { name = "fsspec", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version < '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu')" },
-    { name = "jinja2", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version < '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu')" },
-    { name = "networkx", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version < '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu')" },
-    { name = "setuptools", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version < '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu')" },
-    { name = "sympy", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version < '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu')" },
-    { name = "typing-extensions", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (python_full_version < '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu')" },
+    { name = "filelock", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "fsspec", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "jinja2", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "networkx", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "setuptools", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "sympy", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "typing-extensions", marker = "(python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu') or (sys_platform != 'darwin' and extra == 'extra-16-genereviews-link-cpu') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.13.0%2Bcpu-cp314-cp314-linux_s390x.whl", hash = "sha256:dec241fef3984c0d1edadd1f58708e218d4eae881ceef7bc10cf9964d41b68b9", upload-time = "2026-07-08T19:30:20Z" },
@@ -2430,7 +2430,7 @@ resolution-markers = [
     "python_full_version < '3.15'",
 ]
 dependencies = [
-    { name = "cuda-bindings", marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "cuda-bindings", marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
     { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
     { name = "filelock", marker = "extra == 'extra-16-genereviews-link-cu130'" },
     { name = "fsspec", marker = "extra == 'extra-16-genereviews-link-cu130'" },
@@ -2442,7 +2442,7 @@ dependencies = [
     { name = "nvidia-nvshmem-cu13", marker = "(sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
     { name = "setuptools", marker = "extra == 'extra-16-genereviews-link-cu130'" },
     { name = "sympy", marker = "extra == 'extra-16-genereviews-link-cu130'" },
-    { name = "triton", marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (python_full_version >= '3.15' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform != 'linux' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "triton", marker = "(python_full_version < '3.15' and sys_platform == 'linux' and extra == 'extra-16-genereviews-link-cu130') or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
     { name = "typing-extensions", marker = "extra == 'extra-16-genereviews-link-cu130'" },
 ]
 wheels = [
@@ -2463,7 +2463,7 @@ name = "tqdm"
 version = "4.67.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598, upload-time = "2026-02-03T17:35:53.048Z" }
 wheels = [
@@ -2569,7 +2569,7 @@ name = "tzlocal"
 version = "5.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "tzdata", marker = "sys_platform == 'win32' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8b/2e/c14812d3d4d9cd1773c6be938f89e5735a1f11a9f184ac3639b93cef35d5/tzlocal-5.3.1.tar.gz", hash = "sha256:cceffc7edecefea1f595541dbd6e990cb1ea3d19bf01b2809f362a03dd7921fd", size = 30761, upload-time = "2025-03-05T21:17:41.549Z" }
 wheels = [
@@ -2600,11 +2600,11 @@ wheels = [
 
 [package.optional-dependencies]
 standard = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
     { name = "httptools" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
-    { name = "uvloop", marker = "(platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32') or (platform_python_implementation == 'PyPy' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'cygwin' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130') or (sys_platform == 'win32' and extra == 'extra-16-genereviews-link-cpu' and extra == 'extra-16-genereviews-link-cu130')" },
+    { name = "uvloop", marker = "platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'" },
     { name = "watchfiles" },
     { name = "websockets" },
 ]
@@ -2631,17 +2631,18 @@ wheels = [
 
 [[package]]
 name = "virtualenv"
-version = "21.7.13"
+version = "21.14.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "distlib" },
     { name = "filelock" },
+    { name = "packaging" },
     { name = "platformdirs" },
     { name = "python-discovery" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/13/50/c9b84eb106d0db420b9878dac0a386c5791726f127ce20b06897f6e3a1e9/virtualenv-21.7.13.tar.gz", hash = "sha256:0355558b6f33619aab31347e43643b0ebc97f61ea3acf617b2b69e1f8a843d11", size = 5360306, upload-time = "2026-09-18T04:35:49.354Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/aa/bff50daee0488e16d611258a9b6c5a1d0c9e128f8ca424e9f4e1c0444ef2/virtualenv-21.14.13.tar.gz", hash = "sha256:de5307ba4b9a0001d9c8ea02832d38f63ca432880f416c1bface61c4323fd905", size = 5570301, upload-time = "2026-10-22T20:10:16.952Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/ce/e74453531b0c49a58d0e8a4f9bab4495705859fee4a4f7de27d58f4a791a/virtualenv-21.7.13-py3-none-any.whl", hash = "sha256:1bea5af7463f59c4719db48fe739579a2a4f569c96f26c086edda85c96da9f59", size = 5328680, upload-time = "2026-09-18T04:35:47.194Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/a9/c10d8a44a29fb94a18b43fdf11f38caca53ae7c9406f11a72b1cb8f624f1/virtualenv-21.14.13-py3-none-any.whl", hash = "sha256:5fbb04138a4861580b78ba9110d529a26bc48fcc93c8ec36bc0202eeed96a788", size = 5557094, upload-time = "2026-10-22T20:10:15.096Z" },
 ]
 
 [[package]]
