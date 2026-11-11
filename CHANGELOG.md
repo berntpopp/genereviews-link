@@ -4,6 +4,13 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.15] - 2026-11-11
+
+### Security
+
+- Fleet dependency sweep (Dependabot alerts #45-#84): authlib 1.9.5, joserfc 1.8.0, dnspython 2.9.2, fastmcp 3.4.11 (floor >=3.4.10; cap tightened to <4 because fastmcp 4 breaks the mcp types API, migration deferred), opentelemetry-api 1.45.2, filelock 4.2.10, virtualenv 21.15.6, setuptools 84.2.1.
+- Merged Dependabot #191, #192, #193 (torch cap <2.16, hatchling 1.33.0, Actions SHA bumps). pgvector sidecar stays pinned.
+
 ## [5.2.14] - 2026-10-20
 
 ### Security

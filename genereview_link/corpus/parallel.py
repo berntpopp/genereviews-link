@@ -202,8 +202,8 @@ async def parse_pipeline(
                     chapter, passages, audit = result
                     _log_audit(audit)
                     yield chapter, passages
-        for fut in asyncio.as_completed(in_flight):
-            result = await fut
+        for pending_fut in asyncio.as_completed(in_flight):
+            result = await pending_fut
             if result is None:
                 continue
             chapter, passages, audit = result
