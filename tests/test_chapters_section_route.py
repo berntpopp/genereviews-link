@@ -146,7 +146,7 @@ _DEFAULT_CHAPTER = object()
 
 
 def _build_app(
-    *, passages: list[PassageRow], chapter: ChapterRow | None | object = _DEFAULT_CHAPTER
+    *, passages: list[PassageRow], chapter: ChapterRow | object | None = _DEFAULT_CHAPTER
 ) -> FastAPI:
     app = FastAPI()
     app.include_router(chapters_routes.router)

@@ -13,7 +13,9 @@
       "docker/docker-compose.prod.yml",
       "docker/docker-compose.npm.yml"
     ],
-    "deployed_seed_binds": ["/seed"],
+    "deployed_seed_binds": [
+      "/seed"
+    ],
     "deployed_sidecars": [
       {
         "name": "postgres",
@@ -67,9 +69,15 @@
   "data": {
     "mode": "restored-database",
     "release_tag": "corpus-data-2026-10-03-r1",
-    "schema_compatibility": ["0007_embedding_run_identity"],
+    "schema_compatibility": [
+      "0007_embedding_run_identity"
+    ],
     "digest": "sha256:ca358d3f7052ed97f03f4ac9a9f953b6d3d1c1eaf5faa693d4cffe1949ab0c0a",
     "image_allowlist": [
+      "opt/venv/lib/python3.14/site-packages/beartype/_check/cls/hint/data/__init__.py",
+      "opt/venv/lib/python3.14/site-packages/beartype/_check/cls/hint/data/hintdataabc.py",
+      "opt/venv/lib/python3.14/site-packages/beartype/_check/cls/hint/data/hintdatacode.py",
+      "opt/venv/lib/python3.14/site-packages/beartype/_check/cls/hint/data/hintdataerror.py",
       "opt/venv/lib/python3.14/site-packages/genereview_link/corpus/__init__.py",
       "opt/venv/lib/python3.14/site-packages/genereview_link/corpus/computation_runs.py",
       "opt/venv/lib/python3.14/site-packages/genereview_link/corpus/evaluation-suite.txt",

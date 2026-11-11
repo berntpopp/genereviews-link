@@ -12,19 +12,19 @@ def test_release_dependencies_use_reviewed_immutable_pins() -> None:
     )
     assert "apt-get upgrade -y" in (ROOT / "docker/Dockerfile").read_text()
     assert (
-        "astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884"
+        "astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e"
         in (ROOT / ".github/workflows/ci.yml").read_text()
     )
     assert (
-        "_container-ci.yml@bab3fb6bc9a9b2a9c87bd3d5aa9883a42bae039b"
+        "_container-ci.yml@5fed6be02ea0a598b56f7d1a69efcc47ff5796c8"
         in (ROOT / ".github/workflows/container-ci.yml").read_text()
     )
     assert (
-        "_container-release.yml@bab3fb6bc9a9b2a9c87bd3d5aa9883a42bae039b"
+        "_container-release.yml@5fed6be02ea0a598b56f7d1a69efcc47ff5796c8"
         in (ROOT / ".github/workflows/container-release.yml").read_text()
     )
     assert (
-        "astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884"
+        "astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e"
         in (ROOT / ".github/workflows/verify-corpus-bundle.yml").read_text()
     )
     assert (

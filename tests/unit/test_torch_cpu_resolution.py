@@ -46,7 +46,7 @@ def test_cpu_export_excludes_cuda_and_docker_selects_cpu() -> None:
         capture_output=True,
         text=True,
     ).stdout.lower()
-    assert "torch==2.13.0+cpu" in exported
+    assert "torch==2.15.0+cpu" in exported
     assert not any(name in exported for name in ("nvidia-", "cuda-", "triton=="))
     assert "uv sync --frozen --no-dev --active --extra cpu" in (
         ROOT / "docker" / "Dockerfile"

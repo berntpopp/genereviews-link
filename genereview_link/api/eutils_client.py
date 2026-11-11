@@ -713,7 +713,7 @@ class EutilsClient:
                 return str(title)
 
         # Strategy 2: Look for itemprop="name" attribute (common in GeneReviews)
-        name_elem = content_div.find(attrs={"itemprop": "name"})
+        name_elem = content_div.find(attrs={"itemprop": "name"})  # type: ignore[call-overload]
         if name_elem:
             title = name_elem.get_text().strip()
             if title and title.lower() not in ["bookshelf", "ncbi bookshelf"]:
@@ -738,7 +738,7 @@ class EutilsClient:
         ]
 
         for selector in title_selectors:
-            elem = content_div.find(attrs=selector)
+            elem = content_div.find(attrs=selector)  # type: ignore[call-overload]
             if elem:
                 title = elem.get_text().strip()
                 if title and title.lower() not in [
@@ -874,7 +874,7 @@ class EutilsClient:
         # Find references section. bs4's overloads do not statically permit
         # combining ``name`` and ``string`` filters together, but the runtime
         # behaviour is documented and used widely.
-        ref_headings = content_div.find_all(  # type: ignore[call-overload]
+        ref_headings = content_div.find_all(
             ["h1", "h2", "h3", "h4", "h5", "h6"],
             string=re.compile(r"references?|bibliography", re.I),
         )
@@ -886,7 +886,7 @@ class EutilsClient:
         ref_heading = ref_headings[0]
 
         # Find all content elements after the references heading until next major heading
-        current_pos = ref_heading
+        current_pos: Tag | None = ref_heading
         ref_content_elements = []
 
         while current_pos:
