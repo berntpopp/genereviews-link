@@ -118,6 +118,64 @@ def _stage_member(
             staged_path.unlink(missing_ok=True)
 
 
+def _read_staged(destination: Path, name: str) -> tuple[str, bytes] | None:
+    """Hash one previously staged member, no-follow; None if absent or not a bounded file."""
+    ceiling = _MAX_DUMP_BYTES if name == "corpus.dump" else _MAX_CONTROL_BYTES
+    try:
+        # O_NONBLOCK: a FIFO planted in the volume must be refused, not block the init.
+        fd = os.open(destination / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > ceiling:
+            return None
+        digest = hashlib.sha256()
+        retained = bytearray()
+        total = 0
+        while chunk := handle.read(1024 * 1024):
+            total += len(chunk)
+            if total > ceiling:
+                return None
+            digest.update(chunk)
+            if name == "SHA256SUMS":
+                retained.extend(chunk)
+        return digest.hexdigest(), bytes(retained)
+
+
+def _require_same_staged_seed(destination: Path, verified: dict[str, str]) -> None:
+    """Accept a restore destination that already holds exactly the verified seed.
+
+    Anything else is refused and left untouched: a complete, self-consistent different
+    release (an upgrade staged over an existing volume instead of activated onto fresh
+    ones), or a partial or corrupt one.
+    """
+    staged = {name: _read_staged(destination, name) for name in _MEMBERS}
+    actual = {name: found[0] if found else None for name, found in staged.items()}
+    if actual == verified:
+        return
+    sums = staged["SHA256SUMS"]
+    if (
+        actual["corpus.dump"] is not None
+        and actual["manifest.json"] is not None
+        and sums is not None
+        and sums[1]
+        == f"{actual['corpus.dump']}  corpus.dump\n{actual['manifest.json']}  manifest.json\n".encode()
+    ):
+        raise DirectSeedError(
+            "restore seed destination already holds a different corpus release "
+            f"(staged corpus.dump sha256:{actual['corpus.dump']}); a corpus upgrade is a "
+            "data activation onto fresh restore-state and database volumes, and a staged "
+            "release is never overwritten"
+        )
+    damaged = sorted(name for name in _MEMBERS if actual[name] != verified[name])
+    raise DirectSeedError(
+        "restore seed destination holds a partial or corrupt staged seed "
+        f"({', '.join(damaged)} missing, not a regular file, or not the verified bytes); "
+        "it is never overwritten -- inspect and recreate the restore-state volume"
+    )
+
+
 def extract_direct_seed(
     seed: Path,
     destination: Path,
@@ -152,10 +210,10 @@ def extract_direct_seed(
                     f"direct corpus seed entry {_MODEL_SIBLING} must be a real directory"
                 )
         destination.mkdir(parents=True, exist_ok=True)
-        for name in _MEMBERS:
-            target = destination / name
-            if target.exists() or target.is_symlink():
-                raise DirectSeedError(f"restore seed destination already contains {name}")
+        # The init sidecar re-runs on every `compose up` over the same restore volume, so
+        # a previous run's staged seed is expected here. It is judged only after the seed
+        # itself is fully verified below, and is never overwritten.
+        already_staged = any(os.path.lexists(destination / name) for name in _MEMBERS)
 
         manifest_path, manifest_digest, manifest_bytes = _stage_member(
             seed_fd,
@@ -199,6 +257,21 @@ def extract_direct_seed(
         if not isinstance(manifest, dict):
             raise DirectSeedError("manifest.json must be a JSON object")
 
+        if already_staged:
+            _require_same_staged_seed(
+                destination,
+                {
+                    "corpus.dump": dump_digest,
+                    "manifest.json": manifest_digest,
+                    "SHA256SUMS": sums_digest,
+                },
+            )
+            return DirectSeed(
+                root=destination,
+                dump=destination / "corpus.dump",
+                manifest=manifest,
+                dump_sha256=dump_digest,
+            )
         for name in ("corpus.dump", "manifest.json", "SHA256SUMS"):
             target = destination / name
             try:
