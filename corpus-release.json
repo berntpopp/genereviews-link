@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "release_tag": "corpus-data-2026-10-03-r1",
+  "release_tag": "corpus-data-2026-11-12-r1",
   "asset_name": "corpus.dump",
-  "digest": "sha256:ca358d3f7052ed97f03f4ac9a9f953b6d3d1c1eaf5faa693d4cffe1949ab0c0a",
-  "manifest_digest": "sha256:aab5049f24235cc8d143456f31a01dd2417450a36c53edad5394f84172ec7fe6",
-  "checksums_digest": "sha256:4a9b105f9f4bc00c6209713a7b68e09b62fc2ada9964b5e94db1834c69dfc2a0"
+  "digest": "sha256:22d7b63a472625d7a373764d3ef177ebccd0c19c18f96c6015d119febf5f4e0b",
+  "manifest_digest": "sha256:6405909d022b99600895027b3705845c8f7b727cfa7a3968d9332a8dc9620bf6",
+  "checksums_digest": "sha256:1310f27b87b1fbe50ef3b9de3b6ca2afb9474d4342f7cf31220423d381b55d0e"
 }

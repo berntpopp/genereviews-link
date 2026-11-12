@@ -68,11 +68,11 @@
   },
   "data": {
     "mode": "restored-database",
-    "release_tag": "corpus-data-2026-10-03-r1",
+    "release_tag": "corpus-data-2026-11-12-r1",
     "schema_compatibility": [
       "0007_embedding_run_identity"
     ],
-    "digest": "sha256:ca358d3f7052ed97f03f4ac9a9f953b6d3d1c1eaf5faa693d4cffe1949ab0c0a",
+    "digest": "sha256:22d7b63a472625d7a373764d3ef177ebccd0c19c18f96c6015d119febf5f4e0b",
     "image_allowlist": [
       "opt/venv/lib/python3.14/site-packages/beartype/_check/cls/hint/data/__init__.py",
       "opt/venv/lib/python3.14/site-packages/beartype/_check/cls/hint/data/hintdataabc.py",
