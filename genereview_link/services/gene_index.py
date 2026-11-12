@@ -18,6 +18,13 @@ class GeneIndex:
         """Return True if *symbol* is present in the indexed set."""
         return symbol in self.symbols
 
+    def canonical(self, symbol: str) -> str | None:
+        """Return the indexed spelling of *symbol*, matched case-insensitively (C9ORF72 -> C9orf72)."""
+        if symbol in self.symbols:
+            return symbol
+        folded = symbol.casefold()
+        return next((s for s in self.symbols if s.casefold() == folded), None)
+
     def close_matches(
         self,
         symbol: str,

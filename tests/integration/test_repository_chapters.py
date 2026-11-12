@@ -97,6 +97,29 @@ async def test_get_chapters_by_gene_returns_all_matches(pool: asyncpg.Pool) -> N
 
 
 @pytest.mark.asyncio
+async def test_gene_lookup_is_case_insensitive(pool: asyncpg.Pool) -> None:
+    # Issue #194: HGNC symbols are mixed case (C9orf72); the route used to
+    # upper-case them, so the exact-match array lookup missed every one.
+    await apply_control_migrations(pool)
+    await apply_data_migrations(pool, schema="genereview")
+    async with pool.acquire() as conn:
+        await conn.execute("set search_path to genereview, public")
+        await conn.execute(
+            """
+            insert into genereview_chapters
+                (nbk_id, short_name, title, gene_symbols, omim_ids, corpus_version, nxml_relpath, pubmed_id)
+            values ('NBK268647', 'als-ftd', 'C9orf72 FTD/ALS', '{C9orf72}', '{}', 'v', 'a', '25577942')
+            """
+        )
+    repo = GeneReviewRepository(pool)
+    for symbol in ("C9orf72", "C9ORF72", "c9orf72"):
+        chapters = await repo.get_chapters_by_gene(symbol)
+        assert [c.nbk_id for c in chapters] == ["NBK268647"], symbol
+        defining = await repo.get_defining_chapter_by_gene(symbol)
+        assert defining is not None and defining.nbk_id == "NBK268647", symbol
+
+
+@pytest.mark.asyncio
 async def test_get_section_returns_ordered(pool: asyncpg.Pool) -> None:
     await apply_control_migrations(pool)
     await apply_data_migrations(pool, schema="genereview")

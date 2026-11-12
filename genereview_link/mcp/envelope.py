@@ -134,7 +134,7 @@ _GENERIC_RECOVERY_ACTION: dict[ErrorCode, str] = {
     "ambiguous_query": "Narrow the query so it resolves to a single result.",
     "upstream_unavailable": "Retry with backoff; the upstream NCBI service was unavailable.",
     "rate_limited": "Retry after backing off; the request rate exceeded a limit.",
-    "internal": "Retry once; if the error persists, use search_passages or "
+    "internal": "Do not retry unchanged; use search_passages or "
     "get_chapter_metadata for indexed corpus retrieval.",
 }
 

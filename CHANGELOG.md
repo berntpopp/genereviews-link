@@ -4,6 +4,21 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.16] - 2026-11-12
+
+### Fixed
+
+- `search_genereviews` no longer fails as a non-retryable `internal` error (#194). A live NCBI failure (connect, timeout, 429, 5xx) is now the typed, retryable `upstream_unavailable` with a `search_passages` next command. Gene lookups against the corpus are case-insensitive, so mixed-case HGNC symbols (`C9orf72`) resolve; recovery `next_commands` keep the caller's case instead of upper-casing.
+- Ingest now records each chapter's PubMed ID from `GRtitle_shortname_NBKid.txt`. Production NXML has no chapter PMID, so every corpus chapter had `pubmed_id` NULL and the corpus-first branch of `search_genereviews` never answered. This takes effect with the next corpus data release.
+- `search_passages(gene=...)` matches the gene case-insensitively (`C9ORF72` and `c9orf72` resolve to the indexed `C9orf72`) instead of failing with `gene_not_indexed`.
+- The `get_genereview_summary` truncation hint now suggests `get_chapter_metadata` (it needs only `nbk_id` and lists the sections), not `get_chapter_section` without its required `section`.
+- The generic `internal` recovery action no longer says "Retry once" while reporting `retryable: false`.
+- `make dev` / `make mcp-serve-http` call the `serve` subcommand (they failed with "No such option: --transport").
+
+### Documentation
+
+- README: when to prefer `get_abstract` / `get_links` over raw PubMed E-utils (#40), and the `search_genereviews` row now says it is corpus-first with a live NCBI fallback.
+
 ## [5.2.15] - 2026-11-11
 
 ### Security

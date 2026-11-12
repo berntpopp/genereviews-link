@@ -61,7 +61,7 @@ populated Postgres. See [Data & corpus](docs/data.md) for the three loading mode
 |------|---------|
 | `search_passages` | Hybrid lexical + dense search across all chapter passages |
 | `search_passages_batch` | Run up to 5 independent passage searches in one call |
-| `search_genereviews` | Find GeneReviews chapters for a gene symbol (live NCBI) |
+| `search_genereviews` | Resolve a gene symbol to GeneReviews PMIDs (corpus first, live NCBI fallback) |
 | `get_chapter_metadata` | Chapter outline: sections, passage counts, and table IDs |
 | `get_chapter_section` | Every passage in one named section of a chapter |
 | `get_passage` | One passage by `passage_id`, with an optional neighbour window |
@@ -72,6 +72,10 @@ populated Postgres. See [Data & corpus](docs/data.md) for the three loading mode
 | `get_fulltext` | Scrape a chapter from NCBI Bookshelf into hierarchical sections |
 | `get_genereview_summary` | Gene-keyed convenience workflow: abstract + links, fulltext opt-in |
 | `get_license` | GeneReviews attribution and citation terms |
+
+Prefer `get_abstract` / `get_links` over calling PubMed E-utils directly: they share
+the server's NCBI rate limiter, parse GeneReviews' `PubmedBookArticle` records (which a
+generic PubMed parser misses), fence upstream text as untrusted, and return typed errors.
 
 Leaf names are **unprefixed**, per Tool-Naming Standard v1 — the gateway owns the
 namespace. Behind `genefoundry-router` these surface as `genereviews_<tool>` (e.g.

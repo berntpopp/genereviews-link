@@ -341,6 +341,9 @@ async def search_passages(
 
     if gene:
         idx = getattr(request.app.state, "gene_index", None)
+        if idx is not None:
+            # HGNC symbols are mixed case; the corpus filter is exact, so map to the indexed case.
+            gene = idx.canonical(gene) or gene
         if idx is not None and not idx.is_indexed(gene):
             suggestions = idx.close_matches(gene, limit=3)
             raise StructuredHTTPException(

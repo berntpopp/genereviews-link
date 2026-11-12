@@ -100,14 +100,14 @@ async def test_search_route_does_not_log_raw_gene_symbol(http_client: AsyncClien
 
 @pytest.mark.asyncio
 async def test_search_failure_path_does_not_log_raw_gene_symbol() -> None:
-    """The 500 failure path (route error log + PerformanceLogger) must be clean."""
+    """The live-NCBI failure path (502) (route error log + PerformanceLogger) must be clean."""
     app = _build_app(_FailingClient())
     transport = ASGITransport(app=app)
     with structlog.testing.capture_logs() as logs:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(f"/search/{SENTINEL}")
 
-    assert resp.status_code == 500
+    assert resp.status_code == 502
     _assert_no_sentinel(logs)
 
 

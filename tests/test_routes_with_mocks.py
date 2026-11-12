@@ -121,6 +121,55 @@ async def http_client(app: FastAPI):
 
 class TestSearchRoute:
     @pytest.mark.asyncio
+    async def test_mixed_case_symbol_reaches_repository_unchanged(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
+    ) -> None:
+        # Issue #194: upper-casing turned C9orf72 into C9ORF72 and missed the corpus.
+        seen: list[str] = []
+
+        class FakeChapter:
+            pubmed_id = "25577942"
+
+        class FakeRepo:
+            async def get_chapters_by_gene(self, gene_symbol: str) -> list[FakeChapter]:
+                seen.append(gene_symbol)
+                return [FakeChapter()]
+
+        fake_client._search_result = RuntimeError("live client should not be called")
+        app.state.repository = FakeRepo()
+        app.state.corpus_version = "2026-05-10-r6"
+
+        resp = await http_client.get("/search/C9orf72")
+
+        assert resp.status_code == 200
+        assert seen == ["C9orf72"]
+        assert resp.json()["ids"] == ["25577942"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            ConnectionError("down"),
+            TimeoutError("slow"),
+            Exception("Rate limit exceeded. Please wait before making more requests."),
+        ],
+    )
+    async def test_live_ncbi_failure_is_typed_upstream_error(
+        self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient, exc: Exception
+    ) -> None:
+        # Issue #194: an NCBI hiccup surfaced as a non-retryable `internal` error.
+        fake_client._search_result = exc
+
+        resp = await http_client.get("/search/C9orf72")
+
+        assert resp.status_code == 502
+        detail = assert_structured_error_detail(resp.json())
+        assert detail["code"] == "upstream_ncbi_unavailable"
+        assert detail["next_commands"] == [
+            {"tool": "search_passages", "arguments": {"gene": "C9orf72", "q": "C9orf72"}}
+        ]
+
+    @pytest.mark.asyncio
     async def test_uses_repository_first(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
@@ -220,10 +269,16 @@ class TestSearchRoute:
         assert body["ids"] == ["1"]
 
     @pytest.mark.asyncio
-    async def test_search_500_on_client_error(
+    async def test_search_500_on_repository_error(
         self, app: FastAPI, http_client: AsyncClient, fake_client: FakeClient
     ) -> None:
-        fake_client._search_result = RuntimeError("boom")
+        # A live-NCBI failure is a typed 502 (see test_live_ncbi_failure_is_typed_upstream_error);
+        # an unexpected local failure stays a 500 `internal_error`.
+        class FakeRepo:
+            async def get_chapters_by_gene(self, gene_symbol: str) -> list[object]:
+                raise RuntimeError("boom")
+
+        app.state.repository = FakeRepo()
         resp = await http_client.get("/search/BRCA1")
         assert resp.status_code == 500
         detail = assert_structured_error_detail(resp.json())
