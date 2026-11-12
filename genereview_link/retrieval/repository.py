@@ -487,11 +487,12 @@ class GeneReviewRepository:
                 """
                 select nbk_id, short_name, title, pubmed_id, gene_symbols, omim_ids,
                        authors, initial_pub_date, last_updated_date, ingested_at,
-                       exists (select 1 from unnest(primary_gene_symbols) g where upper(g) = upper($1)) as is_primary,
+                       exists (select 1 from unnest(primary_gene_symbols) g
+                                where upper(g) = upper($1)) as is_primary,
                        array_length(gene_symbols, 1) as n_genes
                   from genereview_chapters
                  where exists (select 1 from unnest(gene_symbols) g where upper(g) = upper($1))
-                 order by (case when exists (select 1 from unnest(primary_gene_symbols) g where upper(g) = upper($1)) then 0 else 1 end),
+                 order by is_primary desc,
                           array_length(gene_symbols, 1) asc nulls last,
                           last_updated_date desc nulls last,
                           nbk_id

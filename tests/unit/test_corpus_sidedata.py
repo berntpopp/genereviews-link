@@ -36,3 +36,11 @@ def test_pubmed_id_by_nbk_from_title_file() -> None:
     sd = load_sidedata(FIXTURES)
     assert sd.pubmed_id_by_nbk["NBK1247"] == "20301425"
     assert sd.pubmed_id_by_nbk["NBK1311"] == "20301482"
+
+
+def test_pubmed_id_rejects_non_ascii_digits(tmp_path: Path) -> None:
+    # A Latin-1 decode can yield "\xb2" (superscript two), which str.isdigit() accepts.
+    (tmp_path / "GRtitle_shortname_NBKid.txt").write_bytes(
+        b"#GR_shortname\tGR_Title\tNBK_id\tPMID\nx\tT\tNBK1\t\xb2\ny\tT\tNBK2\t123\n"
+    )
+    assert load_sidedata(tmp_path).pubmed_id_by_nbk == {"NBK2": "123"}

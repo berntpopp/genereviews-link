@@ -65,8 +65,9 @@ def load_sidedata(directory: Path) -> SideData:
                 if short and nbk.startswith("NBK"):
                     short_name_by_nbk[nbk] = short
                 # The chapter NXML carries no chapter PMID; this column is its only source (#194).
-                if len(row) >= 4 and nbk.startswith("NBK") and row[3].strip().isdigit():
-                    pubmed_id_by_nbk[nbk] = row[3].strip()
+                pmid = row[3].strip() if len(row) >= 4 else ""
+                if nbk.startswith("NBK") and pmid.isascii() and pmid.isdigit():
+                    pubmed_id_by_nbk[nbk] = pmid
 
     return SideData(
         gene_symbols={k: tuple(v) for k, v in gene_symbols.items()},
