@@ -4,6 +4,12 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.18] - 2026-11-12
+
+### Fixed
+
+- `genereview-link init` (the `genereview-corpus-restore` sidecar) can run again over an existing restore volume. It used to exit 1 with "restore seed destination already contains SHA256SUMS" on its second run, and because the app waits for that sidecar to complete, every later `docker compose up` (a restart, an app-only redeploy) never started the app. Present since 2026-09-01 (00763b7). After the seed is fully verified, a restore-state volume that already holds exactly that seed is accepted as a no-op. A different staged release, or a partial or corrupt one, is refused with a message that names the cause, and is never overwritten. A corpus upgrade is still a data activation onto fresh volumes.
+
 ## [5.2.17] - 2026-11-12
 
 ### Data
