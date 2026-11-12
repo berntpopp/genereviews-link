@@ -431,7 +431,7 @@ async def _ingest_files(
             nbk_id=chapter.nbk_id,
             short_name=chapter.short_name,
             title=chapter.title,
-            pubmed_id=chapter.pubmed_id,
+            pubmed_id=chapter.pubmed_id or sidedata.pubmed_id_by_nbk.get(chapter.nbk_id),
             gene_symbols=sidedata_gs,
             omim_ids=sidedata.omim_ids.get(chapter.nbk_id, ()),
             authors=chapter.authors,

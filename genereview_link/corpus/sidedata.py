@@ -22,6 +22,7 @@ class SideData:
     gene_symbols: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     omim_ids: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     short_name_by_nbk: Mapping[str, str] = field(default_factory=dict)
+    pubmed_id_by_nbk: Mapping[str, str] = field(default_factory=dict)
 
 
 def load_sidedata(directory: Path) -> SideData:
@@ -32,6 +33,7 @@ def load_sidedata(directory: Path) -> SideData:
     gene_symbols: dict[str, list[str]] = defaultdict(list)
     omim_ids: dict[str, list[str]] = defaultdict(list)
     short_name_by_nbk: dict[str, str] = {}
+    pubmed_id_by_nbk: dict[str, str] = {}
 
     gs_path = directory / GENESYM_FILE
     if gs_path.exists():
@@ -62,11 +64,15 @@ def load_sidedata(directory: Path) -> SideData:
                 short, _title, nbk = row[0], row[1], row[2]
                 if short and nbk.startswith("NBK"):
                     short_name_by_nbk[nbk] = short
+                # The chapter NXML carries no chapter PMID; this column is its only source (#194).
+                if len(row) >= 4 and nbk.startswith("NBK") and row[3].strip().isdigit():
+                    pubmed_id_by_nbk[nbk] = row[3].strip()
 
     return SideData(
         gene_symbols={k: tuple(v) for k, v in gene_symbols.items()},
         omim_ids={k: tuple(v) for k, v in omim_ids.items()},
         short_name_by_nbk=short_name_by_nbk,
+        pubmed_id_by_nbk=pubmed_id_by_nbk,
     )
 
 

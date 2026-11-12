@@ -8,8 +8,8 @@ from genereview_link.api.errors import StructuredHTTPException
 
 
 def _search_passages_command(gene_symbol: str) -> dict[str, Any]:
-    gene = gene_symbol.upper()
-    return {"tool": "search_passages", "arguments": {"gene": gene, "q": gene}}
+    # Keep the caller's case: HGNC symbols are mixed case (C9orf72), upper-casing breaks them.
+    return {"tool": "search_passages", "arguments": {"gene": gene_symbol, "q": gene_symbol}}
 
 
 def gene_not_found_error(gene_symbol: str) -> StructuredHTTPException:
@@ -22,7 +22,7 @@ def gene_not_found_error(gene_symbol: str) -> StructuredHTTPException:
             "Try search_passages with the gene filter, or broaden the query if "
             "the gene may be mentioned in a multi-gene chapter."
         ),
-        next_commands=[_search_passages_command(gene)],
+        next_commands=[_search_passages_command(gene_symbol)],
     )
 
 
@@ -46,12 +46,15 @@ def pmid_resolver_failed_error(
     )
 
 
-def upstream_ncbi_unavailable_error(action: str) -> StructuredHTTPException:
+def upstream_ncbi_unavailable_error(
+    action: str, *, gene_symbol: str | None = None
+) -> StructuredHTTPException:
     return StructuredHTTPException(
         status_code=502,
         code="upstream_ncbi_unavailable",
         message=f"NCBI was unavailable while attempting to {action}.",
         recovery_hint="Retry later or use indexed corpus tools such as search_passages.",
+        next_commands=[_search_passages_command(gene_symbol)] if gene_symbol else [],
     )
 
 
@@ -114,7 +117,7 @@ def internal_orchestration_error(
         code="internal_error",
         message=f"An internal error occurred while attempting to {action}.",
         recovery_hint=(
-            "Retry once. If the error persists, use search_passages or "
+            "Do not retry unchanged; use search_passages or "
             "get_chapter_metadata for indexed corpus retrieval."
         ),
         next_commands=commands,

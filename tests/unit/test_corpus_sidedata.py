@@ -28,3 +28,11 @@ def test_short_name_lookup() -> None:
 def test_missing_nbk_returns_empty_tuple() -> None:
     sd = load_sidedata(FIXTURES)
     assert sd.gene_symbols.get("NBKMISSING", ()) == ()
+
+
+def test_pubmed_id_by_nbk_from_title_file() -> None:
+    # Production NXML carries no chapter PMID (issue #194); the title file's
+    # 4th column is the only source, so the ingest join must read it.
+    sd = load_sidedata(FIXTURES)
+    assert sd.pubmed_id_by_nbk["NBK1247"] == "20301425"
+    assert sd.pubmed_id_by_nbk["NBK1311"] == "20301482"

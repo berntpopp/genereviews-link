@@ -16,7 +16,10 @@ from genereview_link.api.orchestration import (
     live_corpus_version,
     stamp_response_version,
 )
-from genereview_link.api.orchestration_errors import internal_orchestration_error
+from genereview_link.api.orchestration_errors import (
+    internal_orchestration_error,
+    upstream_ncbi_unavailable_error,
+)
 from genereview_link.logging_config import PerformanceLogger, get_logger
 from genereview_link.models.genereview_models import SearchResult
 
@@ -24,8 +27,7 @@ router = APIRouter(prefix="/search", tags=["Search"])
 logger = get_logger(__name__)
 
 
-def _empty_search_recovery(gene_symbol: str) -> tuple[str, list[dict[str, Any]]]:
-    gene = gene_symbol.upper()
+def _empty_search_recovery(gene: str) -> tuple[str, list[dict[str, Any]]]:
     return (
         "No PubMed resolver hit was found. Use corpus-backed passage search for "
         "indexed GeneReviews evidence, or broaden the gene/query if this may be a "
@@ -84,7 +86,7 @@ async def search_genereviews(
             if not fresh:
                 repo = get_optional_repository(request)
                 if repo is not None:
-                    chapters = await repo.get_chapters_by_gene(gene_symbol.upper())
+                    chapters = await repo.get_chapters_by_gene(gene_symbol)
                     ids = [chapter.pubmed_id for chapter in chapters if chapter.pubmed_id]
                     if ids:
                         out = SearchResult(
@@ -107,7 +109,15 @@ async def search_genereviews(
                         )
                         return out
 
-            result = await client.search_genereviews(gene_symbol, retmax=retmax)
+            try:
+                result = await client.search_genereviews(gene_symbol, retmax=retmax)
+            except Exception as e:
+                # Live NCBI failed (connect/timeout/429/5xx): a typed, retryable
+                # upstream error, not `internal` (#194). Type only -- str(e) may echo input.
+                request_logger.error("Live NCBI search failed", error_type=type(e).__name__)
+                raise upstream_ncbi_unavailable_error(
+                    "search GeneReviews", gene_symbol=gene_symbol
+                ) from e
 
             # Log search results
             result_count = result.get("count", 0)
