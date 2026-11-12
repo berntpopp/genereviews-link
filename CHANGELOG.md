@@ -4,6 +4,12 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.19] - 2026-11-13
+
+### Changed
+
+- Re-release of 5.2.18 with no code change. The 5.2.18 container release never published: attestation failed on a transient GitHub identity-token error after the image was pushed, and every re-run then took the shared workflow's import-without-rebuild recovery path, which cannot pass its own OCI platform check (tracked in genefoundry-router). 5.2.18 has a tag but no release; deploy 5.2.19.
+
 ## [5.2.18] - 2026-11-12
 
 ### Fixed
