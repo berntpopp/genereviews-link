@@ -4,6 +4,13 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.2.17] - 2026-11-12
+
+### Data
+
+- Pin the maintainer-prebuilt corpus `corpus-data-2026-11-12-r1` (NCBI litarch listing last updated 2026-11-12 02:40:48): 896 chapters / 41,816 passages (was 892 / 41,568 in `corpus-data-2026-10-03-r1`), freshly ingested and re-embedded. New chapters: NBK625142 (Primary Familial Gastrointestinal Stromal Tumors), NBK625318 (Ceramide Transporter Syndrome), NBK625359 (UBA5-Related Neurodevelopmental Disorder), NBK625886 (CLN2 Disease); none removed. First corpus built with the 5.2.16 ingest, so every chapter carries its PubMed ID and the corpus-first branch of `search_genereviews` answers.
+- GeneReviews terms re-reviewed on 2026-11-12 (`data/RIGHTS.json`, #197): the Copyright Notice and Usage Disclaimer shipped in the NCBI archive is unchanged.
+
 ## [5.2.16] - 2026-11-12
 
 ### Fixed
