@@ -71,3 +71,10 @@ async def test_load_gene_index_mock_pool() -> None:
     assert idx.is_indexed("MLH1") is True
     # None values must be filtered out
     assert len(idx.symbols) == 3
+
+
+def test_gene_index_canonical_is_case_insensitive() -> None:
+    idx = GeneIndex(symbols=frozenset({"C9orf72", "BRCA1"}))
+    assert idx.canonical("C9ORF72") == "C9orf72"
+    assert idx.canonical("brca1") == "BRCA1"
+    assert idx.canonical("NOTAGENE") is None

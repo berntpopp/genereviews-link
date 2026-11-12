@@ -5,7 +5,7 @@ Covers two behavior changes introduced by the Group B ergonomics bundle:
 1. ``include_fulltext`` default is False — the default response is lean.
 2. ``max_chars`` (default 16000, ge=0, le=200000) caps fulltext payload size
    when ``include_fulltext=true``; truncated responses set ``_meta.truncated``
-   and surface ``_meta.next_commands -> get_chapter_section``.
+   and surface ``_meta.next_commands -> get_chapter_metadata``.
 """
 
 from __future__ import annotations
@@ -214,11 +214,11 @@ async def test_small_max_chars_forces_truncation_and_stamps_meta() -> None:
         + sum(len(s["content"]["text"]) for s in body["other_sections"].values())
     )
     assert total_kept <= 100
-    # _meta.truncated + next_commands -> get_chapter_section with nbk_id only.
+    # _meta.truncated + next_commands -> get_chapter_metadata (needs only nbk_id; lists the sections).
     assert body["_meta"]["truncated"] is True
     next_commands = body["_meta"]["next_commands"]
     assert isinstance(next_commands, list) and len(next_commands) == 1
-    assert next_commands[0]["tool"] == "get_chapter_section"
+    assert next_commands[0]["tool"] == "get_chapter_metadata"
     args = next_commands[0]["arguments"]
     assert args.get("nbk_id") == "NBK1247"
     # Risk Notes: do NOT hardcode a section. Only nbk_id is surfaced.
@@ -389,7 +389,7 @@ async def test_default_route_forwards_include_fulltext_false_to_service() -> Non
 
 @pytest.mark.asyncio
 async def test_truncation_hint_omits_next_commands_when_book_url_has_no_nbk_segment() -> None:
-    """If book_url lacks the canonical /books/NBK<id>/ path, no get_chapter_section
+    """If book_url lacks the canonical /books/NBK<id>/ path, no get_chapter_metadata
     hint is emitted (truncated=True is still set). Avoids dead-end recovery
     hints with empty arguments.
     """

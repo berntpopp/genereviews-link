@@ -1620,3 +1620,17 @@ async def test_ids_only_mode_omits_source_url() -> None:
     body = resp.json()
     for hit in body["results"]:
         assert "source_url" not in hit
+
+
+@pytest.mark.asyncio
+async def test_search_gene_filter_is_case_insensitive() -> None:
+    """C9ORF72 / c9orf72 resolve to the indexed C9orf72 and filter with that case (#194)."""
+    repo = _make_brief_repo(rows=1)
+    app = _make_indexed_app(repo, frozenset({"C9orf72", "BRCA1"}))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+        for gene in ("C9ORF72", "c9orf72"):
+            resp = await c.get("/passages/search", params={"q": "repeat", "gene": gene})
+            assert resp.status_code == 200, resp.text
+    for call in repo.search_passages.await_args_list:
+        assert call.kwargs["gene_symbol"] == "C9orf72"

@@ -68,12 +68,12 @@ def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
     (summary, diagnosis, management, then ``other_sections`` alphabetically),
     keeps content until the budget is exhausted, and clears the remainder.
     Stamps ``result.meta.truncated`` and ``result.meta.next_commands`` with a
-    ``get_chapter_section`` hint when truncation fires. The hint carries the
+    ``get_chapter_metadata`` hint (it lists the sections) when truncation fires. The hint carries the
     NBK ID extracted from the ``/books/<NBK...>`` path segment of
     ``result.book_url`` only — no hardcoded section, per the Risk Notes in
     the Group B spec. If the URL does not match the canonical Bookshelf path
     the next_commands hint is omitted (truncated is still set) rather than
-    emitting a get_chapter_section call without ``nbk_id``.
+    emitting a get_chapter_metadata call without ``nbk_id``.
 
     Subsection content is not counted; only top-level section content
     contributes to the budget.
@@ -130,7 +130,7 @@ def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
     if not match:
         return
     result.meta.next_commands = [
-        {"tool": "get_chapter_section", "arguments": {"nbk_id": match.group(1)}}
+        {"tool": "get_chapter_metadata", "arguments": {"nbk_id": match.group(1)}}
     ]
 
 
@@ -143,7 +143,7 @@ def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
         "defaults to False; opt in for full chapter prose. max_chars (default 16000) "
         "truncates fulltext to keep responses context-budget friendly; truncated "
         "responses set _meta.truncated=true and surface next_commands -> "
-        "get_chapter_section. Resolves the gene to its DEFINING corpus chapter (the "
+        "get_chapter_metadata. Resolves the gene to its DEFINING corpus chapter (the "
         "chapter that gene's GeneReview is about); a gene only mentioned in a "
         "multi-gene chapter, or absent from the corpus, returns not_found (use "
         "search_passages(gene=<symbol>) for mention-level evidence). Pass fresh=true "
@@ -181,7 +181,7 @@ async def get_genereview(
         description=(
             "Cap fulltext payload size in characters when include_fulltext=true. "
             "Pass 0 to disable the cap. Truncated responses set _meta.truncated=true "
-            "and surface next_commands -> get_chapter_section."
+            "and surface next_commands -> get_chapter_metadata (lists the sections to fetch)."
         ),
     ),
 ) -> GeneReview:
