@@ -77,6 +77,22 @@ Prefer `get_abstract` / `get_links` over calling PubMed E-utils directly: they s
 the server's NCBI rate limiter, parse GeneReviews' `PubmedBookArticle` records (which a
 generic PubMed parser misses), fence upstream text as untrusted, and return typed errors.
 
+### Variant context (founder variants, hotspots, modifiers)
+
+There is no dedicated variant tool; `search_passages` covers it. Find the chapter and the
+passages that discuss the variant class, then pin the exact variant inside that chapter:
+
+```text
+search_passages(q="founder variant hotspot modifier", gene="BRCA1", limit=10)
+search_passages(q="185delAG", nbk_id="NBK1247", rerank="lexical", mode="full", include=["table_data"])
+```
+
+Each hit carries `passage_id`, `nbk_id`, `chapter_section` and `heading_path` (for
+BRCA1, founder text sits under `Clinical Characteristics > Prevalence` and `185delAG` in
+`Molecular Genetics > Molecular Pathogenesis > Table 8`); table hits also carry
+`table_id`, so follow up with `get_passage` or `get_table`. No hit means the chapter
+text does not mention the term, not that the variant has no founder or modifier role.
+
 Leaf names are **unprefixed**, per Tool-Naming Standard v1 — the gateway owns the
 namespace. Behind `genefoundry-router` these surface as `genereviews_<tool>` (e.g.
 `genereviews_search_passages`). `serverInfo.name` is `genereviews-link`; the canonical
