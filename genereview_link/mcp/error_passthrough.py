@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 import httpx
+import httpx2
 from fastmcp.server.providers.openapi import OpenAPITool
 from fastmcp.tools.base import ToolResult
 
@@ -42,16 +43,22 @@ DOMAIN_TAGS: dict[str, frozenset[str]] = {
 }
 
 
-def _find_http_status_response(exc: BaseException) -> httpx.Response | None:
-    """Find an httpx response in an exception cause or context chain."""
+# FastMCP 4's OpenAPI tools call the REST app through httpx2, not httpx.
+_HTTP_STATUS_ERRORS = (httpx.HTTPStatusError, httpx2.HTTPStatusError)
+_HTTP_RESPONSES = (httpx.Response, httpx2.Response)
+_Response = httpx.Response | httpx2.Response
+
+
+def _find_http_status_response(exc: BaseException) -> _Response | None:
+    """Find an httpx/httpx2 response in an exception cause or context chain."""
     current: BaseException | None = exc
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if isinstance(current, httpx.HTTPStatusError):
+        if isinstance(current, _HTTP_STATUS_ERRORS):
             return current.response
         response = getattr(current, "response", None)
-        if isinstance(response, httpx.Response):
+        if isinstance(response, _HTTP_RESPONSES):
             return response
         current = current.__cause__ or current.__context__
     return None
@@ -96,7 +103,7 @@ def _detail_from_validation_errors(errors: list[Any]) -> dict[str, Any] | None:
     }
 
 
-def _structured_detail(response: httpx.Response) -> dict[str, Any] | None:
+def _structured_detail(response: _Response) -> dict[str, Any] | None:
     """Extract the repository's StructuredHTTPException detail body."""
     try:
         body = response.json()
@@ -130,7 +137,7 @@ def _structured_detail(response: httpx.Response) -> dict[str, Any] | None:
     }
 
 
-def _fallback_message(response: httpx.Response) -> str:
+def _fallback_message(response: _Response) -> str:
     """Fixed, status-keyed message when no structured detail body exists.
 
     SECURITY: the upstream response BODY is deliberately NOT interpolated. When a

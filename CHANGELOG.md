@@ -4,6 +4,17 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.3.0] - 2026-11-18
+
+### Changed
+
+- Upgrade FastMCP 3.4 → 4.2.2 and MCP SDK 1.x → 2.x; supports the 2026-07-28 sessionless protocol era alongside the legacy handshake. `httpx2` is now a direct dependency (FastMCP 4's OpenAPI tools call the REST app through it).
+- Not-found reflection guard ported to MCP SDK 2.x: the protocol backstop now uses `get_request_handler`/`add_request_handler`; a new outermost low-level middleware strips the caller-supplied method name SDK 2.x echoes into `METHOD_NOT_FOUND` `data`; the log scrub also covers `mcp.server.runner` notification-drop records that echo the caller's method.
+
+### Fixed
+
+- REST error classification for MCP tools now recognises `httpx2.HTTPStatusError` (without it every tool error would have collapsed to `internal`).
+
 ## [5.2.20] - 2026-11-13
 
 ### Changed
