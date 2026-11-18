@@ -36,7 +36,7 @@ import pytest
 from fastmcp import Client
 from mcp.shared.memory import create_client_server_memory_streams
 from mcp.shared.message import SessionMessage
-from mcp.types import JSONRPCMessage, JSONRPCNotification, JSONRPCRequest
+from mcp.types import JSONRPCNotification, JSONRPCRequest
 
 from genereview_link.config import ServerConfig
 from genereview_link.mcp.untrusted_content import FORBIDDEN_CODEPOINTS
@@ -168,7 +168,9 @@ def _capture_server_logs() -> tuple[io.StringIO, Any]:
     return buf, detach
 
 
-async def _raw_request(method: str, params: dict[str, Any]) -> tuple[str, str]:
+async def _raw_request(
+    method: str, params: dict[str, Any], notify_method: str | None = None
+) -> tuple[str, str]:
     """Drive one raw JSON-RPC request against the real genereviews server (single
     consumer of the client read stream, no ClientSession) so the caller frame is
     observable. Returns ``(response_json, captured_server_logs)``."""
@@ -186,18 +188,17 @@ async def _raw_request(method: str, params: dict[str, Any]) -> tuple[str, str]:
                         server_read,
                         server_write,
                         srv.create_initialization_options(),
-                        stateless=False,
                         raise_exceptions=False,
                     )
                 )
 
                 async def send(obj: Any) -> None:
-                    await client_write.send(SessionMessage(JSONRPCMessage(obj)))
+                    await client_write.send(SessionMessage(obj))
 
                 async def recv(req_id: int) -> str:
                     with anyio.move_on_after(3.0):
                         async for msg in client_read:
-                            root = msg.message.root if not isinstance(msg, Exception) else None
+                            root = msg.message if not isinstance(msg, Exception) else None
                             if root is not None and getattr(root, "id", None) == req_id:
                                 return str(root.model_dump_json())
                     return "<timeout>"
@@ -220,6 +221,8 @@ async def _raw_request(method: str, params: dict[str, Any]) -> tuple[str, str]:
                         jsonrpc="2.0", method="notifications/initialized", params={}
                     )
                 )
+                if notify_method is not None:
+                    await send(JSONRPCNotification(jsonrpc="2.0", method=notify_method))
                 await send(JSONRPCRequest(jsonrpc="2.0", id=42, method=method, params=params))
                 response = await recv(42)
                 tg.cancel_scope.cancel()
@@ -260,6 +263,18 @@ async def test_unknown_tool_name_not_reflected_via_client() -> None:
 async def test_unknown_tool_name_not_reflected_via_raw() -> None:
     """The raw tools/call path: caller frame + all server logs are name-free."""
     response, logs = await _raw_request("tools/call", {"name": HOSTILE_TOOL_NAME, "arguments": {}})
+    _assert_no_leak(response)
+    _assert_no_leak(logs)
+
+
+async def test_unknown_jsonrpc_method_not_reflected_via_raw() -> None:
+    """MCP SDK 2.x echoes an unknown method in METHOD_NOT_FOUND ``data``; the
+    outermost lowlevel middleware strips it, and the runner's notification-drop
+    logs are scrubbed."""
+    response, logs = await _raw_request(
+        HOSTILE_TOOL_NAME, {}, notify_method=f"notifications/{HOSTILE_TOOL_NAME}"
+    )
+    assert '"code":-32601' in response
     _assert_no_leak(response)
     _assert_no_leak(logs)
 
