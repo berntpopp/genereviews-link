@@ -55,11 +55,12 @@ import logging
 from typing import Any
 
 import mcp.types
+import mcp_types
 from fastmcp import FastMCP
 from fastmcp.exceptions import ResourceError
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools.base import ToolResult
-from mcp import MCPError
+from mcp.shared.exceptions import MCPError
 from mcp.types import TextContent
 
 from genereview_link.mcp.envelope import CAPABILITIES_VERSION, SOURCE, new_request_id
@@ -168,10 +169,6 @@ class NotFoundGuard(Middleware):
 # ---------------------------------------------------------------------------
 # Layer 3 — protocol-handler backstop (clinvar pattern)
 # ---------------------------------------------------------------------------
-
-
-class ProtocolError(Exception):
-    """A dispatch-level failure re-raised with a FIXED, input-free message."""
 
 
 def _is_structured_envelope(call_result: mcp.types.CallToolResult) -> bool:
@@ -292,7 +289,7 @@ def install_protocol_error_handler(mcp_server: FastMCP) -> None:
                 # name/URI (or its code points) reaches the JSON-RPC error frame.
                 # Log the exception CLASS only (never the caller-controlled value).
                 logger.warning("mcp_protocol_error kind=%s type=%s", _kind, type(exc).__name__)
-                raise ProtocolError(_message) from None
+                raise MCPError(code=mcp_types.INVALID_PARAMS, message=_message) from None
 
         lowlevel.add_request_handler(method, entry.params_type, wrapped)
 

@@ -301,6 +301,7 @@ async def test_unknown_prompt_name_not_reflected_via_raw() -> None:
     response, logs = await _raw_request(
         "prompts/get", {"name": HOSTILE_PROMPT_NAME, "arguments": {}}
     )
+    assert '"code":-32602' in response
     _assert_no_leak(response)
     _assert_no_leak(logs)
 
@@ -313,6 +314,7 @@ async def test_hostile_resource_uri_no_caller_or_log_leak_raw(uri: str) -> None:
     """A raw JSON-RPC ``resources/read`` with a hostile URI must not reflect it into
     the caller-visible JSON-RPC error or any server log record."""
     response, logs = await _raw_request("resources/read", {"uri": uri})
+    assert '"code":-32602' in response
     _assert_no_leak(response)
     _assert_no_leak(logs)
 
