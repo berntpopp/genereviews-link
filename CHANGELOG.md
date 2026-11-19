@@ -4,6 +4,13 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.3.2] - 2026-11-19
+
+- Deployed NPM overlay passes `NCBI_API_KEY` explicitly (`docker/docker-compose.npm.yml`), so the
+  key from the controller's `--env-file .env.docker` reaches the server: 10 rps instead of the
+  keyless 3 rps that produced NCBI 429s in production. `/health` reports only `has_api_key`.
+- E-utilities requests honour `Retry-After` on HTTP 429 (seconds form, capped at 10 s) and retry once.
+
 ## [5.3.1] - 2026-11-19
 
 - Tool descriptions lead with what each tool returns (D1, Tool-Schema Documentation v1.1).

@@ -23,6 +23,7 @@ from genereview_link.logging_config import PerformanceLogger, get_logger
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 logger = get_logger(__name__)
+_RATE_LIMITED = "Rate limit exceeded. Please wait before making more requests."
 
 
 def _itertext(elem: _StdET.Element | None) -> str:
@@ -66,21 +67,30 @@ class EutilsClient:
         )
         self.rate_limit_delay = 0.11 if settings.NCBI_API_KEY else 0.34
 
+    async def _get_honouring_retry_after(
+        self, endpoint: str, params: dict[str, Any]
+    ) -> httpx.Response:
+        """GET; on 429 wait NCBI's Retry-After (seconds form, capped 10s) and retry once."""
+        response = await self.client.get(f"{self.base_url}/{endpoint}", params=params)
+        if response.status_code == 429:
+            retry_after = response.headers.get("Retry-After", "")
+            await asyncio.sleep(min(int(retry_after), 10) if retry_after.isdigit() else 1)
+            response = await self.client.get(f"{self.base_url}/{endpoint}", params=params)
+        return response
+
     async def _make_request(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
         """Centralized request maker with rate limiting (JSON responses)."""
         if settings.NCBI_API_KEY:
             params["api_key"] = settings.NCBI_API_KEY
 
-        # Use distributed rate limiting if available, otherwise fall back to
-        # local
+        # Distributed rate limiting if available, otherwise local
         if hasattr(self, "_distributed_wait"):
             await self._distributed_wait()
         else:
-            await asyncio.sleep(self.rate_limit_delay)  # Respect NCBI rate
-            # limits
+            await asyncio.sleep(self.rate_limit_delay)  # Respect NCBI rate limits
 
         try:
-            response = await self.client.get(f"{self.base_url}/{endpoint}", params=params)
+            response = await self._get_honouring_retry_after(endpoint, params)
             response.raise_for_status()
             return response.json()  # type: ignore[no-any-return]
         except httpx.ConnectError as e:
@@ -110,9 +120,7 @@ class EutilsClient:
                 status_code=e.response.status_code,
             )
             if e.response.status_code == 429:
-                raise Exception(
-                    "Rate limit exceeded. Please wait before making more requests."
-                ) from e
+                raise Exception(_RATE_LIMITED) from e
             elif e.response.status_code == 403:
                 raise Exception(
                     "Access forbidden. Please check your API key or request parameters."
@@ -173,16 +181,14 @@ class EutilsClient:
         if settings.NCBI_API_KEY:
             params["api_key"] = settings.NCBI_API_KEY
 
-        # Use distributed rate limiting if available, otherwise fall back to
-        # local
+        # Distributed rate limiting if available, otherwise local
         if hasattr(self, "_distributed_wait"):
             await self._distributed_wait()
         else:
-            await asyncio.sleep(self.rate_limit_delay)  # Respect NCBI rate
-            # limits
+            await asyncio.sleep(self.rate_limit_delay)  # Respect NCBI rate limits
 
         try:
-            response = await self.client.get(f"{self.base_url}/{endpoint}", params=params)
+            response = await self._get_honouring_retry_after(endpoint, params)
             response.raise_for_status()
             return ET.fromstring(response.text)
         except httpx.ConnectError as e:
@@ -212,9 +218,7 @@ class EutilsClient:
                 status_code=e.response.status_code,
             )
             if e.response.status_code == 429:
-                raise Exception(
-                    "Rate limit exceeded. Please wait before making more requests."
-                ) from e
+                raise Exception(_RATE_LIMITED) from e
             elif e.response.status_code == 403:
                 raise Exception(
                     "Access forbidden. Please check your API key or request parameters."
