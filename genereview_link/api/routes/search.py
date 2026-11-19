@@ -41,8 +41,9 @@ def _empty_search_recovery(gene: str) -> tuple[str, list[dict[str, Any]]]:
     response_model=SearchResult,
     summary="Search GeneReviews by gene symbol with corpus-first fallback behavior",
     description=(
-        "Search GeneReviews by gene symbol using the indexed corpus first when "
-        "available, then fallback to live NCBI E-utils. If resolver links are "
+        "Search GeneReviews by gene symbol; returns the PubMed IDs (ids, count) "
+        "of matching GeneReviews chapters, from the indexed corpus first when "
+        "available, then live NCBI E-utils. If resolver links are "
         "unavailable or no PubMed ID is found, use search_passages(gene=<symbol>) "
         "for indexed chapter evidence. Pass fresh=true to bypass the corpus and "
         "query live NCBI."

@@ -4,6 +4,10 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.3.1] - 2026-11-19
+
+- Tool descriptions lead with what each tool returns (D1, Tool-Schema Documentation v1.1).
+
 ## [5.3.0] - 2026-11-18
 
 ### Changed
