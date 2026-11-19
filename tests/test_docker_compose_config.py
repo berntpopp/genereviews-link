@@ -241,3 +241,14 @@ def test_pgvector_client_and_server_images_are_one_pin() -> None:
     digests["pg_client.PG18_IMAGE"] = {PG18_IMAGE.split("@", 1)[1]}
     assert all(len(found) == 1 for found in digests.values()), digests
     assert len(set().union(*digests.values())) == 1, digests
+
+
+def test_deployed_overlay_passes_ncbi_api_key_to_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The controller interpolates from `--env-file .env.docker`; the key must reach the app."""
+    monkeypatch.setenv("NCBI_API_KEY", "test-key")
+    config = _compose_config(
+        "docker/docker-compose.yml",
+        "docker/docker-compose.prod.yml",
+        "docker/docker-compose.npm.yml",
+    )
+    assert config["services"]["genereview-link"]["environment"]["NCBI_API_KEY"] == "test-key"

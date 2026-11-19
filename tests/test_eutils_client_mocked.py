@@ -504,3 +504,52 @@ class TestCloseLifecycle:
     async def test_close_does_not_raise(self) -> None:
         client = EutilsClient()
         await client.close()
+
+
+class TestApiKeyAndRetryAfter:
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_api_key_sent_as_param_and_10_rps(
+        self, client: EutilsClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "NCBI_API_KEY", "test-key")
+        route = respx.get(_eutils_url("esearch.fcgi")).mock(
+            return_value=Response(200, json={"esearchresult": {"idlist": []}})
+        )
+        await EutilsClient().search_genereview_pmid("BRCA1")
+        assert route.calls.last.request.url.params["api_key"] == "test-key"
+        assert EutilsClient().rate_limit_delay == pytest.approx(0.11)  # <= 10 rps
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_no_key_no_param_and_3_rps(
+        self, client: EutilsClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "NCBI_API_KEY", "")
+        route = respx.get(_eutils_url("esearch.fcgi")).mock(
+            return_value=Response(200, json={"esearchresult": {"idlist": []}})
+        )
+        await client.search_genereview_pmid("BRCA1")
+        assert "api_key" not in route.calls.last.request.url.params
+        assert client.rate_limit_delay == pytest.approx(0.34)  # <= 3 rps
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_429_waits_retry_after_then_retries_once(
+        self, client: EutilsClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        slept: list[float] = []
+
+        async def _sleep(seconds: float) -> None:
+            slept.append(seconds)
+
+        monkeypatch.setattr("genereview_link.api.eutils_client.asyncio.sleep", _sleep)
+        route = respx.get(_eutils_url("esearch.fcgi")).mock(
+            side_effect=[
+                Response(429, headers={"Retry-After": "2"}),
+                Response(200, json={"esearchresult": {"idlist": ["1"]}}),
+            ]
+        )
+        assert await client.search_genereview_pmid("BRCA1") == "1"
+        assert route.call_count == 2
+        assert 2 in slept

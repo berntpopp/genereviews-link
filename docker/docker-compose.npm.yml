@@ -37,6 +37,9 @@ services:
 
     environment:
       MCP_ALLOWED_HOSTS: '["localhost","127.0.0.1","::1","genereviews-link.genefoundry.org"]'
+      # The controller renders with `--env-file .env.docker`; pass the key through explicitly
+      # (10 rps vs 3 rps keyless). /health reports only has_api_key, never the value.
+      NCBI_API_KEY: ${NCBI_API_KEY:-}
     ports: !reset []
     expose:
       - "8000"
