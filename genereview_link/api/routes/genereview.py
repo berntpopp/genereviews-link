@@ -139,7 +139,9 @@ def _truncate_genereview_fulltext(result: GeneReview, max_chars: int) -> None:
     response_model=GeneReview,
     summary="Resolve a gene into a convenience GeneReview summary",
     description=(
-        "Convenience orchestration tool. Default response is lean: include_fulltext "
+        "Get a gene's GeneReviews chapter summary; returns pubmed_id, book_url, title, "
+        "abstract_data and all_links (summary, diagnosis and management sections only "
+        "with include_fulltext=true). Default response is lean: include_fulltext "
         "defaults to False; opt in for full chapter prose. max_chars (default 16000) "
         "truncates fulltext to keep responses context-budget friendly; truncated "
         "responses set _meta.truncated=true and surface next_commands -> "

@@ -109,7 +109,9 @@ def _annotate_cross_query_hits(
     operation_id="search_passages_batch",
     summary="Run up to 5 independent passage searches in a single batched call.",
     description=(
-        "Accepts 1-5 search specs, each with its own ``q``, ``sections``, "
+        "Search GeneReviews passages with 1-5 independent queries in one call; returns "
+        "results[i].hits per query, each shaped like search_passages hits. Accepts "
+        "1-5 search specs, each with its own ``q``, ``sections``, "
         "``nbk_id``, ``gene``, ``mode``, ``rerank``, etc. (mirrors the "
         "query parameters of ``GET /passages/search``). Executes all specs "
         "concurrently via ``asyncio.gather`` and returns a flat envelope.\n\n"

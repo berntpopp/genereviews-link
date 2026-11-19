@@ -254,10 +254,9 @@ async def get_chapter_metadata(
     repo: Annotated[GeneReviewRepository, Depends(get_repository)] = ...,  # type: ignore[assignment]
     request: Request = ...,  # type: ignore[assignment]
 ) -> ChapterMetadataResponse:
-    """The chapter outline tool.
-
-    Returns chapter title, dates, gene symbols, per-section passage_count, and
-    the full tables[] list with table_id, caption, section, and heading_path.
+    """The chapter outline tool: returns chapter title, dates, gene symbols,
+    per-section passage_count, and the full tables[] list with table_id, caption,
+    section, and heading_path.
     """
     nbk_id = canonicalize_nbk_id(nbk_id)
     meta = await repo.get_chapter_metadata(nbk_id)

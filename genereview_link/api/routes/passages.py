@@ -160,7 +160,9 @@ def _get_corpus_version(request: Request) -> str | None:
     operation_id="search_passages",
     summary="Hybrid lexical + dense RAG search across GeneReviews passages.",
     description=(
-        "Search the active GeneReviews corpus. For intervention/treatment queries, pass "
+        "Search the active GeneReviews corpus; returns ranked passages with "
+        "passage_id, nbk_id, chapter_section, snippet or text, and recommended_citation. "
+        "For intervention/treatment queries, pass "
         'sections=["management"]; for diagnostic criteria, pass '
         'sections=["diagnosis", "clinical_features"]. This is the main precision filter.\n\n'
         "Rerank with `rrf` (default) for hybrid retrieval, `lexical` for exact terms, "

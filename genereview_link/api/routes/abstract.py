@@ -33,7 +33,8 @@ router = APIRouter(prefix="/abstract", tags=["Abstract"])
     response_model=AbstractData,
     summary="Get normalized abstract and metadata for a PubMed ID",
     description=(
-        "Live NCBI E-utils abstract wrapper that always calls live NCBI. Adds "
+        "Get a PubMed article's abstract by PMID; returns title, abstract, authors, "
+        "journal and publication_date. The tool always calls live NCBI E-utils. Adds "
         "normalized response shape, structured error envelopes, and "
         "corpus-version stamping over a raw efetch call (structured errors and "
         "version metadata are part of the value-add). Default responses may "
