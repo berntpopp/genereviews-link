@@ -112,6 +112,43 @@ async def test_search_failure_path_does_not_log_raw_gene_symbol() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("identifier", ["ENSG99999999917", "HGNC7F3A99917", "99999917"])
+async def test_rejected_identifier_does_not_log_raw_gene_symbol(
+    http_client: AsyncClient, identifier: str
+) -> None:
+    """The shape-check rejection (400) still logs the request start, never the value."""
+    with structlog.testing.capture_logs() as logs:
+        resp = await http_client.get(f"/search/{identifier}")
+
+    assert resp.status_code == 400
+    assert logs, "expected at least one structured log record to be captured"
+    for entry in logs:
+        assert all(identifier not in str(value) for value in entry.values()), entry
+
+
+@pytest.mark.asyncio
+async def test_capture_survives_a_reconfigure_after_the_logger_was_cached(
+    http_client: AsyncClient,
+) -> None:
+    """Order-independence guard for this file (regression: main CI after #212).
+
+    cli.py and server.py each call configure_structlog() at import. A search-route
+    logger first used (and cached) between two such calls used to keep the first
+    processor chain, so capture_logs() saw nothing and these guards failed or, worse,
+    could not see a leak.
+    """
+    from genereview_link.logging_config import configure_structlog
+
+    configure_structlog()
+    await http_client.get(f"/search/{SENTINEL}")  # caches the route logger
+    configure_structlog()
+    with structlog.testing.capture_logs() as logs:
+        await http_client.get(f"/search/{SENTINEL}")
+
+    _assert_no_sentinel(logs)
+
+
+@pytest.mark.asyncio
 @respx.mock
 async def test_eutils_http_error_does_not_log_query_term() -> None:
     """An E-utils HTTP error must not log the request URL (carries the term)."""

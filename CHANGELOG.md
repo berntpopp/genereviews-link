@@ -18,6 +18,8 @@ All notable changes to GeneReviews-Link are documented in this file.
   specs. Outcomes are always per spec: the call succeeds even when every spec fails. Behaviour
   change: a spec error (including `gene_not_indexed`) no longer fails the whole batch.
 - `search_passages` description names `search_passages_batch` for 2 or more queries.
+- Logging: a repeated `configure_structlog()` no longer strands already-cached loggers on the
+  previous processor chain.
 
 ## [5.3.2] - 2026-11-19
 
