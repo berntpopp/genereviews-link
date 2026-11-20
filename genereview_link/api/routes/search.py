@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request
 from genereview_link.api.client_manager import get_managed_client
 from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.eutils_client import EutilsClient
+from genereview_link.api.gene_identifier import GENE_PATH_PATTERN, reject_foreign_gene_identifier
 from genereview_link.api.orchestration import (
     active_corpus_version,
     get_optional_repository,
@@ -55,7 +56,7 @@ async def search_genereviews(
     gene_symbol: Annotated[
         str,
         Path(
-            pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            pattern=GENE_PATH_PATTERN,
             description="HGNC gene symbol to resolve, e.g. 'BRCA1'.",
             examples=["BRCA1"],
         ),
@@ -80,6 +81,7 @@ async def search_genereviews(
         retmax=retmax,
     )
 
+    reject_foreign_gene_identifier("gene_symbol", gene_symbol)
     request_logger.info("Starting GeneReview search")
 
     with PerformanceLogger(request_logger, "genereview_search") as perf:

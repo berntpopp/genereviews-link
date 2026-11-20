@@ -12,11 +12,12 @@ must not grow.  All batch-specific code lives here.
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from genereview_link.api.errors import StructuredHTTPException
 from genereview_link.api.routes.passages import (
     _get_corpus_version,
     get_embedding_provider,
@@ -24,6 +25,7 @@ from genereview_link.api.routes.passages import (
     search_passages,
 )
 from genereview_link.api.untrusted_limits import collect_untrusted_json, guard_untrusted_limits
+from genereview_link.mcp.envelope import error_fields
 from genereview_link.models.genereview_models import (
     IdsOnlySearchResponse,
     PassageSearchResponse,
@@ -61,6 +63,18 @@ def _extract_hits(
     # Both PassageSearchResponse and IdsOnlySearchResponse expose .results
     raw = result.results
     return [r.model_dump(mode="json") for r in raw]
+
+
+def _item_error(result: Any) -> dict[str, Any] | None:
+    """Flat per-spec error (same fields as the whole-call error frame), or None."""
+    if not isinstance(result, StructuredHTTPException):
+        return None
+    # StructuredHTTPException.detail is always its payload dict (typed str upstream).
+    detail = cast("dict[str, Any]", result.detail)
+    fields, next_commands = error_fields(
+        status_code=result.status_code, detail=detail, fallback_message="spec failed"
+    )
+    return {**fields, "next_commands": next_commands}
 
 
 def _annotate_cross_query_hits(
@@ -128,6 +142,10 @@ def _annotate_cross_query_hits(
         "lowest ``query_index`` carries ``also_matched_query_indices`` "
         "(a list of the other indices). Hits are never removed — the "
         "annotation signals redundancy without discarding evidence.\n\n"
+        "**Per-spec errors:** a spec that cannot run (e.g. ``gene`` is an identifier, not "
+        "a symbol, or is not indexed) gets ``results[i].error`` with empty ``hits``; the "
+        "other specs still return. Outcomes are always per spec: the call itself succeeds "
+        "even when every spec (or the only spec) fails, so check each ``error``.\n\n"
         "**Cap:** requests with more than 5 specs are rejected with 422.\n\n"
         "**MCP:** registered as the ``search_passages_batch`` MCP tool "
         "via the FastMCP OpenAPI proxy.\n\n"
@@ -152,25 +170,32 @@ async def search_passages_batch(
 
     async def _run_one(
         spec_index: int,
-    ) -> tuple[int, PassageSearchResponse | IdsOnlySearchResponse | JSONResponse]:
+    ) -> tuple[
+        int,
+        PassageSearchResponse | IdsOnlySearchResponse | JSONResponse | StructuredHTTPException,
+    ]:
         spec = body.specs[spec_index]
-        result = await search_passages(
-            q=spec.q,
-            query=None,
-            gene=spec.gene,
-            nbk_id=spec.nbk_id,
-            sections=spec.sections,
-            heading_path_contains=spec.heading_path_contains,
-            mode=spec.mode,
-            limit=spec.limit,
-            exclude=None,
-            include=None,
-            snippet_chars=spec.snippet_chars,
-            rerank=spec.rerank,
-            repo=repo,
-            embedder=embedder,
-            request=request,
-        )
+        try:
+            result = await search_passages(
+                q=spec.q,
+                query=None,
+                gene=spec.gene,
+                nbk_id=spec.nbk_id,
+                sections=spec.sections,
+                heading_path_contains=spec.heading_path_contains,
+                mode=spec.mode,
+                limit=spec.limit,
+                exclude=None,
+                include=None,
+                snippet_chars=spec.snippet_chars,
+                rerank=spec.rerank,
+                repo=repo,
+                embedder=embedder,
+                request=request,
+            )
+        except StructuredHTTPException as exc:
+            # Per-item outcome: one bad spec must not fail its siblings (router #343).
+            return spec_index, exc
         return spec_index, result
 
     raw_results: list[tuple[int, Any]] = await asyncio.gather(
@@ -180,8 +205,11 @@ async def search_passages_batch(
     # raw_results comes back in completion order — sort by spec index
     raw_results.sort(key=lambda t: t[0])
 
-    # Extract plain-dict hit lists per spec
-    hits_per_spec: list[list[dict[str, Any]]] = [_extract_hits(result) for _, result in raw_results]
+    # Extract plain-dict hit lists per spec (a failed spec has no hits)
+    hits_per_spec: list[list[dict[str, Any]]] = [
+        [] if isinstance(result, StructuredHTTPException) else _extract_hits(result)
+        for _, result in raw_results
+    ]
 
     # Annotate cross-query duplicates
     annotated_hits = _annotate_cross_query_hits(hits_per_spec)
@@ -192,6 +220,7 @@ async def search_passages_batch(
             q=body.specs[i].q,
             sections=body.specs[i].sections,
             hits=annotated_hits[i],
+            error=_item_error(raw_results[i][1]),
         )
         for i in range(len(body.specs))
     ]

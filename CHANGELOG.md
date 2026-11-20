@@ -4,6 +4,21 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.4.0] - 2026-11-20
+
+- Gene parameters reject identifiers from other namespaces instead of treating them as symbols
+  (genefoundry-router #343). `search_genereviews`, `get_genereview_summary`, `search_passages` and
+  each `search_passages_batch` spec answer an Ensembl gene/transcript id, `HGNC:n`, RefSeq
+  accession, `NCBIGene:n` or bare number with `invalid_input` carrying `field`, `allowed_values`,
+  `hint` and a ready-to-send converter in `_meta.next_commands` (`hgnc_resolve_symbol`, or
+  `hgnc_resolve_gene_by_xref` for NCBI Gene ids; a bare number is named as read as an NCBI Gene
+  id; Ensembl transcript/protein/non-human ids and malformed HGNC ids get no converter call). Previously: a silent empty whose next step
+  repeated the input, or fuzzy symbol suggestions for an identifier.
+- `search_passages_batch` reports a failed spec in `results[i].error` and still returns the other
+  specs. Outcomes are always per spec: the call succeeds even when every spec fails. Behaviour
+  change: a spec error (including `gene_not_indexed`) no longer fails the whole batch.
+- `search_passages` description names `search_passages_batch` for 2 or more queries.
+
 ## [5.3.2] - 2026-11-19
 
 - Deployed NPM overlay passes `NCBI_API_KEY` explicitly (`docker/docker-compose.npm.yml`), so the

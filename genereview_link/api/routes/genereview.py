@@ -10,6 +10,7 @@ from typing import Annotated, Protocol
 from fastapi import APIRouter, Depends, Path, Query, Request
 
 from genereview_link.api.errors import StructuredHTTPException
+from genereview_link.api.gene_identifier import GENE_PATH_PATTERN, reject_foreign_gene_identifier
 from genereview_link.api.orchestration import (
     active_corpus_version,
     get_optional_repository,
@@ -160,7 +161,7 @@ async def get_genereview(
     gene_symbol: Annotated[
         str,
         Path(
-            pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            pattern=GENE_PATH_PATTERN,
             description="HGNC gene symbol to resolve, e.g. 'CFTR'.",
             examples=["CFTR"],
         ),
@@ -205,6 +206,7 @@ async def get_genereview(
         # resolved chapter's CONTENT is re-fetched live vs served from the warm
         # cache. A gene that resolves to no DEFINING chapter (mentioned only in a
         # multi-gene chapter, or absent) is not_found — never a guessed chapter.
+        reject_foreign_gene_identifier("gene_symbol", gene_symbol)
         repository = get_optional_repository(request)
         chapter = None
         if repository is not None:
