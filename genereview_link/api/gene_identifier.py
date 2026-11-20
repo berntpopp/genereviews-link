@@ -12,18 +12,23 @@ import re
 
 from genereview_link.api.errors import FieldError, StructuredHTTPException
 
+# ASCII [0-9] throughout, never \d: the value is copied into converter calls.
 # Forms hgnc_resolve_symbol converts. No HGNC symbol has these shapes. UniProt accessions
 # are deliberately absent: their shape collides with real symbols (e.g. P2RY12).
-_HGNC_CONVERTIBLE = re.compile(r"ENSG\d{11}(?:\.\d+)?|HGNC:\d+|N[MRP]_\d+(?:\.\d+)?", re.IGNORECASE)
-# A transcript, not a gene: hgnc_resolve_symbol does not convert it, so no converter is named.
-_TRANSCRIPT = re.compile(r"ENST\d{11}(?:\.\d+)?", re.IGNORECASE)
-# A bare number is never a gene symbol; it is read as an NCBI Gene id.
-_NCBI_GENE = re.compile(r"(?:NCBIGene:)?(\d+)", re.IGNORECASE)
+_HGNC_CONVERTIBLE = re.compile(
+    r"ENSG[0-9]{11}(?:\.[0-9]+)?|HGNC:[0-9]+|N[MRP]_[0-9]+(?:\.[0-9]+)?", re.IGNORECASE
+)
+# Ensembl transcript/protein or non-human ids: hgnc_resolve_symbol converts none of them.
+_ENSEMBL_OTHER = re.compile(r"ENS[A-Z]*[GTP][0-9]{11}(?:\.[0-9]+)?", re.IGNORECASE)
+# HGNC followed by a non-letter (HGNC6407, HGNC:abc): a malformed HGNC id, not a symbol.
+_HGNC_MALFORMED = re.compile(r"HGNC[^A-Za-z].*", re.IGNORECASE | re.DOTALL)
+_NCBI_GENE = re.compile(r"(NCBIGene:)?([0-9]+)", re.IGNORECASE)
 
 # Path-parameter pattern for gene symbols that also admits the two CURIE forms, so they
 # reach the shape check instead of dying as an unexplained pattern mismatch.
 GENE_PATH_PATTERN = (
-    r"^(?:[A-Za-z0-9][A-Za-z0-9._-]*|[Hh][Gg][Nn][Cc]:\d+|[Nn][Cc][Bb][Ii][Gg][Ee][Nn][Ee]:\d+)$"
+    r"^(?:[A-Za-z0-9][A-Za-z0-9._-]*"
+    r"|[Hh][Gg][Nn][Cc]:[0-9]+|[Nn][Cc][Bb][Ii][Gg][Ee][Nn][Ee]:[0-9]+)$"
 )
 
 
@@ -32,18 +37,22 @@ def reject_foreign_gene_identifier(field: str, value: str) -> None:
     value = value.strip()
     converter: dict[str, object] | None = None
     kind = "an identifier from another namespace"
-    hint = (
-        f"Pass the gene's HGNC symbol as {field}; no converter call is offered for a transcript id."
-    )
+    hint = f"Pass the gene's HGNC symbol as {field}."
     if _HGNC_CONVERTIBLE.fullmatch(value):
         converter = {"tool": "hgnc_resolve_symbol", "arguments": {"query": value}}
     elif m := _NCBI_GENE.fullmatch(value):
         converter = {
             "tool": "hgnc_resolve_gene_by_xref",
-            "arguments": {"source": "entrez_id", "value": m.group(1)},
+            "arguments": {"source": "entrez_id", "value": m.group(2)},
         }
-    elif _TRANSCRIPT.fullmatch(value):
-        kind = "an Ensembl transcript id, and this tool takes a gene"
+        if not m.group(1):
+            kind = "a bare number, read here as an NCBI Gene id"
+    elif _ENSEMBL_OTHER.fullmatch(value):
+        kind = "an Ensembl transcript, protein or non-human id, not a human gene id"
+        hint += " No converter call is offered for this form."
+    elif _HGNC_MALFORMED.fullmatch(value):
+        kind = "a malformed HGNC id"
+        hint += " An HGNC id is written HGNC:<n>."
     else:
         return
     if converter:
@@ -51,6 +60,8 @@ def reject_foreign_gene_identifier(field: str, value: str) -> None:
             f"Convert the identifier to its HGNC symbol with {converter['tool']} "
             f"(see next_commands), then call again with {field}=<symbol>."
         )
+        if kind.startswith("a bare number"):
+            hint += " If it is an HGNC id, send it as HGNC:<n>."
     raise StructuredHTTPException(
         status_code=400,
         code="unsupported_gene_identifier",

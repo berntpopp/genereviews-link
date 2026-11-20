@@ -7,6 +7,7 @@ or a next step that repeats the same input.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -14,7 +15,11 @@ import pytest
 from fastmcp import Client
 
 from genereview_link.api.client_manager import get_managed_client
-from genereview_link.api.gene_identifier import reject_foreign_gene_identifier
+from genereview_link.api.errors import StructuredHTTPException
+from genereview_link.api.gene_identifier import (
+    GENE_PATH_PATTERN,
+    reject_foreign_gene_identifier,
+)
 from genereview_link.api.routes.passages import get_embedding_provider, get_repository
 from genereview_link.config import ServerConfig
 from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
@@ -142,17 +147,91 @@ async def test_batch_reports_a_foreign_gene_per_item_and_keeps_the_rest() -> Non
 
 
 @pytest.mark.asyncio
-async def test_batch_with_only_failing_specs_is_a_whole_call_error() -> None:
+async def test_batch_with_only_failing_specs_still_answers_per_item() -> None:
     mcp = await _build_mcp()
     async with Client(mcp) as client:
-        result = await client.call_tool(
+        one = await client.call_tool(
             "search_passages_batch",
             {"specs": [{"q": "x", "gene": "ENSG00000133703"}]},
             raise_on_error=False,
         )
+        both = await client.call_tool(
+            "search_passages_batch",
+            {"specs": [{"q": "x", "gene": "HGNC:6407"}, {"q": "x", "gene": "ZZZ9"}]},
+            raise_on_error=False,
+        )
 
-    assert result.is_error is True
-    _assert_foreign(result.structured_content, "gene", FOREIGN[0][1])
+    assert one.is_error is False
+    _assert_foreign(one.structured_content["results"][0]["error"], "gene", FOREIGN[0][1])
+    assert both.is_error is False
+    first, second = both.structured_content["results"]
+    _assert_foreign(first["error"], "gene", HGNC_6407)
+    assert second["error"]["error_code"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_batch_keeps_good_spec_when_sibling_gene_is_not_indexed() -> None:
+    mcp = await _build_mcp()
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "search_passages_batch",
+            {"specs": [{"q": "x", "gene": "KRAS"}, {"q": "x", "gene": "ZZZ9"}]},
+            raise_on_error=False,
+        )
+
+    assert result.is_error is False
+    ok, bad = result.structured_content["results"]
+    assert ok["error"] is None
+    assert bad["error"]["error_code"] == "not_found"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "HGNC6407",
+        "HGNC:abc",
+        "hgnc_6407",
+        "ENSP00000256078",
+        "ENSMUSG00000030265",
+        "HGNC:\u0666\u0664\u0660\u0667",
+    ],
+)
+def test_near_miss_identifier_forms_are_rejected_without_a_converter(value: str) -> None:
+    with pytest.raises(StructuredHTTPException) as exc:
+        reject_foreign_gene_identifier("gene", value)
+    detail: Any = exc.value.detail
+    assert detail["code"] == "unsupported_gene_identifier"
+    assert detail["next_commands"] == []
+    assert "hgnc_resolve" not in detail["recovery_hint"]
+
+
+def test_non_ascii_digits_never_reach_a_converter_call() -> None:
+    reject_foreign_gene_identifier(
+        "gene", "\u0663\u0668\u0664\u0665"
+    )  # not an identifier shape: no converter built
+    assert re.fullmatch(GENE_PATH_PATTERN, "HGNC:\u0666\u0664\u0660\u0667") is None
+
+
+def test_bare_number_says_how_it_was_read() -> None:
+    with pytest.raises(StructuredHTTPException) as exc:
+        reject_foreign_gene_identifier("gene", "6407")
+    detail: Any = exc.value.detail
+    assert "a bare number, read here as an NCBI Gene id" in detail["message"]
+    assert "If it is an HGNC id, send it as HGNC:<n>." in detail["recovery_hint"]
+
+
+@pytest.mark.asyncio
+async def test_gene_shape_check_runs_before_the_nbk_lookup() -> None:
+    mcp = await _build_mcp()
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "search_passages",
+            {"q": "x", "gene": "HGNC:6407", "nbk_id": "NBK999999999"},
+            raise_on_error=False,
+        )
+
+    assert result.structured_content["error_code"] == "invalid_input"
+    assert result.structured_content["field"] == "gene"
 
 
 @pytest.mark.asyncio

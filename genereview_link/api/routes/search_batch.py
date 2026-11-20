@@ -144,7 +144,8 @@ def _annotate_cross_query_hits(
         "annotation signals redundancy without discarding evidence.\n\n"
         "**Per-spec errors:** a spec that cannot run (e.g. ``gene`` is an identifier, not "
         "a symbol, or is not indexed) gets ``results[i].error`` with empty ``hits``; the "
-        "other specs still return. Only when every spec fails is the call an error.\n\n"
+        "other specs still return. Outcomes are always per spec: the call itself succeeds "
+        "even when every spec (or the only spec) fails, so check each ``error``.\n\n"
         "**Cap:** requests with more than 5 specs are rejected with 422.\n\n"
         "**MCP:** registered as the ``search_passages_batch`` MCP tool "
         "via the FastMCP OpenAPI proxy.\n\n"
@@ -203,10 +204,6 @@ async def search_passages_batch(
 
     # raw_results comes back in completion order — sort by spec index
     raw_results.sort(key=lambda t: t[0])
-
-    failures = [r for _, r in raw_results if isinstance(r, StructuredHTTPException)]
-    if len(failures) == len(raw_results):
-        raise failures[0]  # nothing succeeded: a whole-call error is the honest answer
 
     # Extract plain-dict hit lists per spec (a failed spec has no hits)
     hits_per_spec: list[list[dict[str, Any]]] = [

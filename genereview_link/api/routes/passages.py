@@ -317,6 +317,9 @@ async def search_passages(
         )
     q = q or query
     assert q is not None
+    if gene:
+        # Before any lookup: identifiers never reach fuzzy symbol matching (router #343).
+        reject_foreign_gene_identifier("gene", gene)
     if nbk_id is not None:
         nbk_id = canonicalize_nbk_id(nbk_id)
         # Reject a malformed nbk_id rather than silently matching nothing
@@ -345,8 +348,6 @@ async def search_passages(
     query_intents = detect_query_intents(q)
 
     if gene:
-        # Identifiers never reach fuzzy symbol matching (router #343).
-        reject_foreign_gene_identifier("gene", gene)
         idx = getattr(request.app.state, "gene_index", None)
         if idx is not None:
             # HGNC symbols are mixed case; the corpus filter is exact, so map to the indexed case.
