@@ -25,7 +25,7 @@ HGNC = {"tool": "hgnc_resolve_symbol"}
 FOREIGN = [
     ("ENSG00000133703", {**HGNC, "arguments": {"query": "ENSG00000133703"}}),
     ("ENSG00000133703.14", {**HGNC, "arguments": {"query": "ENSG00000133703.14"}}),
-    ("ENST00000311936", {**HGNC, "arguments": {"query": "ENST00000311936"}}),
+    ("ENST00000311936", None),  # transcript id: hgnc_resolve_symbol cannot convert it
     ("HGNC:6407", {**HGNC, "arguments": {"query": "HGNC:6407"}}),
     ("NM_004985.5", {**HGNC, "arguments": {"query": "NM_004985.5"}}),
     (
@@ -43,6 +43,9 @@ FOREIGN = [
         },
     ),
 ]
+
+
+HGNC_6407 = {**HGNC, "arguments": {"query": "HGNC:6407"}}
 
 
 class _EmptyClient:
@@ -73,12 +76,16 @@ async def _build_mcp() -> Any:
     return await manager.create_mcp_server(app, config)
 
 
-def _assert_foreign(payload: dict[str, Any], field: str, converter: dict[str, Any]) -> None:
+def _assert_foreign(payload: dict[str, Any], field: str, converter: dict[str, Any] | None) -> None:
     assert payload["error_code"] == "invalid_input"
     assert payload["retryable"] is False
     assert payload["field"] == field
     assert payload["allowed_values"] == ["<HGNC gene symbol>, e.g. KRAS"]
-    assert converter["tool"] in payload["hint"]
+    if converter is None:
+        assert "transcript" in payload["message"]
+        assert "hgnc_resolve" not in payload["hint"]
+    else:
+        assert converter["tool"] in payload["hint"]
     assert "ENS" not in payload["message"] and "6407" not in payload["message"]
 
 
@@ -98,7 +105,7 @@ def test_real_symbols_pass_the_shape_check(value: str) -> None:
     ],
 )
 async def test_foreign_gene_identifier_is_invalid_input_naming_the_converter(
-    tool: str, field: str, extra: dict[str, Any], value: str, converter: dict[str, Any]
+    tool: str, field: str, extra: dict[str, Any], value: str, converter: dict[str, Any] | None
 ) -> None:
     mcp = await _build_mcp()
     async with Client(mcp) as client:
@@ -108,7 +115,7 @@ async def test_foreign_gene_identifier_is_invalid_input_naming_the_converter(
     payload = result.structured_content
     assert payload["success"] is False
     _assert_foreign(payload, field, converter)
-    assert payload["_meta"]["next_commands"] == [converter]
+    assert payload["_meta"]["next_commands"] == ([converter] if converter else [])
 
 
 @pytest.mark.asyncio
@@ -130,8 +137,8 @@ async def test_batch_reports_a_foreign_gene_per_item_and_keeps_the_rest() -> Non
     ok, bad = result.structured_content["results"]
     assert ok["error"] is None
     assert bad["hits"] == []
-    _assert_foreign(bad["error"], "gene", FOREIGN[3][1])
-    assert bad["error"]["next_commands"] == [FOREIGN[3][1]]
+    _assert_foreign(bad["error"], "gene", HGNC_6407)
+    assert bad["error"]["next_commands"] == [HGNC_6407]
 
 
 @pytest.mark.asyncio
