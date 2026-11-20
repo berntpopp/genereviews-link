@@ -104,6 +104,7 @@ _ERROR_CODE_MAP: dict[str, tuple[ErrorCode, bool]] = {
     "conflicting_query_param": ("invalid_input", False),
     "missing_query": ("invalid_input", False),
     "gene_not_indexed": ("not_found", False),
+    "unsupported_gene_identifier": ("invalid_input", False),
     "passage_not_found": ("not_found", False),
     "batch_size_exceeded": ("invalid_input", False),
     "table_not_found": ("not_found", False),
@@ -216,20 +217,12 @@ def _sanitize_tree(value: Any) -> Any:
     return value
 
 
-def build_error_envelope(
-    tool_name: str,
-    *,
-    status_code: int,
-    detail: dict[str, Any] | None,
-    fallback_message: str,
-    request_id: str,
-    elapsed_ms: float,
-) -> dict[str, Any]:
-    """Build the flat, in-band error frame (Response-Envelope Standard v1 §2).
+def error_fields(
+    *, status_code: int, detail: dict[str, Any] | None, fallback_message: str
+) -> tuple[dict[str, Any], list[Any]]:
+    """Flat error fields (no ``success``/``_meta``) plus sanitized ``next_commands``.
 
-    ``detail`` is the parsed ``StructuredHTTPException`` payload
-    (``{code, message, recovery_hint, field_errors, next_commands}``) when one
-    was found; ``None`` falls back to a generic classification by HTTP status.
+    Shared by the whole-call error frame and per-item batch errors.
     """
     internal_code = detail.get("code") if detail else None
     error_code, retryable = _classify(internal_code, status_code)
@@ -249,7 +242,6 @@ def build_error_envelope(
     field_errors = _sanitize_tree((detail or {}).get("field_errors") or [])
 
     envelope: dict[str, Any] = {
-        "success": False,
         "error_code": error_code,
         "message": message,
         "retryable": retryable,
@@ -257,6 +249,34 @@ def build_error_envelope(
     }
     if field_errors:
         envelope["field_errors"] = field_errors
+        if internal_code == "unsupported_gene_identifier":
+            # Fleet-standard names (Response-Envelope v1 §2b) beside this repo's own
+            # field_errors/recovery_action, for this error only.
+            envelope["field"] = field_errors[0]["field"]
+            envelope["allowed_values"] = field_errors[0]["valid_values"]
+            envelope["hint"] = recovery_action
+    return envelope, next_commands
+
+
+def build_error_envelope(
+    tool_name: str,
+    *,
+    status_code: int,
+    detail: dict[str, Any] | None,
+    fallback_message: str,
+    request_id: str,
+    elapsed_ms: float,
+) -> dict[str, Any]:
+    """Build the flat, in-band error frame (Response-Envelope Standard v1 §2).
+
+    ``detail`` is the parsed ``StructuredHTTPException`` payload
+    (``{code, message, recovery_hint, field_errors, next_commands}``) when one
+    was found; ``None`` falls back to a generic classification by HTTP status.
+    """
+    envelope, next_commands = error_fields(
+        status_code=status_code, detail=detail, fallback_message=fallback_message
+    )
+    envelope = {"success": False, **envelope}
 
     meta: dict[str, Any] = {"next_commands": next_commands}
     envelope["_meta"] = _augment_meta(

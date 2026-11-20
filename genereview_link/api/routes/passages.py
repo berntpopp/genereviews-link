@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 
 from genereview_link.api.diagnostics import build_search_diagnostics
 from genereview_link.api.errors import FieldError, StructuredHTTPException
+from genereview_link.api.gene_identifier import reject_foreign_gene_identifier
 from genereview_link.api.routes.table_enrichment import table_fields
 from genereview_link.api.untrusted_limits import collect_untrusted, guard_untrusted_limits
 from genereview_link.mcp.untrusted_content import UntrustedText, fence_untrusted_text
@@ -162,6 +163,8 @@ def _get_corpus_version(request: Request) -> str | None:
     description=(
         "Search the active GeneReviews corpus; returns ranked passages with "
         "passage_id, nbk_id, chapter_section, snippet or text, and recommended_citation. "
+        "For 2 or more queries, call search_passages_batch once instead of calling this "
+        "tool per item. "
         "For intervention/treatment queries, pass "
         'sections=["management"]; for diagnostic criteria, pass '
         'sections=["diagnosis", "clinical_features"]. This is the main precision filter.\n\n'
@@ -342,6 +345,8 @@ async def search_passages(
     query_intents = detect_query_intents(q)
 
     if gene:
+        # Identifiers never reach fuzzy symbol matching (router #343).
+        reject_foreign_gene_identifier("gene", gene)
         idx = getattr(request.app.state, "gene_index", None)
         if idx is not None:
             # HGNC symbols are mixed case; the corpus filter is exact, so map to the indexed case.

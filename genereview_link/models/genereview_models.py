@@ -643,6 +643,7 @@ class SearchBatchResultItem(BaseModel):
     q: str
     sections: list[SectionName] | None = None
     hits: list[Any] = Field(default_factory=list)
+    error: dict[str, Any] | None = Field(default=None, description="Set when this spec failed.")
 
 
 class SearchBatchResponse(BaseModel):
