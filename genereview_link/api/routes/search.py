@@ -81,8 +81,8 @@ async def search_genereviews(
         retmax=retmax,
     )
 
-    reject_foreign_gene_identifier("gene_symbol", gene_symbol)
     request_logger.info("Starting GeneReview search")
+    reject_foreign_gene_identifier("gene_symbol", gene_symbol)
 
     with PerformanceLogger(request_logger, "genereview_search") as perf:
         try:

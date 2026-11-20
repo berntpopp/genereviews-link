@@ -95,9 +95,13 @@ def configure_structlog() -> None:
             structlog.dev.ConsoleRenderer(colors=True),
         ]
 
-    # Configure structlog
+    # Configure structlog. Reuse the live processor list instance: loggers cached on first
+    # use hold a reference to it, so a second configure_structlog() (cli.py and server.py
+    # both call it at import) must not strand them on a stale chain.
+    live_processors = structlog.get_config()["processors"]
+    live_processors[:] = processors
     structlog.configure(
-        processors=processors,
+        processors=live_processors,
         wrapper_class=structlog.stdlib.BoundLogger,
         logger_factory=structlog.stdlib.LoggerFactory(),
         context_class=dict,
