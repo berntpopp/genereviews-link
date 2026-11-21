@@ -46,7 +46,8 @@ def _empty_search_recovery(gene: str) -> tuple[str, list[dict[str, Any]]]:
         "of matching GeneReviews chapters, from the indexed corpus first when "
         "available, then live NCBI E-utils. If resolver links are "
         "unavailable or no PubMed ID is found, use search_passages(gene=<symbol>) "
-        "for indexed chapter evidence. Pass fresh=true to bypass the corpus and "
+        "for indexed chapter evidence. For a disease name or other free text, "
+        "use search_passages(q=<text>). Pass fresh=true to bypass the corpus and "
         "query live NCBI."
     ),
     operation_id="search_genereviews",
