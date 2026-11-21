@@ -81,6 +81,7 @@ def _detail_from_validation_errors(errors: list[Any]) -> dict[str, Any] | None:
     """
     field_errors: list[dict[str, Any]] = []
     names: list[str] = []
+    free_text_in_gene_symbol = False
     for err in errors:
         if not isinstance(err, dict):
             continue
@@ -88,18 +89,30 @@ def _detail_from_validation_errors(errors: list[Any]) -> dict[str, Any] | None:
         name = str(loc[-1]) if isinstance(loc, list) and loc else "arguments"
         msg = err.get("msg")
         names.append(name)
+        free_text_in_gene_symbol |= (
+            name == "gene_symbol" and err.get("type") == "string_pattern_mismatch"
+        )
         field_errors.append(
             {"field": name, "reason": msg if isinstance(msg, str) else "invalid value"}
         )
     if not field_errors:
         return None
     named = ", ".join(dict.fromkeys(names))
+    hint = "Correct the named parameter(s) and retry."
+    next_commands: list[dict[str, Any]] = []
+    # #214: free text (a disease name) in gene_symbol fails the symbol pattern.
+    if free_text_in_gene_symbol:
+        hint = (
+            "gene_symbol takes one HGNC gene symbol (e.g. BRCA1), not free text. For a "
+            "disease name or other free text, call search_passages(q=<text>) instead."
+        )
+        next_commands = [{"tool": "search_passages", "arguments": {"q": "<disease name>"}}]
     return {
         "code": "invalid_input",
         "message": f"Invalid value for parameter(s): {named}.",
-        "recovery_hint": "Correct the named parameter(s) and retry.",
+        "recovery_hint": hint,
         "field_errors": field_errors,
-        "next_commands": [],
+        "next_commands": next_commands,
     }
 
 

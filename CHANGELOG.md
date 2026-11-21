@@ -4,6 +4,14 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.4.1] - 2026-11-21
+
+- A disease name or other free text in `gene_symbol` (`search_genereviews`,
+  `get_genereview_summary`) now returns `invalid_input` whose hint says the parameter takes one
+  HGNC gene symbol and names `search_passages(q=<text>)`, with that call in
+  `_meta.next_commands`. Previously the hint only said "Correct the named parameter(s)". The
+  `search_genereviews` description names `search_passages` for disease names (#214).
+
 ## [5.4.0] - 2026-11-20
 
 - Gene parameters reject identifiers from other namespaces instead of treating them as symbols

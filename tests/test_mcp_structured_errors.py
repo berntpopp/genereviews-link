@@ -11,6 +11,7 @@ from fastmcp import Client
 
 from genereview_link.api.routes import chapters as chapters_routes
 from genereview_link.api.routes import passages as passages_routes
+from genereview_link.api.routes import search as search_routes
 from genereview_link.config import ServerConfig
 from genereview_link.retrieval.embeddings import FakeEmbeddingProvider
 from genereview_link.server_manager import UnifiedServerManager
@@ -84,3 +85,30 @@ async def test_mcp_search_passages_error_uses_same_structured_shape() -> None:
         "pass only one of q or query, or pass the same string in both"
     )
     assert payload["_meta"]["next_commands"] == []
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_genereviews_disease_name_points_to_search_passages() -> None:
+    """#214: a disease name in gene_symbol names the parameter, its form, and the
+    free-text tool -- not a bare regex mismatch the model retries with new spellings."""
+    app = FastAPI()
+    app.include_router(search_routes.router)
+    mcp = await UnifiedServerManager().create_mcp_server(app, ServerConfig())
+
+    async with Client(mcp) as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+        result = await client.call_tool(
+            "search_genereviews",
+            {"gene_symbol": "Pseudohypoparathyroidism Ic"},
+            raise_on_error=False,
+        )
+
+    assert "disease name" in (tools["search_genereviews"].description or "")
+    payload = _error_payload(result)
+    assert payload["error_code"] == "invalid_input"
+    assert payload["field_errors"][0]["field"] == "gene_symbol"
+    assert "HGNC gene symbol" in payload["recovery_action"]
+    assert "search_passages" in payload["recovery_action"]
+    assert payload["_meta"]["next_commands"][0]["tool"] == "search_passages"
+    # The caller's value is never echoed back.
+    assert "Pseudohypoparathyroidism" not in result.content[0].text
