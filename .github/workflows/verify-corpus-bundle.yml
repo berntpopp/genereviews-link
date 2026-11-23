@@ -78,7 +78,7 @@ jobs:
             echo 'psql does not receive SQL on stdin: the PG18 client wrapper needs --interactive' >&2
             exit 1
           }
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: false
       - run: uv sync --group dev --extra cpu --frozen
