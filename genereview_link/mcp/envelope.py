@@ -31,6 +31,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from genereview_link.mcp.provenance import provenance
 from genereview_link.mcp.untrusted_content import sanitize_message
 
 # Bump when the tool surface or envelope shape changes in a way a warm client
@@ -196,7 +197,7 @@ def build_success_envelope(
 
     envelope["_meta"] = _augment_meta(
         meta, tool_name=tool_name, request_id=request_id, elapsed_ms=elapsed_ms
-    )
+    ) | provenance(meta)  # Response-Envelope v1.2: data_version + retrieved_at
     return envelope
 
 

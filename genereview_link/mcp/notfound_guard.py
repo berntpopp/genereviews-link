@@ -94,6 +94,7 @@ def _unknown_tool_envelope() -> dict[str, Any]:
         "recovery_action": _UNKNOWN_TOOL_RECOVERY,
         "_meta": {
             "request_id": new_request_id(),
+            "elapsed_ms": 0.0,  # refused before any tool ran
             "source": SOURCE,
             "capabilities_version": CAPABILITIES_VERSION,
             "unsafe_for_clinical_use": True,
