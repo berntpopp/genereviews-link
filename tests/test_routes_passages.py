@@ -948,6 +948,7 @@ async def test_search_unknown_gene_returns_structured_400() -> None:
     detail = resp.json()["detail"]
     assert detail["code"] == "gene_not_indexed"
     assert "next_commands" in detail
+    assert "BRCA9" not in detail["message"]  # the caller's raw input is never echoed
 
 
 @pytest.mark.asyncio

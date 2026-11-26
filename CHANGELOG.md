@@ -4,6 +4,12 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.5.1] - 2026-11-26
+
+- Error messages no longer echo the caller's raw input (GTS-CORE-TXT-04): an invalid `pmid`
+  (`get_abstract`), an invalid `nbk_id` (`get_fulltext`) and a `gene` that is not
+  in the corpus (`search_passages`) are named by their field, not by the value sent.
+
 ## [5.5.0] - 2026-11-26
 
 - Response-Envelope v1.2 provenance: every successful MCP result carries `_meta.data_version`
