@@ -357,7 +357,7 @@ async def search_passages(
             raise StructuredHTTPException(
                 status_code=400,
                 code="gene_not_indexed",
-                message=f"gene symbol {gene!r} is not indexed in the corpus",
+                message="gene symbol is not indexed in the corpus",  # never echo the raw input
                 recovery_hint=(
                     "use the canonical HGNC symbol; aliases (e.g., 'hMLH1' for 'MLH1')"
                     " are not supported"

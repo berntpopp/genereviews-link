@@ -74,7 +74,7 @@ def invalid_pubmed_id_error(pubmed_id: str) -> StructuredHTTPException:
     return StructuredHTTPException(
         status_code=422,
         code="invalid_pubmed_id",
-        message=f"Invalid PubMed ID format: {pubmed_id}.",
+        message="Invalid PubMed ID format.",  # never echo the raw input
         recovery_hint="Use a numeric PubMed ID, for example 20301425.",
     )
 
@@ -83,7 +83,7 @@ def invalid_nbk_id_error(nbk_id: str) -> StructuredHTTPException:
     return StructuredHTTPException(
         status_code=400,
         code="invalid_nbk_id",
-        message=f"Invalid NBK ID format: {nbk_id}.",
+        message="Invalid NBK ID format.",  # never echo the raw input
         recovery_hint="Use an NCBI Bookshelf identifier such as NBK1247 or 1247.",
     )
 
