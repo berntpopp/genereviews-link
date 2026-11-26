@@ -5,6 +5,7 @@ Orchestrates data retrieval and processing workflows.
 """
 
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from async_lru import alru_cache
@@ -211,6 +212,8 @@ class GeneReviewService:
         chapter: ChapterRow | None = None,
     ) -> GeneReview:
         """Fetch all available data for a GeneReview."""
+        # Kept on the (cached) result: a cache hit reports this fetch, not its read.
+        fetched_at = datetime.now(UTC).isoformat()
         if chapter is not None:
             # Authoritative corpus resolution (issue #106 D1): honour the resolved
             # chapter's OWN NBK id and title. pubmed_id is frequently EMPTY in the
@@ -383,7 +386,7 @@ class GeneReviewService:
                 return None
             return fence_section_prose(sec, doc_id=doc_id, record_path=f"section:{key}")
 
-        return GeneReview(
+        review = GeneReview(
             gene_symbol=gene_symbol.upper(),
             pubmed_id=pubmed_id,
             book_url=book_url,
@@ -399,6 +402,8 @@ class GeneReviewService:
             all_links=all_links,
             full_text_data=full_text_data,
         )
+        review.meta.retrieved_at = fetched_at
+        return review
 
     async def _get_genereview_comprehensive_indexed_impl(
         self,

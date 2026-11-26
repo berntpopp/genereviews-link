@@ -368,6 +368,7 @@ class ResponseMeta(BaseModel):
     embedding_dim: int | None = None
     truncated: bool = False
     next_commands: list[dict[str, Any]] | None = None
+    retrieved_at: str | None = None  # time of a live NCBI fetch; absent for corpus data
 
     @model_serializer(mode="wrap")
     def _drop_null_next_commands(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -381,8 +382,9 @@ class ResponseMeta(BaseModel):
         actionable affordance.
         """
         data: dict[str, Any] = handler(self)
-        if data.get("next_commands") is None:
-            data.pop("next_commands", None)
+        for key in ("next_commands", "retrieved_at"):
+            if data.get(key) is None:
+                data.pop(key, None)
         return data
 
     @classmethod

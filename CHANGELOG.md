@@ -4,6 +4,20 @@ All notable changes to GeneReviews-Link are documented in this file.
 
 ## [Unreleased]
 
+## [5.5.0] - 2026-11-26
+
+- Response-Envelope v1.2 provenance: every successful MCP result carries `_meta.data_version`
+  and `_meta.retrieved_at` (UTC) next to `_meta.source`. A result served from the corpus names
+  the corpus release and the time that corpus was ingested from NCBI. A result fetched from
+  NCBI at call time (`get_abstract`, `get_links`, `get_fulltext`, `get_genereview_summary`, a
+  live `search_genereviews`) has `data_version: "live"` and the time of that fetch; a cached
+  `get_genereview_summary` keeps the time of the fetch that filled the cache.
+  `_meta.corpus_version` is unchanged.
+- The unknown-tool error carries `_meta.elapsed_ms` (Response-Envelope v1, section 4).
+- Tests: every tool result is validated against the published envelope JSON Schema v1.2.0,
+  vendored with a pinned SHA-256 (`tests/conformance/envelope-v1.2.schema.json`); the behaviour
+  gate is re-vendored and now checks the provenance rule.
+
 ## [5.4.1] - 2026-11-21
 
 - A disease name or other free text in `gene_symbol` (`search_genereviews`,

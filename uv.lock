@@ -805,7 +805,7 @@ wheels = [
 
 [[package]]
 name = "genereviews-link"
-version = "5.4.1"
+version = "5.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "apscheduler" },
@@ -854,6 +854,7 @@ cu130 = [
 [package.dev-dependencies]
 dev = [
     { name = "hatchling" },
+    { name = "jsonschema" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "psutil" },
@@ -911,6 +912,7 @@ provides-extras = ["cpu", "cu130"]
 [package.metadata.requires-dev]
 dev = [
     { name = "hatchling", specifier = "==1.33.0" },
+    { name = "jsonschema", specifier = ">=4.23.0,<5.0.0" },
     { name = "mypy", specifier = ">=1.14.0,<3.0.0" },
     { name = "pre-commit", specifier = ">=4.0.0,<5.0.0" },
     { name = "psutil", specifier = ">=7.2.2" },

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from genereview_link.api.client_manager import get_client_manager, shutdown_clients
 from genereview_link.config import settings
 from genereview_link.logging_config import get_logger
+from genereview_link.mcp.provenance import set_active_corpus
 from genereview_link.runtime_data_identity import (
     RuntimeDataIdentityError,
     configured_data_identity,
@@ -142,6 +143,8 @@ async def _initialize_state(app: FastAPI) -> None:
         try:
             cv = await app.state.repository.active_corpus_version()
             app.state.corpus_version = cv.version if cv is not None else None
+            if cv is not None:
+                set_active_corpus(cv.version, cv.ingest_finished_at)
             app.state.corpus_data_as_of = (
                 cv.ingest_finished_at.isoformat()
                 if cv is not None and cv.ingest_finished_at is not None
